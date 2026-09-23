@@ -38,4 +38,4 @@ LABEL \
     org.opencontainers.image.source="https://github.com/skydiveTom/home-assistant-rtsp-camera" \
     org.opencontainers.image.licenses="GPL-3.0"
 
-CMD ["/run.sh"]
+CMD ["bashio", "/run.sh"]

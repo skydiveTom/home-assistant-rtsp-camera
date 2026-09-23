@@ -165,16 +165,21 @@ def test_prebuilt_image_matches_the_manifest(addon_config: dict) -> None:
     build_step = next(
         step
         for step in workflow["jobs"]["build"]["steps"]
-        if step.get("uses", "").startswith("docker/build-push-action")
+        if step.get("name", "").startswith("Build and push")
     )
-    context = build_step["with"]["context"]
-    assert (REPO_ROOT / context / "Dockerfile").is_file()
-    assert (REPO_ROOT / context / "config.yaml").is_file()
-    assert build_step["with"]["push"] is True
-    assert "${{ matrix.arch }}-${{ env.IMAGE_NAME }}" in build_step["with"]["tags"]
-    assert "needs.prepare.outputs.version" in build_step["with"]["tags"]
-    assert "BUILD_VERSION=" in build_step["with"]["build-args"]
-    assert "BUILD_ARCH=" in build_step["with"]["build-args"]
+    build_script = build_step["run"]
+    for token in (
+        "docker build",
+        "docker push",
+        '--platform "${PLATFORM}"',
+        '--build-arg "BUILD_VERSION=${VERSION}"',
+        '--build-arg "BUILD_ARCH=${ARCH}"',
+        "${ARCH}-${IMAGE_NAME}:${VERSION}",
+        "rtsp_cameras",
+        "::error title=Docker build failed",
+    ):
+        assert token in build_script, f"the build step misses {token}"
+    assert (REPO_ROOT / "rtsp_cameras" / "Dockerfile").is_file()
 
     manifest_script = next(
         step["run"] for step in workflow["jobs"]["manifest"]["steps"] if "run" in step
@@ -253,6 +258,11 @@ def test_run_script_is_usable_inside_the_container() -> None:
     assert b"\r\n" not in data, "run.sh must use LF line endings"
     assert data.startswith(b"#!/usr/bin/env bash")
     assert b"python3 -m app" in data
+
+    # The base images ship bashio as a wrapper that has to run the script, so that
+    # bashio:: functions are available inside run.sh.
+    dockerfile = (ADDON_DIR / "Dockerfile").read_text(encoding="utf-8")
+    assert 'CMD ["bashio", "/run.sh"]' in dockerfile
 
 
 def test_web_assets_are_present() -> None:
