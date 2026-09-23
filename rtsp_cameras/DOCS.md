@@ -36,7 +36,7 @@ The add-on is a small camera manager for Home Assistant:
 ## Prebuilt image
 
 The app is published as a multi-arch container image
-(`ghcr.io/skydiveTom/rtsp-cameras`, `amd64` and `aarch64`) by the
+(`ghcr.io/skydivetom/rtsp-cameras`, `amd64` and `aarch64`) by the
 *Build add-on image* workflow, and the manifest references it. Install and update
 therefore **pull** the image instead of building it on your Home Assistant host -
 an update takes seconds.

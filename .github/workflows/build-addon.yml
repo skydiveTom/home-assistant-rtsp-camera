@@ -83,7 +83,8 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
         run: |
           set -uo pipefail
-          tag="${REGISTRY}/${OWNER}/${ARCH}-${IMAGE_NAME}:${VERSION}"
+          owner="${OWNER,,}" # container registry paths have to be lowercase
+          tag="${REGISTRY}/${owner}/${ARCH}-${IMAGE_NAME}:${VERSION}"
           log="$(mktemp)"
 
           if ! docker build \
@@ -128,10 +129,11 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          image="${REGISTRY}/${OWNER}/${IMAGE_NAME}"
+          owner="${OWNER,,}" # container registry paths have to be lowercase
+          image="${REGISTRY}/${owner}/${IMAGE_NAME}"
           sources=(
-            "${REGISTRY}/${OWNER}/amd64-${IMAGE_NAME}:${VERSION}"
-            "${REGISTRY}/${OWNER}/aarch64-${IMAGE_NAME}:${VERSION}"
+            "${REGISTRY}/${owner}/amd64-${IMAGE_NAME}:${VERSION}"
+            "${REGISTRY}/${owner}/aarch64-${IMAGE_NAME}:${VERSION}"
           )
           docker buildx imagetools create \
             --tag "${image}:${VERSION}" \

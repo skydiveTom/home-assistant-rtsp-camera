@@ -8,7 +8,8 @@ description: >-
 url: https://github.com/skydiveTom/home-assistant-rtsp-camera
 # Prebuilt multi-arch image, published by .github/workflows/build-addon.yml.
 # Supervisor pulls this image instead of building the app on the host.
-image: ghcr.io/skydiveTom/rtsp-cameras
+# Container registry paths must be lowercase.
+image: ghcr.io/skydivetom/rtsp-cameras
 arch:
   - aarch64
   - amd64

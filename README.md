@@ -51,7 +51,7 @@ exactly one place — the add-on panel.
 - **Safe by design** – reachable only through the authenticated Home Assistant
   ingress, credentials of stream URLs are masked in the interface and in the log.
 - **Prebuilt image** – published as a multi-arch image
-  (`ghcr.io/skydiveTom/rtsp-cameras`) by GitHub Actions, so installing and
+  (`ghcr.io/skydivetom/rtsp-cameras`) by GitHub Actions, so installing and
   updating pulls the image instead of building it on your Home Assistant host.
 
 ## Installation

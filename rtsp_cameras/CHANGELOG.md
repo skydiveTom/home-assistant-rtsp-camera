@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Prebuilt, multi-arch app image published to the GitHub Container Registry
-  (`ghcr.io/skydiveTom/rtsp-cameras`) by the new *Build add-on image* workflow.
+  (`ghcr.io/skydivetom/rtsp-cameras`) by the new *Build add-on image* workflow.
   Supervisor now pulls the image instead of building it on your Home Assistant
   host, so installing and updating takes seconds instead of minutes.
 - Repository tests that keep the workflow and the manifest in sync: the published

@@ -149,7 +149,10 @@ def test_prebuilt_image_matches_the_manifest(addon_config: dict) -> None:
     triggers = workflow.get("on") or workflow.get(True)
 
     image_name = workflow["env"]["IMAGE_NAME"]
-    assert addon_config["image"] == f"ghcr.io/skydiveTom/{image_name}"
+    assert addon_config["image"] == f"ghcr.io/skydivetom/{image_name}"
+    assert addon_config["image"] == addon_config["image"].lower(), (
+        "container registry paths have to be lowercase"
+    )
     assert "{arch}" not in addon_config["image"], "reference the multi-arch manifest"
 
     assert "main" in triggers["push"]["branches"]
@@ -175,6 +178,7 @@ def test_prebuilt_image_matches_the_manifest(addon_config: dict) -> None:
         '--build-arg "BUILD_VERSION=${VERSION}"',
         '--build-arg "BUILD_ARCH=${ARCH}"',
         "${ARCH}-${IMAGE_NAME}:${VERSION}",
+        "${OWNER,,}",
         "rtsp_cameras",
         "::error title=Docker build failed",
     ):
@@ -185,6 +189,7 @@ def test_prebuilt_image_matches_the_manifest(addon_config: dict) -> None:
         step["run"] for step in workflow["jobs"]["manifest"]["steps"] if "run" in step
     )
     assert "buildx imagetools create" in manifest_script
+    assert "${OWNER,,}" in manifest_script, "the registry path must be lowercase"
     assert "amd64-${IMAGE_NAME}" in manifest_script
     assert "aarch64-${IMAGE_NAME}" in manifest_script
     assert ":${VERSION}" in manifest_script
