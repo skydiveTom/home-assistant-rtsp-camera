@@ -4,6 +4,27 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-09-23
+
+### Fixed
+
+- **Stream tests failed with** `Failed to set value '-loglevel' for option
+  'nostdin': Option not found`. FFmpeg 8 rejects `-nostdin` when other options
+  follow it. The option is gone; the child processes now get `stdin=DEVNULL`,
+  which has the same effect on every ffmpeg version.
+- **Snapshots, the MJPEG preview and the HLS preview did not pass the stream URL
+  to ffmpeg**, so ffmpeg had nothing to read. The input (`-i <url>`) is included
+  now, and the test suite asserts the URL, the scale filter and the encoder flags
+  on every command line.
+- Pressing *Quick preview* for a camera that is not saved yet now says
+  "Save the camera first to use the live preview" instead of a confusing
+  "Enter the RTSP URL" message.
+
+### Added
+
+- Tests that inspect the real ffmpeg command lines (recorded by the fake
+  binaries), so a missing input URL or a wrong option can no longer slip through.
+
 ## [0.1.4] - 2026-09-23
 
 ### Added

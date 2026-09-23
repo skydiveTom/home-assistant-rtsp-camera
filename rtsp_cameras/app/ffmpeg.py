@@ -129,12 +129,21 @@ class FFmpegService:
 
     # ------------------------------------------------------------- arguments
     def _input_args(self, url: str, transport: str, timeout: int) -> list[str]:
-        """Build the input options shared by all ffmpeg and ffprobe calls."""
-        args = ["-hide_banner", "-nostdin", "-loglevel", "error"]
+        """Build the input options shared by all ffmpeg and ffprobe calls.
+
+        ``-nostdin`` is not used: ffmpeg 8 rejects it when it is followed by other
+        options. The child processes get ``stdin=DEVNULL`` instead, which has the
+        same effect and works on every version.
+        """
+        args = ["-hide_banner", "-loglevel", "error"]
         micro = max(1, int(timeout)) * 1_000_000
         if url.lower().startswith(("rtsp://", "rtsps://")):
             args += ["-rtsp_transport", transport or "tcp", "-timeout", str(micro)]
         return args + ["-rw_timeout", str(micro)]
+
+    def _ffmpeg_input(self, url: str, transport: str, timeout: int) -> list[str]:
+        """Return the input options followed by the input URL itself."""
+        return [*self._input_args(url, transport, timeout), "-i", url]
 
     def _clean_error(self, raw: bytes | str) -> str:
         """Return a short error message with any URL credentials removed."""
@@ -190,6 +199,7 @@ class FFmpegService:
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -264,7 +274,7 @@ class FFmpegService:
         height = int(max_height or self.settings.preview_max_height)
         command = [
             *self.ffmpeg_bin,
-            *self._input_args(url, transport, timeout),
+            *self._ffmpeg_input(url, transport, timeout),
             "-an",
             "-frames:v",
             "1",
@@ -283,6 +293,7 @@ class FFmpegService:
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -321,7 +332,7 @@ class FFmpegService:
         height = int(max_height or self.settings.preview_max_height)
         command = [
             *self.ffmpeg_bin,
-            *self._input_args(url, transport, self.settings.test_timeout),
+            *self._ffmpeg_input(url, transport, self.settings.test_timeout),
             "-an",
             "-r",
             str(fps),
@@ -338,6 +349,7 @@ class FFmpegService:
 
         process = await asyncio.create_subprocess_exec(
             *command,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -404,7 +416,7 @@ class FFmpegService:
 
         command = [
             *self.ffmpeg_bin,
-            *self._input_args(url, transport, self.settings.test_timeout),
+            *self._ffmpeg_input(url, transport, self.settings.test_timeout),
             *video_args,
             "-f",
             "hls",
@@ -423,6 +435,7 @@ class FFmpegService:
 
         process = await asyncio.create_subprocess_exec(
             *command,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )

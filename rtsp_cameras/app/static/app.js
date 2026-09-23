@@ -949,7 +949,7 @@
     document.getElementById('btn-preview-form').addEventListener('click', () => {
       const camera = state.editing ? cameraById(state.editing) : null;
       if (!camera) {
-        toast(errorText('url_required'), 'err');
+        toast(t('camera.preview_save_first'), 'err');
         return;
       }
       hideModal('camera-modal');

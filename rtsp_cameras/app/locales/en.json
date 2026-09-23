@@ -55,7 +55,8 @@
     "copied": "Copied",
     "reload_list": "Refresh",
     "enabled_label": "In Home Assistant",
-    "disabled_label": "Hidden in Home Assistant"
+    "disabled_label": "Hidden in Home Assistant",
+    "preview_save_first": "Save the camera first to use the live preview"
   },
   "preview": {
     "title": "Preview: {name}",

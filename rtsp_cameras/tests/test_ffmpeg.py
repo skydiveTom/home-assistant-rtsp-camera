@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 
@@ -50,6 +51,18 @@ async def async_wait_for_file(path: Path, timeout: float = 10.0) -> bool:
 def service(settings: Settings, fake_tools: None) -> FFmpegService:
     """A service wired to the fake binaries."""
     return FFmpegService(settings)
+
+
+def read_arguments(path: Path) -> list[str]:
+    """Return the command line a fake binary recorded."""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def assert_input_url(arguments: list[str], url: str) -> None:
+    """The input URL must reach ffmpeg, otherwise it has nothing to read."""
+    assert "-i" in arguments, "ffmpeg was called without an input URL"
+    assert arguments[arguments.index("-i") + 1] == url
+    assert "-nostdin" not in arguments
 
 
 def test_extract_jpeg_frames_handles_partial_data() -> None:
@@ -104,6 +117,28 @@ def test_probe_returns_stream_details(
     recorded = args_file.read_text(encoding="utf-8")
     assert "-rtsp_transport" in recorded
     assert "-rw_timeout" in recorded
+
+    arguments = json.loads(recorded)
+    assert STREAM_URL in arguments
+    # ffmpeg 8 rejects -nostdin in front of other options; stdin is closed instead.
+    assert "-nostdin" not in arguments
+
+
+def test_processes_run_with_a_closed_stdin(
+    service: FFmpegService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+    original = asyncio.create_subprocess_exec
+
+    async def spy(*args: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr("app.ffmpeg.asyncio.create_subprocess_exec", spy)
+    monkeypatch.setenv("FAKE_PROBE_MODE", "ok")
+
+    assert run(service.probe(STREAM_URL)).ok is True
+    assert captured["stdin"] == asyncio.subprocess.DEVNULL
 
 
 def test_probe_masks_credentials(service: FFmpegService, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,10 +197,19 @@ def test_probe_without_ffprobe(settings: Settings, no_tools: None) -> None:
     assert result.code == "ffprobe_missing"
 
 
-def test_snapshot_returns_a_jpeg(service: FFmpegService, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_snapshot_returns_a_jpeg(
+    service: FFmpegService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("FAKE_FFMPEG_MODE", "snapshot")
+    args_file = tmp_path / "snapshot-args.json"
+    monkeypatch.setenv("FAKE_ARGS_FILE", str(args_file))
 
     assert run(service.snapshot(STREAM_URL)) == JPEG
+
+    arguments = read_arguments(args_file)
+    assert_input_url(arguments, STREAM_URL)
+    assert arguments[-1] == "pipe:1"
+    assert "-frames:v" in arguments
 
 
 def test_snapshot_returns_none_on_failure(
@@ -183,10 +227,12 @@ def test_snapshot_without_ffmpeg(settings: Settings, no_tools: None) -> None:
 
 
 def test_mjpeg_stream_yields_frames(
-    service: FFmpegService, monkeypatch: pytest.MonkeyPatch
+    service: FFmpegService, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("FAKE_FFMPEG_MODE", "mjpeg")
     monkeypatch.setenv("FAKE_FRAMES", "3")
+    args_file = tmp_path / "mjpeg-args.json"
+    monkeypatch.setenv("FAKE_ARGS_FILE", str(args_file))
 
     async def collect() -> list[bytes]:
         frames: list[bytes] = []
@@ -195,6 +241,7 @@ def test_mjpeg_stream_yields_frames(
         return frames
 
     assert run(collect()) == [JPEG, JPEG, JPEG]
+    assert_input_url(read_arguments(args_file), STREAM_URL)
 
 
 def test_mjpeg_stream_raises_when_no_frame_arrives(
@@ -250,9 +297,10 @@ def test_hls_transcodes_for_non_h264(
         await service.stop_all()
 
     run(scenario())
-    recorded = args_file.read_text(encoding="utf-8")
-    assert "libx264" in recorded
-    assert "scale=-2" in recorded
+    arguments = read_arguments(args_file)
+    assert_input_url(arguments, STREAM_URL)
+    assert "libx264" in arguments
+    assert "scale=-2:'min(1080,ih)'" in arguments
 
 
 def test_hls_copies_h264_streams(
@@ -268,9 +316,10 @@ def test_hls_copies_h264_streams(
         await service.stop_all()
 
     run(scenario())
-    recorded = args_file.read_text(encoding="utf-8")
-    assert '"copy"' in recorded
-    assert "libx264" not in recorded
+    arguments = read_arguments(args_file)
+    assert_input_url(arguments, STREAM_URL)
+    assert "copy" in arguments
+    assert "libx264" not in arguments
 
 
 def test_hls_without_ffmpeg(settings: Settings, no_tools: None) -> None:

@@ -55,7 +55,8 @@
     "copied": "Copiado",
     "reload_list": "Actualizar",
     "enabled_label": "En Home Assistant",
-    "disabled_label": "Oculta en Home Assistant"
+    "disabled_label": "Oculta en Home Assistant",
+    "preview_save_first": "Guarda la cámara primero para usar la vista previa en vivo"
   },
   "preview": {
     "title": "Vista previa: {name}",

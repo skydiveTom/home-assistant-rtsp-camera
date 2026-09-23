@@ -55,7 +55,8 @@
     "copied": "Kopiert",
     "reload_list": "Aktualisieren",
     "enabled_label": "In Home Assistant",
-    "disabled_label": "In Home Assistant ausgeblendet"
+    "disabled_label": "In Home Assistant ausgeblendet",
+    "preview_save_first": "Speichere die Kamera zuerst, um die Live-Vorschau zu nutzen"
   },
   "preview": {
     "title": "Vorschau: {name}",

@@ -55,7 +55,8 @@
     "copied": "Skopiowano",
     "reload_list": "Odśwież",
     "enabled_label": "W Home Assistant",
-    "disabled_label": "Ukryta w Home Assistant"
+    "disabled_label": "Ukryta w Home Assistant",
+    "preview_save_first": "Najpierw zapisz kamerę, aby użyć podglądu na żywo"
   },
   "preview": {
     "title": "Podgląd: {name}",
