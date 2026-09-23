@@ -1,0 +1,46 @@
+configuration:
+  language:
+    name: Interface language
+    description: >-
+      Language of the add-on web interface. Set to auto to follow the language
+      configured in Home Assistant; English is the fallback.
+  default_rtsp_transport:
+    name: Default RTSP transport
+    description: >-
+      Transport used when a new camera is added. TCP works for most cameras,
+      some devices need udp or http instead.
+  install_integration:
+    name: Install the Home Assistant integration
+    description: >-
+      Copies the bundled camera integration into config/custom_components so
+      every camera becomes a camera entity. Disable this when you install the
+      integration yourself, for example with HACS.
+  ha_restart_after_install:
+    name: Restart Home Assistant after installing
+    description: >-
+      Restarts Home Assistant automatically after the integration was installed
+      or updated, so the camera entities appear right away.
+  health_check_interval:
+    name: Stream check interval
+    description: >-
+      Seconds between automatic stream checks of every enabled camera.
+      Set to 0 to disable the automatic checks.
+  test_timeout:
+    name: Stream test timeout
+    description: Seconds to wait for a camera when testing or previewing a stream.
+  preview_mode:
+    name: Preview mode
+    description: >-
+      mjpeg re-encodes every frame and works in every browser. hls copies the
+      H.264 stream when possible and needs much less CPU.
+  preview_max_height:
+    name: Preview height limit
+    description: Maximum height in pixels used for snapshots and previews.
+  preview_fps:
+    name: Preview frame rate
+    description: Frames per second used by the MJPEG and by the transcoded HLS preview.
+  redact_credentials_in_logs:
+    name: Mask credentials in the log
+    description: Replaces user names and passwords inside stream URLs before they are logged.
+network:
+  8099/TCP: Internal port used by the Home Assistant ingress. Do not change it.

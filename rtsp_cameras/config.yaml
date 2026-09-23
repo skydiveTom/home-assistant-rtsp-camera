@@ -1,0 +1,48 @@
+name: RTSP Camera Manager
+version: "0.1.0"
+slug: rtsp_cameras
+description: >-
+  Add RTSP camera instances to Home Assistant using only the stream URL. Name
+  them, check that the stream works, preview it live and use every instance as a
+  camera entity on any dashboard.
+url: https://github.com/skydiveTom/home-assistant-rtsp-camera
+arch:
+  - aarch64
+  - amd64
+startup: application
+boot: auto
+stage: stable
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+hassio_api: true
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:cctv
+panel_title: RTSP Cameras
+panel_admin: false
+watchdog: http://[HOST]:[PORT:8099]/health
+options:
+  language: auto
+  default_rtsp_transport: tcp
+  install_integration: true
+  ha_restart_after_install: false
+  health_check_interval: 60
+  test_timeout: 15
+  preview_mode: mjpeg
+  preview_max_height: 1080
+  preview_fps: 5
+  redact_credentials_in_logs: true
+schema:
+  language: list(auto|en|de|es|pl)
+  default_rtsp_transport: list(tcp|udp|udp_multicast|http)
+  install_integration: bool
+  ha_restart_after_install: bool
+  health_check_interval: int(0,86400)
+  test_timeout: int(5,120)
+  preview_mode: list(mjpeg|hls)
+  preview_max_height: int(240,2160)
+  preview_fps: int(1,30)
+  redact_credentials_in_logs: bool

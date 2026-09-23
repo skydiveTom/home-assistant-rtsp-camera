@@ -1,0 +1,46 @@
+configuration:
+  language:
+    name: Idioma de la interfaz
+    description: >-
+      Idioma de la interfaz del complemento. Con auto se usa el idioma
+      configurado en Home Assistant; el inglés es el valor por defecto.
+  default_rtsp_transport:
+    name: Transporte RTSP predeterminado
+    description: >-
+      Transporte usado al añadir una cámara nueva. TCP funciona con la mayoría
+      de cámaras, algunos dispositivos necesitan udp o http.
+  install_integration:
+    name: Instalar la integración de Home Assistant
+    description: >-
+      Copia la integración de cámaras incluida en config/custom_components para
+      que cada cámara sea una entidad. Desactívalo si instalas la integración
+      por tu cuenta, por ejemplo con HACS.
+  ha_restart_after_install:
+    name: Reiniciar Home Assistant tras la instalación
+    description: >-
+      Reinicia Home Assistant automáticamente después de instalar o actualizar
+      la integración, para que las entidades aparezcan de inmediato.
+  health_check_interval:
+    name: Intervalo de comprobación del stream
+    description: >-
+      Segundos entre comprobaciones automáticas de cada cámara activada.
+      Pon 0 para desactivarlas.
+  test_timeout:
+    name: Tiempo de espera de la prueba
+    description: Segundos de espera de una cámara al probar o previsualizar el stream.
+  preview_mode:
+    name: Modo de vista previa
+    description: >-
+      mjpeg recodifica cada fotograma y funciona en todos los navegadores. hls
+      copia el stream H.264 cuando es posible y usa mucha menos CPU.
+  preview_max_height:
+    name: Altura máxima de la vista previa
+    description: Altura máxima en píxeles para miniaturas y vista previa.
+  preview_fps:
+    name: Fotogramas por segundo de la vista previa
+    description: Fotogramas por segundo usados en MJPEG y en la vista previa HLS transcodificada.
+  redact_credentials_in_logs:
+    name: Ocultar credenciales en el registro
+    description: Sustituye usuario y contraseña de las URL de stream antes de escribirlas en el registro.
+network:
+  8099/TCP: Puerto interno usado por el ingress de Home Assistant. No lo cambies.

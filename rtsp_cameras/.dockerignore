@@ -1,0 +1,7 @@
+__pycache__
+*.py[cod]
+tests
+.pytest_cache
+.ruff_cache
+*.md
+!README.md

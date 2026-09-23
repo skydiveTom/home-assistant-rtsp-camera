@@ -1,0 +1,46 @@
+configuration:
+  language:
+    name: Sprache der Oberfläche
+    description: >-
+      Sprache der Add-on-Oberfläche. Mit auto wird die in Home Assistant
+      eingestellte Sprache verwendet; Englisch ist der Fallback.
+  default_rtsp_transport:
+    name: Standard-RTSP-Transport
+    description: >-
+      Transport für neue Kameras. TCP funktioniert bei den meisten Kameras,
+      manche Geräte brauchen udp oder http.
+  install_integration:
+    name: Home Assistant Integration installieren
+    description: >-
+      Kopiert die mitgelieferte Kamera-Integration nach config/custom_components,
+      damit jede Kamera zu einer Kamera-Entität wird. Deaktivieren, wenn die
+      Integration selbst installiert wird, zum Beispiel über HACS.
+  ha_restart_after_install:
+    name: Home Assistant nach der Installation neu starten
+    description: >-
+      Startet Home Assistant nach Installation oder Aktualisierung der
+      Integration automatisch neu, damit die Kamera-Entitäten sofort erscheinen.
+  health_check_interval:
+    name: Intervall der Stream-Prüfung
+    description: >-
+      Sekunden zwischen automatischen Stream-Prüfungen aller aktivierten
+      Kameras. Auf 0 setzen, um die Prüfungen zu deaktivieren.
+  test_timeout:
+    name: Timeout der Stream-Prüfung
+    description: Sekunden, die beim Testen oder in der Vorschau auf eine Kamera gewartet wird.
+  preview_mode:
+    name: Vorschaumodus
+    description: >-
+      mjpeg kodiert jedes Bild neu und läuft in jedem Browser. hls kopiert den
+      H.264-Stream wenn möglich und braucht deutlich weniger CPU.
+  preview_max_height:
+    name: Maximale Vorschauhöhe
+    description: Maximale Höhe in Pixeln für Vorschaubilder und Vorschau.
+  preview_fps:
+    name: Bildrate der Vorschau
+    description: Bilder pro Sekunde für MJPEG und die transcodierte HLS-Vorschau.
+  redact_credentials_in_logs:
+    name: Zugangsdaten im Log maskieren
+    description: Ersetzt Benutzername und Passwort in Stream-URLs, bevor sie geloggt werden.
+network:
+  8099/TCP: Interner Port des Home Assistant Ingress. Nicht ändern.

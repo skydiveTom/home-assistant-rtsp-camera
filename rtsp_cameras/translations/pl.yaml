@@ -1,0 +1,46 @@
+configuration:
+  language:
+    name: Język interfejsu
+    description: >-
+      Język interfejsu dodatku. Ustaw auto, aby podążać za językiem ustawionym
+      w Home Assistant; domyślnie używany jest angielski.
+  default_rtsp_transport:
+    name: Domyślny transport RTSP
+    description: >-
+      Transport używany przy dodawaniu nowej kamery. TCP działa z większością
+      kamer, niektóre urządzenia wymagają udp lub http.
+  install_integration:
+    name: Instaluj integrację Home Assistant
+    description: >-
+      Kopiuje dołączoną integrację kamer do katalogu config/custom_components,
+      dzięki czemu każda kamera staje się encją kamery. Wyłącz, jeśli
+      instalujesz integrację samodzielnie, np. przez HACS.
+  ha_restart_after_install:
+    name: Restartuj Home Assistant po instalacji
+    description: >-
+      Automatycznie restartuje Home Assistant po zainstalowaniu lub aktualizacji
+      integracji, aby encje kamer pojawiły się od razu.
+  health_check_interval:
+    name: Interwał sprawdzania strumieni
+    description: >-
+      Liczba sekund między automatycznymi sprawdzeniami każdej włączonej kamery.
+      Ustaw 0, aby wyłączyć automatyczne sprawdzanie.
+  test_timeout:
+    name: Limit czasu testu strumienia
+    description: Czas w sekundach oczekiwania na kamerę podczas testu lub podglądu.
+  preview_mode:
+    name: Tryb podglądu
+    description: >-
+      mjpeg koduje każdą klatkę na nowo i działa w każdej przeglądarce. hls
+      kopiuje strumień H.264, gdy to możliwe, i zużywa znacznie mniej CPU.
+  preview_max_height:
+    name: Limit wysokości podglądu
+    description: Maksymalna wysokość w pikselach dla miniatur i podglądu.
+  preview_fps:
+    name: Liczba klatek podglądu
+    description: Liczba klatek na sekundę używana w podglądzie MJPEG oraz transkodowanym HLS.
+  redact_credentials_in_logs:
+    name: Maskuj dane logowania w logach
+    description: Zastępuje nazwy użytkownika i hasła w adresach strumieni przed zapisaniem do logu.
+network:
+  8099/TCP: Wewnętrzny port używany przez ingress Home Assistant. Nie zmieniaj go.
