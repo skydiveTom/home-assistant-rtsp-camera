@@ -70,6 +70,13 @@ def test_integration_translations_are_complete() -> None:
         assert flatten(data) == reference, f"integration translation {code} is incomplete"
 
 
+def test_english_translation_matches_strings_json() -> None:
+    """Home Assistant loads translations/*.json, so English must mirror the source."""
+    strings = read_json(INTEGRATION_DIR / "strings.json")
+    english = read_json(INTEGRATION_DIR / "translations" / "en.json")
+    assert english == strings
+
+
 def test_translate_falls_back_to_english() -> None:
     translations = Translations(LOCALES_DIR)
     assert translations.translate("app.title", "pl") == "RTSP Camera Manager"

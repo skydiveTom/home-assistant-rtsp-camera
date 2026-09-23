@@ -12,6 +12,17 @@ it works and use **Quick preview** for a live look — then place the resulting
 [![Open your Home Assistant instance and show the add-on store.](https://my.home-assistant.io/badges/supervisor_store.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FskydiveTom%2Fhome-assistant-rtsp-camera)
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=skydiveTom&repository=home-assistant-rtsp-camera&category=integration)
 
+## Where do I add cameras?
+
+In the add-on: open the **RTSP Cameras** panel (sidebar entry, or *Settings →
+Add-ons → RTSP Camera Manager → Open web UI*), press **Add camera**, name it,
+paste the RTSP URL and check it with *Test stream* and *Quick preview* before you
+save it.
+
+The integration deliberately has no "add camera" dialog: it only turns the camera
+file written by the add-on into `camera` entities, so cameras are managed in
+exactly one place — the add-on panel.
+
 ## Contents of this repository
 
 | Path | What it is |

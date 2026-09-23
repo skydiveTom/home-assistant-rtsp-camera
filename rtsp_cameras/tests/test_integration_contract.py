@@ -13,7 +13,8 @@ import pytest
 from app.config import Settings
 from app.storage import CameraStore
 
-INTEGRATION_DIR = Path(__file__).resolve().parents[2] / "custom_components" / "rtsp_cameras"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+INTEGRATION_DIR = REPO_ROOT / "custom_components" / "rtsp_cameras"
 PACKAGE_NAME = "rtsp_cameras_under_test"
 
 
@@ -130,3 +131,15 @@ def test_addon_output_is_understood_by_the_integration(
     assert list(cameras) == ["front-door"]
     assert cameras["front-door"].name == "Front door"
     assert cameras["front-door"].url == "rtsp://user:pass@camera.local/stream1"
+
+
+def test_add_camera_link_points_to_the_documentation(
+    integration_const: ModuleType, models: ModuleType
+) -> None:
+    """The camera device page links to the chapter that explains how to add cameras."""
+    assert integration_const.ADD_CAMERA_URL.endswith("#adding-a-camera")
+    assert integration_const.DOCS_URL.endswith("rtsp_cameras/DOCS.md")
+
+    docs = (REPO_ROOT / "rtsp_cameras" / "DOCS.md").read_text(encoding="utf-8")
+    assert "## Adding a camera" in docs
+    assert "Press **Add camera**" in docs

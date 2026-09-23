@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "RTSP Camera Manager",
-        "description": "Das Add-on schreibt jede erstellte Kamera in eine JSON-Datei. Richte diese Integration auf diese Datei aus, um pro Instanz eine Kamera-Entität zu erhalten.",
+        "description": "Kameras werden im Add-on-Panel hinzugefügt: RTSP Cameras öffnen und Kamera hinzufügen drücken. Diese Integration liest die vom Add-on geschriebene JSON-Datei, sodass jede Kamera zu einer Kamera-Entität wird.",
         "data": {
           "cameras_file": "Kamera-Datei",
           "scan_interval": "Abfrageintervall (Sekunden)"

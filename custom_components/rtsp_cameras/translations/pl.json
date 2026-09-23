@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "RTSP Camera Manager",
-        "description": "Dodatek zapisuje każdą utworzoną kamerę do pliku JSON. Wskaż ten plik w integracji, aby otrzymać jedną encję kamery na instancję.",
+        "description": "Kamery dodajesz w panelu dodatku: otwórz RTSP Cameras i naciśnij Dodaj kamerę. Ta integracja odczytuje plik JSON zapisywany przez dodatek, więc każda kamera staje się encją kamery.",
         "data": {
           "cameras_file": "Plik kamer",
           "scan_interval": "Interwał odczytu (sekundy)"

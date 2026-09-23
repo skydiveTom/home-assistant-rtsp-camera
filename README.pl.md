@@ -13,6 +13,17 @@ umieść powstałą encję `camera` na dowolnym pulpicie.
 [![Otwórz sklep dodatków w swojej instancji Home Assistant.](https://my.home-assistant.io/badges/supervisor_store.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FskydiveTom%2Fhome-assistant-rtsp-camera)
 [![Otwórz repozytorium w HACS w swojej instancji Home Assistant.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=skydiveTom&repository=home-assistant-rtsp-camera&category=integration)
 
+## Gdzie dodaję kamery?
+
+W dodatku: otwórz panel **RTSP Cameras** (pozycja w menu po lewej, albo
+*Ustawienia → Dodatki → RTSP Camera Manager → Otwórz interfejs web*), naciśnij
+**Dodaj kamerę**, nadaj nazwę, wklej adres RTSP i sprawdź go przyciskami
+*Sprawdź stream* oraz *Szybki podgląd* przed zapisaniem.
+
+Integracja celowo nie ma okna „dodaj kamerę”: zamienia tylko plik kamer zapisany
+przez dodatek na encje `camera`, dzięki czemu kamery zarządzasz w jednym miejscu —
+w panelu dodatku.
+
 ## Co jest w repozytorium
 
 | Ścieżka | Opis |

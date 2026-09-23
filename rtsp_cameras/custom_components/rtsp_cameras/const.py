@@ -23,6 +23,9 @@ FILE_GENERATOR = "RTSP Camera Manager add-on"
 MANUFACTURER = "RTSP Camera Manager"
 DEFAULT_MODEL = "Generic RTSP camera"
 
+DOCS_URL = "https://github.com/skydiveTom/home-assistant-rtsp-camera/blob/main/rtsp_cameras/DOCS.md"
+ADD_CAMERA_URL = f"{DOCS_URL}#adding-a-camera"
+
 ATTR_CAMERA_ID = "rtsp_camera_id"
 ATTR_RTSP_TRANSPORT = "rtsp_transport"
 ATTR_SOURCE_FILE = "source_file"

@@ -35,6 +35,20 @@ The add-on is a small camera manager for Home Assistant:
 
 ## Adding a camera
 
+Cameras are added **in the add-on**, not inside Home Assistant:
+
+1. Open the add-on panel **RTSP Cameras** (sidebar entry, or *Settings → Add-ons →
+   RTSP Camera Manager → Open web UI*).
+2. Press **Add camera**.
+3. Give it a name, paste the stream URL and use **Test stream** and *Quick
+   preview* to verify it.
+4. Press **Save camera**. The `camera` entity shows up in Home Assistant within a
+   few seconds, because the integration re-reads the camera file every 10 seconds.
+
+The integration is the read-only counterpart: it turns every entry of the camera
+file into one `camera` entity. That is why there is no "add camera" dialog in
+Home Assistant - cameras are managed in exactly one place.
+
 | Field | Notes |
 | --- | --- |
 | **Name** | Becomes the entity name, e.g. `Front door` → `camera.front_door`. |

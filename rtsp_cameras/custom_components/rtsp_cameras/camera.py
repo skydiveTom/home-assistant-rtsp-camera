@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    ADD_CAMERA_URL,
     ATTR_CAMERA_ID,
     ATTR_RTSP_TRANSPORT,
     ATTR_SOURCE_FILE,
@@ -127,15 +128,17 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device information for the camera."""
+        """Return device information for the camera.
+
+        The device page links to the documentation that explains how cameras are
+        added in the add-on panel.
+        """
         return DeviceInfo(
             identifiers={(DOMAIN, self._definition.id)},
             name=self._definition.name,
             manufacturer=MANUFACTURER,
             model=self._definition.model,
-            configuration_url=(
-                "https://github.com/skydiveTom/home-assistant-rtsp-camera"
-            ),
+            configuration_url=ADD_CAMERA_URL,
         )
 
     @property

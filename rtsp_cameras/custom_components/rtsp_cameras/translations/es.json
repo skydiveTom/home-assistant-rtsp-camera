@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "RTSP Camera Manager",
-        "description": "El complemento escribe cada cámara que crees en un archivo JSON. Apunta esta integración a ese archivo para obtener una entidad de cámara por instancia.",
+        "description": "Las cámaras se añaden en el panel del complemento: abre RTSP Cameras y pulsa Añadir cámara. Esta integración lee el archivo JSON que escribe el complemento, así cada cámara se convierte en una entidad de cámara.",
         "data": {
           "cameras_file": "Archivo de cámaras",
           "scan_interval": "Intervalo de análisis (segundos)"
