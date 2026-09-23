@@ -9,14 +9,14 @@
           "scan_interval": "Interwał odczytu (sekundy)"
         },
         "data_description": {
-          "cameras_file": "Ścieżka względna jest rozwiązywana w katalogu konfiguracji Home Assistant.",
+          "cameras_file": "Ścieżka względna jest rozwiązywana w katalogu konfiguracji Home Assistant; folder jest tworzony automatycznie, jeśli jeszcze nie istnieje.",
           "scan_interval": "Jak często plik jest sprawdzany pod kątem dodanych, zmienionych lub usuniętych kamer."
         }
       }
     },
     "error": {
       "invalid_path": "Podaj ścieżkę pliku kamer.",
-      "parent_missing": "Folder, który ma zawierać ten plik, nie istnieje."
+      "cannot_create": "Nie udało się utworzyć folderu dla tego pliku; sprawdź ścieżkę i uprawnienia."
     },
     "abort": {
       "single_instance_allowed": "Już skonfigurowano. Dozwolona jest tylko jedna instancja."
@@ -31,7 +31,7 @@
           "scan_interval": "Interwał odczytu (sekundy)"
         },
         "data_description": {
-          "cameras_file": "Ścieżka względna jest rozwiązywana w katalogu konfiguracji Home Assistant.",
+          "cameras_file": "Ścieżka względna jest rozwiązywana w katalogu konfiguracji Home Assistant; folder jest tworzony automatycznie, jeśli jeszcze nie istnieje.",
           "scan_interval": "Jak często plik jest sprawdzany pod kątem dodanych, zmienionych lub usuniętych kamer."
         }
       }

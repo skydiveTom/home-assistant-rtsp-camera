@@ -9,14 +9,14 @@
           "scan_interval": "Intervalo de análisis (segundos)"
         },
         "data_description": {
-          "cameras_file": "Una ruta relativa se resuelve dentro de tu directorio de configuración de Home Assistant.",
+          "cameras_file": "Una ruta relativa se resuelve dentro de tu directorio de configuración de Home Assistant; la carpeta se crea automáticamente si aún no existe.",
           "scan_interval": "Con qué frecuencia se comprueba el archivo en busca de cámaras añadidas, modificadas o eliminadas."
         }
       }
     },
     "error": {
       "invalid_path": "Introduce la ruta del archivo de cámaras.",
-      "parent_missing": "La carpeta que debería contener este archivo no existe."
+      "cannot_create": "No se pudo crear la carpeta para este archivo; revisa la ruta y los permisos."
     },
     "abort": {
       "single_instance_allowed": "Ya está configurado. Solo se permite una instancia."
@@ -31,7 +31,7 @@
           "scan_interval": "Intervalo de análisis (segundos)"
         },
         "data_description": {
-          "cameras_file": "Una ruta relativa se resuelve dentro de tu directorio de configuración de Home Assistant.",
+          "cameras_file": "Una ruta relativa se resuelve dentro de tu directorio de configuración de Home Assistant; la carpeta se crea automáticamente si aún no existe.",
           "scan_interval": "Con qué frecuencia se comprueba el archivo en busca de cámaras añadidas, modificadas o eliminadas."
         }
       }

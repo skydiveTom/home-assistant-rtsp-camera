@@ -26,6 +26,26 @@ def models() -> ModuleType:
     return importlib.import_module(f"{PACKAGE_NAME}.models")
 
 
+@pytest.fixture(scope="module")
+def integration_const(models: ModuleType) -> ModuleType:
+    """Return the constants module of the integration."""
+    return importlib.import_module(f"{PACKAGE_NAME}.const")
+
+
+def test_resolve_cameras_path(integration_const: ModuleType, tmp_path: Path) -> None:
+    resolve = integration_const.resolve_cameras_path
+
+    assert resolve("rtsp_cameras/cameras.json", tmp_path) == (
+        tmp_path / "rtsp_cameras" / "cameras.json"
+    )
+    assert resolve("", tmp_path) == tmp_path / "rtsp_cameras" / "cameras.json"
+    assert resolve(None, tmp_path) == tmp_path / "rtsp_cameras" / "cameras.json"
+    assert resolve("   ", tmp_path) == tmp_path / "rtsp_cameras" / "cameras.json"
+
+    absolute = tmp_path / "elsewhere" / "cameras.json"
+    assert resolve(str(absolute), tmp_path / "config") == absolute
+
+
 def test_parse_cameras_from_the_documented_object(models: ModuleType) -> None:
     cameras = models.parse_cameras(
         {

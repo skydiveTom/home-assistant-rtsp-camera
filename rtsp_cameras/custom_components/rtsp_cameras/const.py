@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 DOMAIN = "rtsp_cameras"
 
 # Config entry data / options
@@ -26,3 +28,17 @@ ATTR_RTSP_TRANSPORT = "rtsp_transport"
 ATTR_SOURCE_FILE = "source_file"
 
 SUPPORTED_SCHEMES = ("rtsp://", "rtsps://", "rtmp://", "http://", "https://")
+
+
+def resolve_cameras_path(configured: str | None, config_dir: str | Path) -> Path:
+    """Resolve the configured camera file path against the configuration folder.
+
+    Absolute paths are used as they are, relative paths are resolved inside the
+    Home Assistant configuration directory - which is exactly the place the
+    add-on publishes its camera file to.
+    """
+    value = str(configured or "").strip() or DEFAULT_CAMERAS_FILENAME
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path(config_dir) / path
+    return path

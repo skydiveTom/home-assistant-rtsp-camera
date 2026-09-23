@@ -9,14 +9,14 @@
           "scan_interval": "Abfrageintervall (Sekunden)"
         },
         "data_description": {
-          "cameras_file": "Ein relativer Pfad wird im Home-Assistant-Konfigurationsverzeichnis aufgelöst.",
+          "cameras_file": "Ein relativer Pfad wird im Home-Assistant-Konfigurationsverzeichnis aufgelöst; der Ordner wird automatisch angelegt, wenn er noch nicht existiert.",
           "scan_interval": "Wie oft die Datei auf hinzugefügte, geänderte oder entfernte Kameras geprüft wird."
         }
       }
     },
     "error": {
       "invalid_path": "Gib den Pfad der Kamera-Datei ein.",
-      "parent_missing": "Der Ordner, der diese Datei enthalten soll, existiert nicht."
+      "cannot_create": "Der Ordner für diese Datei konnte nicht angelegt werden; prüfe den Pfad und die Berechtigungen."
     },
     "abort": {
       "single_instance_allowed": "Bereits konfiguriert. Es ist nur eine Instanz erlaubt."
@@ -31,7 +31,7 @@
           "scan_interval": "Abfrageintervall (Sekunden)"
         },
         "data_description": {
-          "cameras_file": "Ein relativer Pfad wird im Home-Assistant-Konfigurationsverzeichnis aufgelöst.",
+          "cameras_file": "Ein relativer Pfad wird im Home-Assistant-Konfigurationsverzeichnis aufgelöst; der Ordner wird automatisch angelegt, wenn er noch nicht existiert.",
           "scan_interval": "Wie oft die Datei auf hinzugefügte, geänderte oder entfernte Kameras geprüft wird."
         }
       }

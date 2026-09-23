@@ -15,11 +15,11 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     CONF_CAMERAS_FILE,
     CONF_SCAN_INTERVAL,
-    DEFAULT_CAMERAS_FILENAME,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
+    resolve_cameras_path,
 )
 from .models import RtspCameraDefinition, parse_cameras
 
@@ -28,16 +28,10 @@ _LOGGER = logging.getLogger(__name__)
 
 def resolve_cameras_file(hass: HomeAssistant, entry: ConfigEntry) -> Path:
     """Return the absolute path of the camera definition file."""
-    configured = str(
-        entry.options.get(CONF_CAMERAS_FILE)
-        or entry.data.get(CONF_CAMERAS_FILE)
-        or DEFAULT_CAMERAS_FILENAME
-    ).strip() or DEFAULT_CAMERAS_FILENAME
-
-    path = Path(configured)
-    if not path.is_absolute():
-        path = Path(hass.config.path(configured))
-    return path
+    configured = entry.options.get(CONF_CAMERAS_FILE) or entry.data.get(
+        CONF_CAMERAS_FILE
+    )
+    return resolve_cameras_path(configured, hass.config.path())
 
 
 def resolve_scan_interval(entry: ConfigEntry) -> int:
@@ -73,11 +67,19 @@ class RtspCamerasCoordinator(DataUpdateCoordinator[dict[str, RtspCameraDefinitio
         """Read the camera file without blocking the event loop."""
         return await self.hass.async_add_executor_job(self._read_cameras)
 
+    def _ensure_directory(self) -> None:
+        """Create the folder of the camera file so the add-on can write into it."""
+        try:
+            self.cameras_file.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as err:
+            _LOGGER.debug("Cannot create %s: %s", self.cameras_file.parent, err)
+
     def _read_cameras(self) -> dict[str, RtspCameraDefinition]:
         """Parse the camera file, tolerating a missing file."""
         if not self.cameras_file.is_file():
+            self._ensure_directory()
             if not self.missing_reported:
-                _LOGGER.warning(
+                _LOGGER.info(
                     "Camera file %s does not exist yet, waiting for the add-on",
                     self.cameras_file,
                 )

@@ -76,6 +76,9 @@ camera changes – only for installing or updating the integration itself.
    accept the default file path (`rtsp_cameras/cameras.json` inside your config
    directory).
 
+The folder does not have to exist yet: it is created automatically, and the file
+is picked up as soon as the add-on (or you) fills it.
+
 If you manage the integration yourself, set the add-on option
 `install_integration` to `false` so the add-on does not overwrite it.
 
@@ -112,6 +115,13 @@ If you manage the integration yourself, set the add-on option
 - Check Settings → Devices & services for *RTSP Camera Manager*; if you install
   the integration manually, add it there.
 - Look at the add-on log for `Installing the Home Assistant integration`.
+
+**Adding the integration complains about the camera file folder**
+
+That was a bug in versions before 0.1.1: the folder of `cameras.json` had to exist
+already. Update the integration (add-on 0.1.1 and newer) and the folder is created
+automatically. If the message still appears, the path points at something Home
+Assistant cannot create - use the default `rtsp_cameras/cameras.json`.
 
 **`Test stream` fails**
 

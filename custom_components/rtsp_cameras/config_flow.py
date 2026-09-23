@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -22,7 +22,10 @@ from .const import (
     DOMAIN,
     MAX_SCAN_INTERVAL,
     MIN_SCAN_INTERVAL,
+    resolve_cameras_path,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 TITLE = "RTSP Camera Manager"
 
@@ -71,19 +74,26 @@ class RtspCamerasConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     def _validate(self, user_input: dict[str, Any]) -> dict[str, str]:
-        """Validate the entered camera file path."""
-        errors: dict[str, str] = {}
+        """Validate the camera file path and prepare its folder.
+
+        The folder is created when it does not exist yet: the add-on publishes
+        the camera file there, but it may not have run before the integration is
+        added.
+        """
         raw = str(user_input.get(CONF_CAMERAS_FILE, "")).strip()
         if not raw:
-            errors[CONF_CAMERAS_FILE] = "invalid_path"
-            return errors
+            return {CONF_CAMERAS_FILE: "invalid_path"}
 
-        path = Path(raw)
-        if not path.is_absolute():
-            path = Path(self.hass.config.path(raw))
-        if not path.parent.exists():
-            errors[CONF_CAMERAS_FILE] = "parent_missing"
-        return errors
+        path = resolve_cameras_path(raw, self.hass.config.path())
+        if path.is_dir():
+            return {CONF_CAMERAS_FILE: "invalid_path"}
+
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as err:
+            _LOGGER.warning("Cannot create the camera file folder %s: %s", path.parent, err)
+            return {CONF_CAMERAS_FILE: "cannot_create"}
+        return {}
 
     @staticmethod
     @callback

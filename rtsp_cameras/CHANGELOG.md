@@ -4,6 +4,25 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-09-23
+
+### Fixed
+
+- Adding the integration no longer fails with *"the folder that should contain
+  this file does not exist"* when the add-on has not created
+  `rtsp_cameras/cameras.json` yet: the folder is created automatically and the
+  file is picked up as soon as the add-on writes it.
+- An unusable camera file path (empty, or pointing at an existing folder) is now
+  reported with its own message, and a folder that cannot be created gets a
+  separate, actionable error.
+
+### Changed
+
+- The camera file location is resolved by one shared helper, so the config flow,
+  the options flow and the coordinator always agree on the same path.
+- *"Camera file does not exist yet, waiting for the add-on"* is logged as an
+  informational message instead of a warning.
+
 ## [0.1.0] - 2026-09-23
 
 ### Added
