@@ -1,11 +1,14 @@
 name: RTSP Camera Manager
-version: "0.1.3"
+version: "0.1.4"
 slug: rtsp_cameras
 description: >-
   Add RTSP camera instances to Home Assistant using only the stream URL. Name
   them, check that the stream works, preview it live and use every instance as a
   camera entity on any dashboard.
 url: https://github.com/skydiveTom/home-assistant-rtsp-camera
+# Prebuilt multi-arch image, published by .github/workflows/build-addon.yml.
+# Supervisor pulls this image instead of building the app on the host.
+image: ghcr.io/skydiveTom/rtsp-cameras
 arch:
   - aarch64
   - amd64

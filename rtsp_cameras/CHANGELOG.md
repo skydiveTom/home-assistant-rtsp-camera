@@ -4,6 +4,24 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-09-23
+
+### Added
+
+- Prebuilt, multi-arch app image published to the GitHub Container Registry
+  (`ghcr.io/skydiveTom/rtsp-cameras`) by the new *Build add-on image* workflow.
+  Supervisor now pulls the image instead of building it on your Home Assistant
+  host, so installing and updating takes seconds instead of minutes.
+- Repository tests that keep the workflow and the manifest in sync: the published
+  image name must match the `image` key of the manifest, the image is pushed as a
+  multi-arch manifest and the add-on version is always published as an image tag.
+
+### Changed
+
+- The build workflow uses the current Home Assistant builder actions
+  (`home-assistant/builder/actions/*` 2026.09.0) with Docker BuildKit, including
+  an ARM runner for the `aarch64` image.
+
 ## [0.1.3] - 2026-09-23
 
 ### Fixed

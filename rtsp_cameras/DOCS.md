@@ -33,6 +33,19 @@ The add-on is a small camera manager for Home Assistant:
    integration into `/config/custom_components/rtsp_cameras` and Home Assistant
    only picks that up on restart. The banner in the interface offers a button.
 
+## Prebuilt image
+
+The app is published as a multi-arch container image
+(`ghcr.io/skydiveTom/rtsp-cameras`, `amd64` and `aarch64`) by the
+*Build add-on image* workflow, and the manifest references it. Install and update
+therefore **pull** the image instead of building it on your Home Assistant host -
+an update takes seconds.
+
+If you fork this repository and want Supervisor to build your own image, remove
+the `image` key from `rtsp_cameras/config.yaml` and push your version: Supervisor
+then builds locally again (and the workflow publishes the image under your own
+GitHub namespace).
+
 ## Adding a camera
 
 Cameras are added **in the add-on**, not inside Home Assistant:

@@ -53,6 +53,9 @@ w panelu dodatku.
 - **Bezpieczeństwo** – dodatek dostępny wyłącznie przez uwierzytelniony ingress
   Home Assistant, a dane logowania w adresach strumieni są maskowane w interfejsie
   i w logach.
+- **Gotowy obraz** – publikowany jako obraz wieloarchitekturowy
+  (`ghcr.io/skydiveTom/rtsp-cameras`) przez GitHub Actions, więc instalacja
+  i aktualizacja pobierają obraz zamiast budować go na Twoim Home Assistant.
 
 ## Instalacja
 

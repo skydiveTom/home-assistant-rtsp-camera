@@ -1,0 +1,99 @@
+name: Build add-on image
+
+# Builds the multi-arch image of the add-on and publishes it to the GitHub
+# Container Registry, so Supervisor pulls the image instead of building it on the
+# Home Assistant host. The image name must stay in sync with the "image" key of
+# rtsp_cameras/config.yaml, and the tag is the add-on version.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rtsp_cameras/**"
+      - ".github/workflows/build-addon.yml"
+  workflow_dispatch:
+
+env:
+  ARCHITECTURES: '["amd64", "aarch64"]'
+
+permissions:
+  contents: read
+
+jobs:
+  init:
+    name: Prepare the build
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Read the add-on version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(grep -oP '(?<=^version: ")[^"]+' rtsp_cameras/config.yaml)"
+          test -n "${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Building version ${version}"
+
+      - name: Prepare the build matrix
+        id: matrix
+        uses: home-assistant/builder/actions/prepare-multi-arch-matrix@2026.09.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          image-name: rtsp-cameras
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: init
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.init.outputs.matrix) }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Build the image
+        uses: home-assistant/builder/actions/build-image@2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image: ${{ matrix.image }}
+          image-tags: |
+            ${{ needs.init.outputs.version }}
+            latest
+          version: ${{ needs.init.outputs.version }}
+          context: rtsp_cameras
+          build-args: |
+            BUILD_VERSION=${{ needs.init.outputs.version }}
+            BUILD_ARCH=${{ matrix.arch }}
+          push: "true"
+          skip-existing: ${{ needs.init.outputs.version }}
+
+  manifest:
+    name: Publish the multi-arch manifest
+    needs: [init, build]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      packages: write
+    steps:
+      - name: Publish the manifest
+        uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.09.0
+        with:
+          architectures: ${{ env.ARCHITECTURES }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          image-name: rtsp-cameras
+          image-tags: |
+            ${{ needs.init.outputs.version }}
+            latest
+          skip-existing: ${{ needs.init.outputs.version }}
