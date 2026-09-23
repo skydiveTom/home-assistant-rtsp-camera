@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "RTSP Camera Manager",
+        "description": "The add-on writes every camera you create into a JSON file. Point this integration at that file to get one camera entity per instance.",
+        "data": {
+          "cameras_file": "Camera file",
+          "scan_interval": "Scan interval (seconds)"
+        },
+        "data_description": {
+          "cameras_file": "A relative path is resolved inside your Home Assistant configuration directory.",
+          "scan_interval": "How often the file is checked for added, changed or removed cameras."
+        }
+      }
+    },
+    "error": {
+      "invalid_path": "Enter the path of the camera file.",
+      "parent_missing": "The folder that should contain this file does not exist."
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured. Only a single instance is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "RTSP Camera Manager options",
+        "data": {
+          "cameras_file": "Camera file",
+          "scan_interval": "Scan interval (seconds)"
+        },
+        "data_description": {
+          "cameras_file": "A relative path is resolved inside your Home Assistant configuration directory.",
+          "scan_interval": "How often the file is checked for added, changed or removed cameras."
+        }
+      }
+    }
+  }
+}

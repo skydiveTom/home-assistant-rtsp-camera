@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "RTSP Camera Manager",
+        "description": "Das Add-on schreibt jede erstellte Kamera in eine JSON-Datei. Richte diese Integration auf diese Datei aus, um pro Instanz eine Kamera-Entität zu erhalten.",
+        "data": {
+          "cameras_file": "Kamera-Datei",
+          "scan_interval": "Abfrageintervall (Sekunden)"
+        },
+        "data_description": {
+          "cameras_file": "Ein relativer Pfad wird im Home-Assistant-Konfigurationsverzeichnis aufgelöst.",
+          "scan_interval": "Wie oft die Datei auf hinzugefügte, geänderte oder entfernte Kameras geprüft wird."
+        }
+      }
+    },
+    "error": {
+      "invalid_path": "Gib den Pfad der Kamera-Datei ein.",
+      "parent_missing": "Der Ordner, der diese Datei enthalten soll, existiert nicht."
+    },
+    "abort": {
+      "single_instance_allowed": "Bereits konfiguriert. Es ist nur eine Instanz erlaubt."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "RTSP Camera Manager Optionen",
+        "data": {
+          "cameras_file": "Kamera-Datei",
+          "scan_interval": "Abfrageintervall (Sekunden)"
+        },
+        "data_description": {
+          "cameras_file": "Ein relativer Pfad wird im Home-Assistant-Konfigurationsverzeichnis aufgelöst.",
+          "scan_interval": "Wie oft die Datei auf hinzugefügte, geänderte oder entfernte Kameras geprüft wird."
+        }
+      }
+    }
+  }
+}
