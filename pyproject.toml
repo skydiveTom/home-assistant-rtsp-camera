@@ -1,0 +1,30 @@
+[project]
+name = "home-assistant-rtsp-camera"
+version = "0.1.0"
+description = "Home Assistant add-on that adds RTSP camera instances using only the stream URL"
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-or-later" }
+
+[tool.pytest.ini_options]
+pythonpath = ["rtsp_cameras"]
+testpaths = ["rtsp_cameras/tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    ".venv",
+    "rtsp_cameras/app/static",
+    "rtsp_cameras/custom_components",
+    "rtsp_cameras/tests/fake_ffmpeg.py",
+    "rtsp_cameras/tests/fake_ffprobe.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
