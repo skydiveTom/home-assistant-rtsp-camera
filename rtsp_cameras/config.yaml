@@ -1,5 +1,5 @@
 name: RTSP Camera Manager
-version: "0.1.2"
+version: "0.1.3"
 slug: rtsp_cameras
 description: >-
   Add RTSP camera instances to Home Assistant using only the stream URL. Name
@@ -11,6 +11,9 @@ arch:
   - amd64
 startup: application
 boot: auto
+# The Home Assistant base images ship s6-overlay as ENTRYPOINT, so the app
+# provides its own init and Docker must not add one in front of it.
+init: false
 stage: stable
 map:
   - type: homeassistant_config

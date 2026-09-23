@@ -130,6 +130,13 @@ If you manage the integration yourself, set the add-on option
   the integration manually, add it there.
 - Look at the add-on log for `Installing the Home Assistant integration`.
 
+**The add-on stops with `s6-overlay-suexec: fatal: can only run as pid 1`**
+
+That happened in versions before 0.1.3: the manifest did not declare `init: false`,
+so Supervisor started the container with Docker's own init (tini) as PID 1 and the
+s6-overlay init of the Home Assistant base image refused to run. Update the add-on
+to 0.1.3 or newer - the flag is part of the manifest now.
+
 **Adding the integration complains about the camera file folder**
 
 That was a bug in versions before 0.1.1: the folder of `cameras.json` had to exist

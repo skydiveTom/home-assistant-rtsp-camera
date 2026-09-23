@@ -41,6 +41,7 @@ def test_addon_manifest_is_complete(addon_config: dict) -> None:
         "arch",
         "startup",
         "boot",
+        "init",
         "map",
         "ingress",
         "ingress_port",
@@ -54,6 +55,11 @@ def test_addon_manifest_is_complete(addon_config: dict) -> None:
     )
     for key in required:
         assert key in addon_config, f"config.yaml misses {key}"
+
+    # The Home Assistant base images ship s6-overlay as ENTRYPOINT. Without
+    # "init: false" Supervisor puts Docker's own init (tini) in front of it and
+    # the container dies with "s6-overlay-suexec: fatal: can only run as pid 1".
+    assert addon_config["init"] is False
 
     assert addon_config["slug"] == "rtsp_cameras"
     assert addon_config["ingress"] is True
