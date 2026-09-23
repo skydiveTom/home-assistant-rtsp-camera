@@ -144,41 +144,54 @@ def test_integration_copies_are_identical() -> None:
 
 
 def test_prebuilt_image_matches_the_manifest(addon_config: dict) -> None:
-    """The published image and the manifest must agree with each other."""
+    """The published image, the workflow and the manifest must agree."""
     workflow = read_yaml(REPO_ROOT / ".github" / "workflows" / "build-addon.yml")
-    steps = [
+    triggers = workflow.get("on") or workflow.get(True)
+
+    image_name = workflow["env"]["IMAGE_NAME"]
+    assert addon_config["image"] == f"ghcr.io/skydiveTom/{image_name}"
+    assert "{arch}" not in addon_config["image"], "reference the multi-arch manifest"
+
+    assert "main" in triggers["push"]["branches"]
+    assert ".github/workflows/build-addon.yml" in triggers["push"]["paths"]
+
+    prepare_steps = workflow["jobs"]["prepare"]["steps"]
+    version_script = next(step["run"] for step in prepare_steps if step.get("id") == "version")
+    matrix_script = next(step["run"] for step in prepare_steps if step.get("id") == "matrix")
+    assert "rtsp_cameras/config.yaml" in version_script
+    for token in ("amd64", "aarch64", "linux/amd64", "linux/arm64"):
+        assert token in matrix_script, f"the build matrix misses {token}"
+
+    build_step = next(
         step
+        for step in workflow["jobs"]["build"]["steps"]
+        if step.get("uses", "").startswith("docker/build-push-action")
+    )
+    context = build_step["with"]["context"]
+    assert (REPO_ROOT / context / "Dockerfile").is_file()
+    assert (REPO_ROOT / context / "config.yaml").is_file()
+    assert build_step["with"]["push"] is True
+    assert "${{ matrix.arch }}-${{ env.IMAGE_NAME }}" in build_step["with"]["tags"]
+    assert "needs.prepare.outputs.version" in build_step["with"]["tags"]
+    assert "BUILD_VERSION=" in build_step["with"]["build-args"]
+    assert "BUILD_ARCH=" in build_step["with"]["build-args"]
+
+    manifest_script = next(
+        step["run"] for step in workflow["jobs"]["manifest"]["steps"] if "run" in step
+    )
+    assert "buildx imagetools create" in manifest_script
+    assert "amd64-${IMAGE_NAME}" in manifest_script
+    assert "aarch64-${IMAGE_NAME}" in manifest_script
+    assert ":${VERSION}" in manifest_script
+    assert ":latest" in manifest_script
+
+    actions = [
+        step["uses"]
         for job in workflow["jobs"].values()
         for step in job["steps"]
         if "uses" in step
     ]
-
-    matrix_step = next(
-        step for step in steps if "prepare-multi-arch-matrix" in step["uses"]
-    )
-    build_step = next(step for step in steps if "builder/actions/build-image" in step["uses"])
-    manifest_step = next(
-        step for step in steps if "publish-multi-arch-manifest" in step["uses"]
-    )
-
-    image_name = manifest_step["with"]["image-name"]
-    assert matrix_step["with"]["image-name"] == image_name
-    assert addon_config["image"] == f"ghcr.io/skydiveTom/{image_name}"
-    assert "{arch}" not in addon_config["image"], "use the multi-arch manifest name"
-
-    assert json.loads(workflow["env"]["ARCHITECTURES"]) == ["amd64", "aarch64"]
-
-    context = build_step["with"]["context"]
-    assert (REPO_ROOT / context / "config.yaml").is_file()
-    assert (REPO_ROOT / context / "Dockerfile").is_file()
-    assert str(build_step["with"]["push"]) == "true"
-    assert "needs.init.outputs.version" in build_step["with"]["image-tags"]
-    assert "latest" in build_step["with"]["image-tags"]
-    assert "needs.init.outputs.version" in manifest_step["with"]["image-tags"]
-
-    actions = [step["uses"] for step in steps]
-    assert sum(action.startswith("home-assistant/builder/actions/") for action in actions) == 3
-    assert not any(action.startswith("home-assistant/builder@") for action in actions), (
+    assert not any("home-assistant/builder" in action for action in actions), (
         "the legacy builder action is deprecated"
     )
 
