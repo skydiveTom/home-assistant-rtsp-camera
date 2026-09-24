@@ -4,6 +4,16 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-09-24
+
+### Changed
+
+- The update check is now impossible to miss: the version chip in the header is a
+  button that jumps to *Settings* and starts the check, and the status strip shows
+  the add-on version with a warning LED and the newest version as soon as one is
+  available. The version chip also shows an arrow (for example `v0.1.9 ↑`) while an
+  update is waiting.
+
 ## [0.1.9] - 2026-09-24
 
 ### Added

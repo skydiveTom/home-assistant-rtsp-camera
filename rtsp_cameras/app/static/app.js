@@ -226,6 +226,19 @@
         el('span', { text: t('settings.preview_mode') }),
         el('b', { text: settings.preview_mode }),
       ]),
+      el('li', {
+        title: t('addon_update.check'),
+        class: 'statusstrip__action' + (state.addonUpdate.update_available ? ' is-alert' : ''),
+        onclick: (event) => checkAddonUpdate(event.currentTarget),
+      }, [
+        led(state.addonUpdate.update_available ? 'warn' : 'ok'),
+        el('span', { text: t('addon_update.short') }),
+        el('b', {
+          text: state.addonUpdate.update_available
+            ? t('addon_update.new_version', { version: state.addonUpdate.version_latest || '?' })
+            : String(settings.version || '?'),
+        }),
+      ]),
     );
   }
 
@@ -512,18 +525,28 @@
 
   function renderAll() {
     applyTranslations();
-    renderStatus();
-    renderBanner();
     renderCameras();
     renderSettings();
+    renderAddonState();
+  }
+
+  /* The version chip, the status strip and the banner all show update state. */
+  function renderAddonState() {
     renderAddonUpdate();
+    renderStatus();
+    renderBanner();
   }
 
   function renderAddonUpdate() {
     const box = document.getElementById('addon-update-box');
-    if (!box) return;
+    const chip = document.getElementById('btn-addon-version');
     const info = state.addonUpdate;
     const current = state.settings.version || '?';
+    if (chip) {
+      chip.textContent = info.update_available ? 'v' + current + ' ↑' : 'v' + current;
+      chip.classList.toggle('chip--alert', Boolean(info.update_available));
+    }
+    if (!box) return;
     const children = [
       el('h3', { text: t('addon_update.title') }),
       el('p', {
@@ -1059,8 +1082,7 @@
     } catch (err) {
       /* the add-on version is informative only */
     }
-    renderAddonUpdate();
-    renderBanner();
+    renderAddonState();
   }
 
   async function checkAddonUpdate(node) {
@@ -1069,8 +1091,7 @@
       const data = await api('api/addon/update/check', { method: 'POST' });
       if (data.addon) state.addonUpdate = Object.assign({}, state.addonUpdate, data.addon);
       state.addonUpdate.checked_at = new Date().toISOString();
-      renderAddonUpdate();
-      renderBanner();
+      renderAddonState();
       if (state.addonUpdate.update_available) {
         toast(t('addon_update.available', { version: state.addonUpdate.version_latest }), 'warn');
       } else {
@@ -1089,8 +1110,7 @@
       await api('api/addon/update/install', { method: 'POST' });
       state.addonUpdate.busy = true;
       state.integration = Object.assign({}, state.integration, { needs_restart: true });
-      renderAddonUpdate();
-      renderBanner();
+      renderAddonState();
       toast(t('addon_update.updating'), 'ok');
       waitForAddonRestart();
     } catch (err) {
@@ -1109,8 +1129,7 @@
           const data = await api('api/addon/update');
           if (data.addon) {
             state.addonUpdate = Object.assign({}, state.addonUpdate, data.addon, { busy: false });
-            renderAddonUpdate();
-            renderBanner();
+            renderAddonState();
             toast(t('addon_update.updated', { version: data.addon.version }), 'ok');
           }
         } catch (err) {
@@ -1249,6 +1268,10 @@
       syncRevealButton();
     });
     document.getElementById('preview-mode-select').addEventListener('change', () => startPreview(true));
+    document.getElementById('btn-addon-version').addEventListener('click', () => {
+      selectPanel('settings');
+      checkAddonUpdate();
+    });
     document.querySelectorAll('.tab').forEach((tab) => {
       tab.addEventListener('click', () => selectPanel(tab.dataset.panel));
     });

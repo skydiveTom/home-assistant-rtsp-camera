@@ -84,6 +84,8 @@
     "updating": "Dodatek aktualizuje się i zrestartuje. Strona połączy się ponownie automatycznie.",
     "updated": "Dodatek zaktualizowany do {version}",
     "up_to_date": "To jest najnowsza wersja",
+    "short": "Dodatek",
+    "new_version": "→ {version}",
     "no_supervisor": "Brak dostępu do API Supervisora — aktualizacje sprawdzisz w Ustawienia → Dodatki."
   },
   "integration": {

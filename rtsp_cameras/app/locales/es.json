@@ -84,6 +84,8 @@
     "updating": "El complemento se está actualizando y se reiniciará. Esta página se reconecta automáticamente.",
     "updated": "Complemento actualizado a {version}",
     "up_to_date": "Esta es la versión más reciente",
+    "short": "Complemento",
+    "new_version": "→ {version}",
     "no_supervisor": "La API del Supervisor no es accesible, las actualizaciones se revisan en Ajustes → Complementos."
   },
   "integration": {

@@ -493,6 +493,32 @@ textarea {
   margin-top: 12px;
 }
 
+/* The version chip in the header is the shortcut to the update check. */
+.chip--button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.chip--button:hover {
+  border-color: var(--accent, #38bdf8);
+}
+
+.chip--alert {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.statusstrip__action {
+  cursor: pointer;
+}
+
+.statusstrip__action.is-alert b {
+  color: var(--warn);
+}
+
 /* ------------------------------------------------------------------- banner */
 .banner-region:empty {
   display: none;

@@ -25,6 +25,11 @@ def test_index_renders_the_bootstrap(client: TestClient) -> None:
     assert "/static/app.css" in response.text
     assert "camera-modal" in response.text
     assert "preview-modal" in response.text
+    # The update check lives in the settings panel and behind the version chip.
+    assert 'id="addon-update-box"' in response.text
+    assert 'id="btn-addon-version"' in response.text
+    # The optional H.264 sub stream for Home Assistant.
+    assert 'id="field-ha-stream-url"' in response.text
 
 
 def test_index_uses_the_ingress_base_path(client: TestClient) -> None:

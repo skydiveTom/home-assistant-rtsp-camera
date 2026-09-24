@@ -84,6 +84,8 @@
     "updating": "Das Add-on aktualisiert sich selbst und startet neu. Diese Seite verbindet sich automatisch wieder.",
     "updated": "Add-on auf {version} aktualisiert",
     "up_to_date": "Das ist die neueste Version",
+    "short": "Add-on",
+    "new_version": "→ {version}",
     "no_supervisor": "Die Supervisor-API ist nicht erreichbar, Updates gibt es unter Einstellungen → Add-ons."
   },
   "integration": {
