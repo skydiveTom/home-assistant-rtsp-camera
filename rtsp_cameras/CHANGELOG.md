@@ -4,6 +4,21 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.11] - 2026-09-24
+
+### Fixed
+
+- **The update check was refused by Supervisor.** The add-on asked Supervisor to
+  reload the add-on store and to report its latest version, but without a
+  `hassio_role` the API answers a plain "refused" for those endpoints. The
+  manifest now declares `hassio_role: manager`, and the reload tries
+  `/store/reload`, `/addons/reload` and `/reload_updates` in turn.
+- A refused or unreachable Supervisor is no longer reported as a bare failure:
+  the interface and the add-on log now name the endpoint and the HTTP error, so
+  it is obvious whether the check or the permission is the problem.
+- When the add-on information does not carry the newest version, the check falls
+  back to Supervisor's list of pending updates (`/available_updates`).
+
 ## [0.1.10] - 2026-09-24
 
 ### Changed

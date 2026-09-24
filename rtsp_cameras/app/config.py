@@ -20,8 +20,9 @@ PREVIEW_MODE_AUTO = "auto"
 PREVIEW_MODE_CHOICES: tuple[str, ...] = (PREVIEW_MODE_AUTO, *SUPPORTED_PREVIEW_MODES)
 DEFAULT_PREVIEW_MODE = PREVIEW_MODE_AUTO
 
-ADDON_VERSION = "0.1.10"
+ADDON_VERSION = "0.1.11"
 ADDON_SLUG = "rtsp_cameras"
+ADDON_NAME = "RTSP Camera Manager"
 DEFAULT_DATA_DIR = "/data"
 DEFAULT_CONFIG_DIR = "/config"
 DEFAULT_TEMP_DIR = "/tmp"
@@ -78,6 +79,7 @@ class Settings:
     )
     ingress_port: int = DEFAULT_INGRESS_PORT
     addon_version: str = ADDON_VERSION
+    addon_name: str = ADDON_NAME
     supervisor_url: str = "http://supervisor"
     supervisor_token: str | None = None
 
@@ -170,6 +172,7 @@ class Settings:
                 environment.get("RTSP_ADDON_INGRESS_PORT"), DEFAULT_INGRESS_PORT, 1, 65535
             ),
             addon_version=environment.get("RTSP_ADDON_VERSION") or ADDON_VERSION,
+            addon_name=environment.get("RTSP_ADDON_NAME") or ADDON_NAME,
             supervisor_url=environment.get("SUPERVISOR_URL") or "http://supervisor",
             supervisor_token=environment.get("SUPERVISOR_TOKEN") or None,
         )

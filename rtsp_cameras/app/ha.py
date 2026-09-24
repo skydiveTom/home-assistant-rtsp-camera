@@ -36,6 +36,7 @@ class HomeAssistantClient:
     def __init__(self, settings: Settings) -> None:
         """Store the settings used for every request."""
         self.settings = settings
+        self.last_error: str | None = None
 
     @property
     def enabled(self) -> bool:
@@ -116,37 +117,86 @@ class HomeAssistantClient:
 
         Supervisor reports ``version_latest`` and ``update_available`` next to the
         installed version, which is exactly what the interface needs to offer an
-        update button.
+        update button. When the add-on information does not carry the latest
+        version, the list of pending updates is consulted as a fallback.
         """
         info = await self.async_self_info()
+        version = info.get("version")
+        latest = info.get("version_latest")
+        update_available = bool(info.get("update_available"))
+        source = "self"
+
+        if not update_available and not latest:
+            from_updates = await self.async_available_addon_update()
+            if from_updates:
+                latest = from_updates
+                update_available = True
+                source = "available_updates"
+
         return {
             "available": bool(info),
-            "version": info.get("version"),
-            "version_latest": info.get("version_latest"),
-            "update_available": bool(info.get("update_available")),
+            "version": version,
+            "version_latest": latest,
+            "update_available": update_available,
             "state": info.get("state"),
+            "source": source,
+            "error": None if info else self.last_error,
         }
 
-    async def async_store_reload(self) -> bool:
-        """Ask Supervisor to re-read the add-on store.
-
-        This is the "check for updates" button: without it Supervisor only looks
-        for new add-on versions on its own schedule.
-        """
+    async def async_available_addon_update(self) -> str | None:
+        """Return the newest version of this add-on from the update list."""
         try:
-            await self._call("/store/reload", method="POST", payload={})
+            response = await self._call("/available_updates")
         except (HomeAssistantUnavailable, HTTPError, URLError, OSError, ValueError) as err:
-            _LOGGER.warning("Cannot reload the add-on store: %s", err)
-            return False
-        return True
+            self.last_error = f"/available_updates: {err}"
+            _LOGGER.debug("Cannot read the list of available updates: %s", err)
+            return None
+
+        entries = response.get("data", {}).get("available_updates", []) if isinstance(
+            response, dict
+        ) else []
+        if not isinstance(entries, list):
+            return None
+
+        name = (self.settings.addon_name or "").strip().lower()
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("update_type") != "addon":
+                continue
+            entry_name = str(entry.get("name") or "").strip().lower()
+            if name and entry_name and entry_name != name:
+                continue
+            version = str(entry.get("version_latest") or "").strip()
+            if version:
+                return version
+        return None
+
+    async def async_store_reload(self) -> bool:
+        """Ask Supervisor to look for new add-on versions.
+
+        ``/store/reload`` is the documented way, the other two endpoints are older
+        aliases that some Supervisor versions answer instead.
+        """
+        for path in ("/store/reload", "/addons/reload", "/reload_updates"):
+            try:
+                await self._call(path, method="POST", payload={})
+            except (HomeAssistantUnavailable, HTTPError, URLError, OSError, ValueError) as err:
+                self.last_error = f"{path}: {err}"
+                _LOGGER.warning("Cannot reload the add-on store via %s: %s", path, err)
+                continue
+            _LOGGER.info("Add-on store reloaded via %s", path)
+            self.last_error = None
+            return True
+        return False
 
     async def async_update_addon(self) -> bool:
         """Ask Supervisor to update this add-on to the newest version."""
         try:
             await self._call("/addons/self/update", method="POST", payload={})
         except (HomeAssistantUnavailable, HTTPError, URLError, OSError, ValueError) as err:
+            self.last_error = f"/addons/self/update: {err}"
             _LOGGER.error("Cannot update the add-on: %s", err)
             return False
+        self.last_error = None
         return True
 
     async def async_restart_core(self) -> bool:

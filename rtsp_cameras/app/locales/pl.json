@@ -86,6 +86,7 @@
     "up_to_date": "To jest najnowsza wersja",
     "short": "Dodatek",
     "new_version": "→ {version}",
+    "failed": "Sprawdzenie nie udało się: {reason}",
     "no_supervisor": "Brak dostępu do API Supervisora — aktualizacje sprawdzisz w Ustawienia → Dodatki."
   },
   "integration": {

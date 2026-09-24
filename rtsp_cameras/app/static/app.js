@@ -556,7 +556,14 @@
     ];
 
     if (!info.available) {
-      children.push(el('p', { class: 'note note--tight', text: t('addon_update.no_supervisor') }));
+      children.push(
+        el('p', {
+          class: 'note note--tight note--warn',
+          text: info.error
+            ? t('addon_update.failed', { reason: info.error })
+            : t('addon_update.no_supervisor'),
+        }),
+      );
     } else if (info.busy) {
       children.push(el('p', { class: 'note note--tight', text: t('addon_update.updating') }));
     } else if (info.update_available) {
@@ -1092,7 +1099,14 @@
       if (data.addon) state.addonUpdate = Object.assign({}, state.addonUpdate, data.addon);
       state.addonUpdate.checked_at = new Date().toISOString();
       renderAddonState();
-      if (state.addonUpdate.update_available) {
+      if (!state.addonUpdate.available) {
+        toast(
+          state.addonUpdate.error
+            ? t('addon_update.failed', { reason: state.addonUpdate.error })
+            : t('addon_update.no_supervisor'),
+          'err',
+        );
+      } else if (state.addonUpdate.update_available) {
         toast(t('addon_update.available', { version: state.addonUpdate.version_latest }), 'warn');
       } else {
         toast(t('addon_update.up_to_date'), 'ok');

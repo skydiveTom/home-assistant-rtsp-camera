@@ -1,5 +1,5 @@
 ﻿name: RTSP Camera Manager
-version: "0.1.10"
+version: "0.1.11"
 slug: rtsp_cameras
 description: >-
   Add RTSP camera instances to Home Assistant using only the stream URL. Name
@@ -24,6 +24,9 @@ map:
     read_only: false
     path: /config
 hassio_api: true
+# Needed for the update check: reloading the store and updating this add-on are
+# manager level endpoints, the default role is refused by Supervisor.
+hassio_role: manager
 homeassistant_api: true
 ingress: true
 ingress_port: 8099

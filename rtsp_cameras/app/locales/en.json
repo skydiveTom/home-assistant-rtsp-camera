@@ -86,6 +86,7 @@
     "up_to_date": "This is the newest version",
     "short": "Add-on",
     "new_version": "→ {version}",
+    "failed": "Check failed: {reason}",
     "no_supervisor": "The Supervisor API is not reachable, so updates can only be checked in Settings → Add-ons."
   },
   "integration": {

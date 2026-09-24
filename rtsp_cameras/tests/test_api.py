@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from app.config import Settings
+from app.ha import HomeAssistantClient
 from app.main import create_app
 from tests.conftest import build_settings
 from tests.fake_ffmpeg import JPEG
@@ -521,10 +523,17 @@ def test_addon_update_errors_are_reported(
         supervisor = test_client.app.state.ctx.ha
 
         async def failing_reload() -> bool:
+            supervisor.last_error = "/store/reload: HTTP Error 403: Forbidden"
             return False
 
         async def unknown_info() -> dict:
-            return {"available": False, "version": None, "version_latest": None}
+            return {
+                "available": False,
+                "version": None,
+                "version_latest": None,
+                "update_available": False,
+                "error": supervisor.last_error,
+            }
 
         async def failing_update() -> bool:
             return False
@@ -533,13 +542,54 @@ def test_addon_update_errors_are_reported(
         monkeypatch.setattr(supervisor, "async_addon_update_info", unknown_info)
         monkeypatch.setattr(supervisor, "async_update_addon", failing_update)
 
+        # A refused Supervisor is reported in the payload, not as a hard error.
         check = test_client.post("/api/addon/update/check")
-        assert check.status_code == 502
-        assert check.json()["error"] == "update_check_failed"
+        assert check.status_code == 200
+        reason = check.json()["addon"]["error"]
+        assert "403" in reason, "the interface must show why the check failed"
+        assert check.json()["addon"]["available"] is False
 
         install = test_client.post("/api/addon/update/install")
         assert install.status_code == 502
         assert install.json()["error"] == "update_failed"
+
+
+def test_available_updates_is_used_as_a_fallback(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings.supervisor_token = "test-token"
+    supervisor = HomeAssistantClient(settings)
+    calls: list[str] = []
+
+    async def fake_call(path: str, method: str = "GET", payload: dict | None = None) -> dict:
+        calls.append(path)
+        if path == "/addons/self/info":
+            return {"result": "ok", "data": {"version": "0.1.11", "state": "started"}}
+        if path == "/available_updates":
+            return {
+                "result": "ok",
+                "data": {
+                    "available_updates": [
+                        {"update_type": "addon", "name": "Other app", "version_latest": "9.9.9"},
+                        {
+                            "update_type": "addon",
+                            "name": "RTSP Camera Manager",
+                            "version_latest": "0.2.0",
+                        },
+                    ]
+                },
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(supervisor, "_call", fake_call)
+
+    info = asyncio.run(supervisor.async_addon_update_info())
+
+    assert calls == ["/addons/self/info", "/available_updates"]
+    assert info["version"] == "0.1.11"
+    assert info["version_latest"] == "0.2.0"
+    assert info["update_available"] is True
+    assert info["source"] == "available_updates"
 
 
 def test_endpoints_report_missing_ffmpeg(bare_client: TestClient) -> None:

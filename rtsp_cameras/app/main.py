@@ -710,19 +710,24 @@ async def addon_update_status(request: Request) -> JSONResponse:
 
 
 async def addon_update_check(request: Request) -> JSONResponse:
-    """Force Supervisor to look for a new add-on version."""
+    """Force Supervisor to look for a new add-on version.
+
+    A refused or unreachable Supervisor is reported inside the payload instead of
+    as an error, so the interface can show the reason in one place.
+    """
     context = _ctx(request)
     if not context.ha.enabled:
         return await _error(request, "supervisor_missing", 503)
 
     reloaded = await context.ha.async_store_reload()
     info = await context.ha.async_addon_update_info()
-    if not info.get("available"):
-        return await _error(request, "update_check_failed", 502)
+    if not info.get("error"):
+        info["error"] = context.ha.last_error
     _LOGGER.info(
-        "Add-on update check: installed %s, latest %s",
+        "Add-on update check: installed %s, latest %s, reloaded=%s",
         info.get("version"),
         info.get("version_latest"),
+        reloaded,
     )
     return _ok(reloaded=reloaded, addon=info)
 

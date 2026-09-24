@@ -86,6 +86,7 @@
     "up_to_date": "Esta es la versión más reciente",
     "short": "Complemento",
     "new_version": "→ {version}",
+    "failed": "La comprobación falló: {reason}",
     "no_supervisor": "La API del Supervisor no es accesible, las actualizaciones se revisan en Ajustes → Complementos."
   },
   "integration": {
