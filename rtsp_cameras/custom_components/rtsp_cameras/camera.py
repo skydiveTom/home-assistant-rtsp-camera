@@ -184,9 +184,14 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         """Return an optional snapshot URL for the entity picture."""
         return self._definition.snapshot_url
 
-    @property
-    def stream_source(self) -> str | None:
-        """Return the stream URL handed over to the Home Assistant stream component."""
+    async def stream_source(self) -> str | None:
+        """Return the stream URL handed over to the Home Assistant stream component.
+
+        Home Assistant 2026.9 calls this as an awaited method (it used to be a
+        property), so it has to stay a coroutine - otherwise adding the entity
+        fails with ``TypeError: 'str' object is not callable`` as soon as a WebRTC
+        provider inspects the camera.
+        """
         return self._definition.stream_source
 
     async def async_camera_image(

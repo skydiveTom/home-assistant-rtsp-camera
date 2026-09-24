@@ -4,6 +4,21 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-09-24
+
+### Fixed
+
+- **Camera entities failed to be added in Home Assistant 2026.9** with
+  `Error adding entity camera.<name> for domain camera with platform rtsp_cameras`
+  and `TypeError: 'str' object is not callable` in `camera/webrtc.py`. Home
+  Assistant changed `Camera.stream_source` from a property to an awaited method;
+  the entity now implements `async def stream_source(self)`. Until this fix every
+  camera stayed an orphaned registry entry ("no longer provided by rtsp_cameras")
+  without a stream, which is why there was no preview in Home Assistant even
+  though the add-on showed one.
+- `ha_tests` now call `async_get_stream_source` - Home Assistant's own helper that
+  awaits the method - so this API change cannot slip through again.
+
 ## [0.1.17] - 2026-09-24
 
 ### Fixed

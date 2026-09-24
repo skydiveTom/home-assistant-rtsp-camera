@@ -102,7 +102,7 @@ async def test_published_cameras_become_camera_entities(hass, entry):
 
     camera = hass.data["camera"].get_entity("camera.front_door")
     assert camera is not None
-    assert camera.stream_source == "rtsp://user:pass@10.0.0.5:554/stream1"
+    assert await camera.stream_source() == "rtsp://user:pass@10.0.0.5:554/stream1"
     assert camera.entity_picture == "http://10.0.0.5/snapshot.jpg"
 
     registry = er.async_get(hass)
@@ -328,6 +328,24 @@ async def test_helper_file_problems_do_not_break_the_cameras(hass, entry):
     ]
 
 
+async def test_stream_source_follows_the_home_assistant_api(hass, entry):
+    """Home Assistant awaits ``camera.stream_source()`` (2026.9 API).
+
+    Exposing it as a property (as older versions did) makes Home Assistant fail
+    while adding the entity: "TypeError: 'str' object is not callable".
+    """
+    from homeassistant.components.camera import async_get_stream_source
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert (
+        await async_get_stream_source(hass, "camera.front_door")
+        == "rtsp://user:pass@10.0.0.5:554/stream1"
+    )
+
+
 async def test_camera_file_is_resolved_inside_the_config_folder(hass, entry):
     """The default path matches exactly what the add-on publishes."""
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -345,7 +363,7 @@ async def test_home_assistant_stream_url_wins(hass, entry):
 
     camera = hass.data["camera"].get_entity("camera.front_door")
     assert camera is not None
-    assert camera.stream_source == "rtsp://10.0.0.5:554/Streaming/Channels/102"
+    assert await camera.stream_source() == "rtsp://10.0.0.5:554/Streaming/Channels/102"
     assert camera.extra_state_attributes["stream_url"].startswith("rtsp://")
 
 
