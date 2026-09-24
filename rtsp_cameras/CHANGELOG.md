@@ -4,6 +4,25 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.20] - 2026-09-24
+
+### Added
+
+- **The RTSP transport now reaches the Home Assistant stream component.** The
+  integration hands the transport of every camera over as
+  `Camera.stream_options = {"rtsp_transport": ...}` (Home Assistant supports this
+  since the generic camera transport option). Home Assistant therefore streams the
+  same way the add-on does, which matters a lot for H.265 or high bitrate cameras:
+  with UDP the picture in the Home Assistant camera card can stay black while the
+  stream itself is fine. Changing the transport in the add-on panel updates the
+  running entity on the next poll.
+
+### Tests
+
+- Two new real Home Assistant tests (15 in total) verify that the transport lands
+  in `stream_options`, that Home Assistant accepts the value (`RTSP_TRANSPORTS`) and
+  that a transport change reaches the entity.
+
 ## [0.1.19] - 2026-09-24
 
 ### Fixed

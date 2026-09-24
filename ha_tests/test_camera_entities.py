@@ -346,6 +346,48 @@ async def test_stream_source_follows_the_home_assistant_api(hass, entry):
     )
 
 
+async def test_rtsp_transport_reaches_the_home_assistant_stream(hass, entry):
+    """The add-on transport is handed to the Home Assistant stream component.
+
+    Home Assistant's ``Stream`` reads ``Camera.stream_options[CONF_RTSP_TRANSPORT]``.
+    Without it Home Assistant would stream over UDP and drop packets on H.265
+    cameras - the picture stays black even though the stream itself is fine.
+    """
+    from homeassistant.components.stream.const import CONF_RTSP_TRANSPORT, RTSP_TRANSPORTS
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    tcp_camera = hass.data["camera"].get_entity("camera.front_door")
+    udp_camera = hass.data["camera"].get_entity("camera.garage")
+    assert tcp_camera is not None and udp_camera is not None
+
+    assert tcp_camera.stream_options == {CONF_RTSP_TRANSPORT: "tcp"}
+    assert udp_camera.stream_options == {CONF_RTSP_TRANSPORT: "udp"}
+    for camera in (tcp_camera, udp_camera):
+        assert camera.stream_options[CONF_RTSP_TRANSPORT] in RTSP_TRANSPORTS
+
+
+async def test_transport_change_updates_the_stream_options(hass, entry):
+    """Switching the transport in the add-on panel reaches the running entity."""
+    from homeassistant.components.stream.const import CONF_RTSP_TRANSPORT
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    camera = hass.data["camera"].get_entity("camera.garage")
+    assert camera is not None
+    assert camera.stream_options[CONF_RTSP_TRANSPORT] == "udp"
+
+    write_cameras_file(hass, [dict(CAMERAS[0]), {**CAMERAS[1], "rtsp_transport": "tcp"}])
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert camera.stream_options[CONF_RTSP_TRANSPORT] == "tcp"
+
+
 async def test_camera_file_is_resolved_inside_the_config_folder(hass, entry):
     """The default path matches exactly what the add-on publishes."""
     assert await hass.config_entries.async_setup(entry.entry_id)

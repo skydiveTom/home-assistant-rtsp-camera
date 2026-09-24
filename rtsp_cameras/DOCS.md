@@ -143,6 +143,10 @@ exceptions). Check the codec in the camera tile of the add-on:
 - `hevc`/`h265` → enter the **H.264 sub stream** of the camera in *Stream URL for
   Home Assistant* (for example `/Streaming/Channels/102` on Hikvision or
   `subtype=1` on Dahua), or switch the camera itself to H.264.
+- Also use **TCP** as the RTSP transport: the integration passes it on to Home
+  Assistant (`stream_options`), so Home Assistant does not lose UDP packets either
+  (a video that only stutters or stays black in the card while the add-on preview
+  works is a typical symptom).
 - `h264` → look at the Home Assistant log for `stream`/`camera` errors, then
   download the integration **Diagnostics** (Settings → Devices & services → RTSP
   Camera Manager → ⋮ → Download diagnostics), which lists the checked file, the

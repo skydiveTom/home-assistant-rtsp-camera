@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
+from homeassistant.components.stream.const import CONF_RTSP_TRANSPORT, RTSP_TRANSPORTS
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -135,6 +136,23 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         self._definition = definition
         self._attr_name = definition.name
         self._attr_unique_id = f"{DOMAIN}_{definition.id}"
+        self.async_update_stream_options()
+
+    @callback
+    def async_update_stream_options(self) -> None:
+        """Hand the RTSP transport over to the Home Assistant stream component.
+
+        Home Assistant's ``Stream`` honours ``rtsp_transport`` in
+        ``Camera.stream_options``, so the camera card streams exactly like the
+        add-on. That matters for H.265 (or any high bitrate) stream: RTSP over UDP
+        loses packets, ffprobe/``Test stream`` never notices it and the video stays
+        black.
+        """
+        transport = str(self._definition.rtsp_transport or "").strip().lower()
+        if transport and transport in RTSP_TRANSPORTS:
+            self.stream_options = {CONF_RTSP_TRANSPORT: transport}
+        else:  # pragma: no cover - the add-on only publishes known transports
+            self.stream_options = {}
 
     @callback
     def async_update_definition(self, definition: RtspCameraDefinition) -> None:
@@ -143,6 +161,7 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
             return
         self._definition = definition
         self._attr_name = definition.name
+        self.async_update_stream_options()
         self.async_write_ha_state()
 
     @property

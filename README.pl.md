@@ -43,12 +43,15 @@ w panelu dodatku.
   przepływność i dokładny komunikat błędu; także dla adresów jeszcze niezapisanych.
 - **Szybki podgląd** – obraz na żywo wewnątrz dodatku. Tryb jest wykrywany
   automatycznie: najpierw MJPEG, potem HLS, a zostaje tylko ten, który działa dla
-  danej kamery.
+  danej kamery. Gdy transport `udp` gubi pakiety (typowe przy H.265 — test
+  strumienia nadal jest zielony, bo `ffprobe` czyta tylko nagłówki), podgląd sam
+  przechodzi na `tcp`.
 - **Prawdziwe encje kamer** – `camera.<nazwa>` ze źródłem strumienia ustawionym na
   adres RTSP, więc obrazem na żywo zajmuje się natywny komponent `stream`
-  (HLS/WebRTC), a miniatury generuje sam Home Assistant. Możesz też podać drugi
-  adres strumienia (np. podstrumień H.264 kamery H.265), gdy karta kamery w Home
-  Assistant pozostaje czarna.
+  (HLS/WebRTC), a miniatury generuje sam Home Assistant. Wybrany transport RTSP
+  jest przekazywany także do Home Assistant (`stream_options`), więc karta kamery
+  nie gubi pakietów UDP. Możesz też podać drugi adres strumienia (np. podstrumień
+  H.264 kamery H.265), gdy karta kamery w Home Assistant pozostaje czarna.
 - **Działa od razu** – dodanie, zmiana nazwy, wyłączenie lub usunięcie kamery jest
   widoczne w Home Assistant w kilka sekund, bez restartu i bez YAML.
 - **Aktualizuje się sam** – zakładka Ustawienia sprawdza na żądanie nową wersję
