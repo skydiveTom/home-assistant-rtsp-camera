@@ -636,7 +636,7 @@
     if (!open) document.body.style.overflow = '';
   }
 
-  function renderProbe(container, probe) {
+  function renderProbe(container, probe, hint) {
     container.hidden = false;
     container.className = 'probe ' + (probe.ok ? 'probe--ok' : 'probe--err');
     const children = [
@@ -666,6 +666,13 @@
           pairs.flatMap(([label, value]) => [el('dt', { text: label }), el('dd', { text: value })]),
         ),
       );
+      /* A stream test can be green while the transport delivers nothing usable
+         (UDP without packets): say so, otherwise the black preview looks like a
+         bug in the add-on. */
+      const note = hint ? t('camera.hint_' + hint) : '';
+      if (note && note !== 'camera.hint_' + hint) {
+        children.push(el('p', { class: 'probe__hint', text: note }));
+      }
     } else if (probe.error) {
       children.push(el('p', { class: 'probe__error', text: probe.error }));
     }
@@ -763,7 +770,7 @@
         ? await api('api/cameras/' + camera.id + '/test', { method: 'POST' })
         : await api('api/probe', { method: 'POST', body: { url, rtsp_transport: transport } });
 
-      renderProbe(probeBox, data.probe || {});
+      renderProbe(probeBox, data.probe || {}, data.hint);
       if (data.camera && camera) {
         camera.status = data.camera.status;
         camera.last_probe = data.camera.last_probe;
@@ -800,6 +807,7 @@
       const probe = data.probe || {};
       toast(probe.ok ? t('camera.test_ok') : t('camera.test_failed'), probe.ok ? 'ok' : 'err');
       if (!probe.ok && probe.error) toast(probe.error, 'err');
+      if (probe.ok && data.hint) toast(t('camera.hint_' + data.hint), 'warn');
     } catch (err) {
       fail(err);
     } finally {

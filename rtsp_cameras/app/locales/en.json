@@ -48,6 +48,7 @@
     "format": "Format",
     "transport_value": "Transport",
     "test_ok": "Stream is working",
+    "hint_empty_stream_details": "The stream test is green, but this transport delivered no video data (codec without resolution or frame rate). TCP is the reliable choice here - the preview switches to it by itself.",
     "test_failed": "Stream failed",
     "test_details": "Stream details",
     "entity_id": "Camera entity",

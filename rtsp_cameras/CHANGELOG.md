@@ -4,6 +4,24 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.22] - 2026-09-24
+
+### Added
+
+- **The add-on now explains a "green" stream test that still cannot be
+  previewed.** RTSP over UDP can answer the RTSP options request while no packet
+  ever arrives: ffprobe then reports success with a codec but without resolution,
+  frame rate or pixel format - *Test stream* is green and every preview stays
+  black. That case is now detected (`hint: empty_stream_details`, only when the
+  transport is not TCP) and shown under the test result and as a warning toast
+  (`camera.hint_empty_stream_details`, all four languages) with the advice to use
+  TCP - which the preview already does on its own since 0.1.19.
+- Verified against a real camera (H.264, 1280x720, 30 fps) whose UDP transport
+  delivers nothing: the stream test is green, `preview/detect` reports
+  `No frame within 10 seconds` for MJPEG and `Output file does not contain any
+  stream` for HLS over UDP and then successfully switches to TCP.
+- New fake ffprobe mode `no_details` and three tests for the hint.
+
 ## [0.1.21] - 2026-09-24
 
 ### Fixed

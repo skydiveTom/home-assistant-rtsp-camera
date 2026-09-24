@@ -287,6 +287,14 @@ Assistant cannot create - use the default `rtsp_cameras/cameras.json`.
   cameras use `/stream1`, `/Streaming/Channels/101`, `/h264` …).
 - Try the other **RTSP transport** values (`udp`, `http`).
 
+**`Test stream` is green but the preview stays black**
+
+That happens when the stream test reports a codec **without** resolution and frame
+rate: the camera answered the RTSP request, but the transport delivered no video
+packets - RTSP over **UDP** behaves like that on many networks. The add-on points it
+out under the test result and switches the preview to **TCP** by itself; set the
+camera to `tcp` as well so the health checks and Home Assistant use it too.
+
 **The preview stays black**
 
 - The stream test can be green while the preview fails: ffprobe only reads the

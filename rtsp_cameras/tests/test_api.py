@@ -315,6 +315,46 @@ def test_hls_preview_falls_back_to_tcp(
     assert started.json()["transport"] == "tcp"
 
 
+def test_probe_hints_tcp_when_the_transport_delivers_nothing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A green stream test without stream details means: switch to TCP.
+
+    RTSP over UDP can answer the options request while no packet ever arrives -
+    ffprobe then reports a codec but no resolution/frame rate, "Test stream" is
+    green and every preview stays black.
+    """
+    camera = add_camera(client, rtsp_transport="udp")
+    monkeypatch.setenv("FAKE_PROBE_MODE", "no_details")
+
+    payload = client.post(f"/api/cameras/{camera['id']}/test").json()
+
+    assert payload["probe"]["ok"] is True
+    assert payload["probe"]["details"]["resolution"] is None
+    assert payload["hint"] == "empty_stream_details"
+
+
+def test_no_probe_hint_for_tcp(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Over TCP the same answer is normal (no hint needed)."""
+    camera = add_camera(client, rtsp_transport="tcp")
+    monkeypatch.setenv("FAKE_PROBE_MODE", "no_details")
+
+    assert client.post(f"/api/cameras/{camera['id']}/test").json()["hint"] is None
+
+
+def test_no_probe_hint_when_the_details_are_complete(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stream with resolution and frame rate never needs a hint."""
+    camera = add_camera(client, name="Udp full", rtsp_transport="udp")
+    monkeypatch.setenv("FAKE_PROBE_MODE", "ok")
+
+    payload = client.post(f"/api/cameras/{camera['id']}/test").json()
+
+    assert payload["probe"]["details"]["resolution"] == "1920x1080"
+    assert payload["hint"] is None
+
+
 def test_preview_detect_honours_the_addon_option(
     workspace: Path, integration_source: Path, fake_tools: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

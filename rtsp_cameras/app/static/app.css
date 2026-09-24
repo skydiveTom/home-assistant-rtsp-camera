@@ -1168,6 +1168,14 @@ select:focus {
   border-left-color: var(--warn, #d6a01d);
 }
 
+.probe__hint {
+  margin: 8px 0 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--warn);
+  color: var(--warn);
+  font-size: 12.5px;
+}
+
 /* --------------------------------------------------------------- animations */
 @keyframes rise {
   from {

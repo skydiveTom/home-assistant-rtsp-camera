@@ -48,6 +48,7 @@
     "format": "Format",
     "transport_value": "Transport",
     "test_ok": "Stream funktioniert",
+    "hint_empty_stream_details": "Der Stream-Test ist grün, aber dieser Transport hat keine Videodaten geliefert (Codec ohne Auflösung und Bildrate). Wähle hier TCP - die Vorschau wechselt von selbst dorthin.",
     "test_failed": "Stream fehlgeschlagen",
     "test_details": "Stream-Details",
     "entity_id": "Kamera-Entität",

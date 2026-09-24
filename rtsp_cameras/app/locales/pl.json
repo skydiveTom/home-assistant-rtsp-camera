@@ -48,6 +48,7 @@
     "format": "Format",
     "transport_value": "Transport",
     "test_ok": "Stream działa",
+    "hint_empty_stream_details": "Test strumienia jest zielony, ale ten transport nie dostarczył danych obrazu (kodek bez rozdzielczości i liczby klatek). Wybierz transport tcp — podgląd sam już na niego przechodzi.",
     "test_failed": "Stream nie działa",
     "test_details": "Szczegóły strumienia",
     "entity_id": "Encja kamery",

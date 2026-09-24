@@ -48,6 +48,7 @@
     "format": "Formato",
     "transport_value": "Transporte",
     "test_ok": "El stream funciona",
+    "hint_empty_stream_details": "La prueba del stream está en verde, pero este transporte no entregó datos de vídeo (códec sin resolución ni fotogramas). Aquí es mejor TCP: la vista previa cambia a él automáticamente.",
     "test_failed": "El stream ha fallado",
     "test_details": "Detalles del stream",
     "entity_id": "Entidad de cámara",

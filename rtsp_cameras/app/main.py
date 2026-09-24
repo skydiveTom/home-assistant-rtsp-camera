@@ -415,6 +415,7 @@ async def camera_test(request: Request) -> JSONResponse:
             context.store.save()
     return _ok(
         probe=result.to_dict(),
+        hint=_probe_hint(transport, result.to_dict()),
         camera=camera.to_api_dict() if camera is not None else None,
     )
 
@@ -429,6 +430,24 @@ def _optional_int(value: Any) -> int | None:
         return int(str(value).strip())
     except (TypeError, ValueError):
         return None
+
+
+def _probe_hint(transport: str, probe: dict[str, Any]) -> str | None:
+    """Return a hint when a stream test succeeded without usable stream data.
+
+    A camera can answer the RTSP options/SDP request while its packets never
+    arrive (RTSP over UDP on a busy or filtered network). ffprobe then reports
+    success with a codec but no width/height/fps - "Test stream" looks fine while
+    every preview stays black. Such a camera needs TCP.
+    """
+    if not probe.get("ok"):
+        return None
+    details = probe.get("details") or {}
+    if details.get("width") and details.get("height"):
+        return None
+    if str(transport or "").strip().lower() == "tcp":
+        return None
+    return "empty_stream_details"
 
 
 def _camera_codec(camera: Camera) -> str:

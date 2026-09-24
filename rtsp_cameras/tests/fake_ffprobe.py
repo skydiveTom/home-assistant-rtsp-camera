@@ -57,6 +57,18 @@ def main() -> int:
     if MODE == "no_video":
         sys.stdout.write(json.dumps({"streams": [], "format": {"format_name": "rtsp"}}))
         return 0
+    if MODE == "no_details":
+        # A reachable stream whose transport delivers no usable video parameters
+        # (ffprobe still reports success, but width/height/fps stay empty).
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "streams": [{"codec_name": "h264", "codec_type": "video"}],
+                    "format": {"format_name": "rtsp"},
+                }
+            )
+        )
+        return 0
 
     sys.stdout.write(json.dumps(PROBE_OUTPUT))
     return 0
