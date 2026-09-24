@@ -224,14 +224,19 @@ Registered 2 camera entity/entities: Front Door, Garage
 The add-on talks to Supervisor with the `SUPERVISOR_TOKEN` environment variable,
 which Supervisor injects when the manifest enables `hassio_api`. If the container
 does not have it (for example because it was created before that flag made it into
-the running version), update or reinstall the add-on once: Supervisor recreates the
-container and injects the token. Until then the check only reports versions
-read from `/config/.storage/hassio` and you update in *Settings → Add-ons*.
+the running version), the update button still works: the add-on writes the request
+into `/config/rtsp_cameras/actions.json` and the integration lets Home Assistant
+install the update through the regular `update.install` service. The card also
+shows how Home Assistant has the add-on on record (`hassio_api`, role,
+repository).
 
-The add-on log prints what it sees at startup, for example:
+To give the container a token again, reload the add-on store
+(*Settings → Add-ons → ⋮ → Reload*) and update or reinstall the add-on - Supervisor
+then recreates the container and injects the token. The add-on log prints what it
+sees at startup, for example:
 
 ```text
-WARNING [app.ha] No Supervisor token in this container (variables: none, socket: False)
+WARNING [app.main] No Supervisor token in this container (variables: none, socket: False).
 ```
 
 **The add-on stops with `s6-overlay-suexec: fatal: can only run as pid 1`**
