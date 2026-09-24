@@ -62,6 +62,20 @@ Two ways, both end with a restart of Home Assistant:
 Without the button Supervisor only looks for new versions on its own schedule, so
 a fresh release can take a while to show up.
 
+### When the add-on has no Supervisor access
+
+Some installations do not give the add-on a `SUPERVISOR_TOKEN` (the update card
+and the log then say so, and the card also shows how Home Assistant has the add-on
+on record). The update button still works: the add-on writes the request into
+`/config/rtsp_cameras/actions.json`, the integration reads that file on its next
+poll and lets Home Assistant install the update through the regular
+`update.install` service. Supervisor, the integration and Home Assistant then do
+the work - no token needed.
+
+If even that does not help, update in *Settings → Add-ons → RTSP Camera Manager*
+and reload the add-on store first (*⋮ → Reload*), which refreshes the manifest
+from the repository.
+
 ## Adding a camera
 
 Cameras are added **in the add-on**, not inside Home Assistant:

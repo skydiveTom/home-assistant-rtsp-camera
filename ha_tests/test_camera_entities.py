@@ -147,6 +147,92 @@ async def test_removed_camera_disappears_again(hass, entry):
     assert sorted(hass.states.async_entity_ids("camera")) == ["camera.front_door"]
 
 
+async def test_addon_update_request_is_executed_through_home_assistant(hass, entry):
+    """Without a Supervisor token the add-on asks Home Assistant for the update."""
+    import json
+    from pathlib import Path
+
+    from homeassistant.util import dt as dt_util
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Home Assistant owns a hassio update entity for the add-on ...
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "update", "hassio", "rtsp_cameras", suggested_object_id="rtsp_camera_manager"
+    )
+    calls: list[dict] = []
+
+    async def _install(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("update", "install", _install)
+
+    # ... and the add-on drops a request into the shared folder.
+    actions = Path(hass.config.path("rtsp_cameras", "actions.json"))
+    actions.write_text(
+        json.dumps(
+            {
+                "action": "install_addon_update",
+                "requested_at": dt_util.utcnow().isoformat(),
+                "handled_at": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert calls == [{"entity_id": "update.rtsp_camera_manager"}]
+    handled = json.loads(actions.read_text(encoding="utf-8"))
+    assert handled["handled_at"], "a handled request must not run twice"
+
+    # A second poll with the same file must not call the service again.
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert len(calls) == 1
+
+
+async def test_stale_addon_update_requests_are_ignored(hass, entry):
+    """A request that nobody picked up within minutes is not executed later."""
+    import json
+    from datetime import timedelta
+    from pathlib import Path
+
+    from homeassistant.util import dt as dt_util
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    calls: list[dict] = []
+
+    async def _install(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("update", "install", _install)
+
+    actions = Path(hass.config.path("rtsp_cameras", "actions.json"))
+    actions.write_text(
+        json.dumps(
+            {
+                "action": "install_addon_update",
+                "requested_at": (dt_util.utcnow() - timedelta(hours=1)).isoformat(),
+                "handled_at": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert calls == []
+
+
 async def test_camera_file_is_resolved_inside_the_config_folder(hass, entry):
     """The default path matches exactly what the add-on publishes."""
     assert await hass.config_entries.async_setup(entry.entry_id)

@@ -137,6 +137,7 @@ class HomeAssistantClient:
                 update_available = True
                 source = "available_updates"
 
+        local: dict[str, Any] = {}
         if not info:
             local = self.read_local_addon_info()
             if local:
@@ -155,10 +156,25 @@ class HomeAssistantClient:
             "can_install": self.enabled,
             "hint": None if self.enabled else "token_missing",
             "error": None if info else self.last_error,
+            "permissions": (
+                {
+                    "hassio_api": local.get("hassio_api"),
+                    "hassio_role": local.get("hassio_role"),
+                    "homeassistant_api": local.get("homeassistant_api"),
+                    "repository": local.get("repository"),
+                }
+                if local
+                else None
+            ),
         }
 
     def read_local_addon_info(self) -> dict[str, Any]:
-        """Read the add-on entry Home Assistant stores in ``.storage/hassio``."""
+        """Read the add-on entry Home Assistant stores in ``.storage/hassio``.
+
+        Besides the versions this reports the permissions Home Assistant has on
+        record (``hassio_api``, ``hassio_role``, ``homeassistant_api``) - the
+        decisive information when Supervisor does not hand out a token.
+        """
         path = self.settings.config_dir / ".storage" / "hassio"
         if not path.is_file():
             return {}
@@ -187,6 +203,13 @@ class HomeAssistantClient:
                         and entry.get("version") != entry.get("version_latest")
                     )
                 ),
+                "hassio_api": bool(entry.get("hassio_api")),
+                "hassio_role": entry.get("hassio_role"),
+                "homeassistant_api": bool(entry.get("homeassistant_api")),
+                "auth_api": bool(entry.get("auth_api")),
+                "state": entry.get("state"),
+                "installed": entry.get("installed"),
+                "repository": entry.get("repository"),
             }
         return {}
 

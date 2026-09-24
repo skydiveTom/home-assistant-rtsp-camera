@@ -12,6 +12,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+from .actions import actions_file_for, async_handle_actions
 from .const import (
     CONF_CAMERAS_FILE,
     CONF_SCAN_INTERVAL,
@@ -67,6 +68,7 @@ class RtspCamerasCoordinator(DataUpdateCoordinator[dict[str, RtspCameraDefinitio
     async def _async_update_data(self) -> dict[str, RtspCameraDefinition]:
         """Read the camera file and report changes of the camera count."""
         cameras = await self.hass.async_add_executor_job(self._read_cameras)
+        await async_handle_actions(self.hass, actions_file_for(self.cameras_file))
         if len(cameras) != self.reported_count:
             self.reported_count = len(cameras)
             if cameras:

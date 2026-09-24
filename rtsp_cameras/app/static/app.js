@@ -574,6 +574,18 @@
           }),
         );
       }
+      if (info.permissions) {
+        children.push(
+          el('p', {
+            class: 'note note--tight',
+            text: t('addon_update.permissions', {
+              hassio_api: String(info.permissions.hassio_api),
+              role: info.permissions.hassio_role || '–',
+              repository: info.permissions.repository || '–',
+            }),
+          }),
+        );
+      }
     } else if (info.busy) {
       children.push(el('p', { class: 'note note--tight', text: t('addon_update.updating') }));
     } else if (info.update_available) {
@@ -595,7 +607,7 @@
       ),
     ]);
     if (info.available && info.update_available && !info.busy) {
-      if (info.can_install) {
+      if (info.can_install || info.via_home_assistant) {
         actions.append(
           button(
             t('addon_update.update'),
@@ -1144,11 +1156,16 @@
   async function installAddonUpdate(node) {
     if (node) node.disabled = true;
     try {
-      await api('api/addon/update/install', { method: 'POST' });
+      const data = await api('api/addon/update/install', { method: 'POST' });
       state.addonUpdate.busy = true;
       state.integration = Object.assign({}, state.integration, { needs_restart: true });
       renderAddonState();
-      toast(t('addon_update.updating'), 'ok');
+      toast(
+        data.via === 'home_assistant'
+          ? t('addon_update.queued')
+          : t('addon_update.updating'),
+        'ok',
+      );
       waitForAddonRestart();
     } catch (err) {
       fail(err);

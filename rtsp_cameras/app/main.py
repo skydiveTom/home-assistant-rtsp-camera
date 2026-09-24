@@ -26,6 +26,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
+from .actions import ACTION_INSTALL_ADDON_UPDATE, request_action
 from .config import (
     PREVIEW_MODE_AUTO,
     PREVIEW_MODE_CHOICES,
@@ -703,47 +704,76 @@ async def ha_restart(request: Request) -> JSONResponse:
 
 
 # --------------------------------------------------------------- add-on update
+def _addon_update_payload(context: AppContext, info: dict[str, Any]) -> dict[str, Any]:
+    """Add the information the interface needs to offer the right button."""
+    payload = dict(info)
+    # With the integration installed, Home Assistant can install the update even
+    # when this container has no Supervisor token.
+    payload["via_home_assistant"] = context.installer.status().installed
+    return payload
+
+
 async def addon_update_status(request: Request) -> JSONResponse:
     """Report whether a newer version of this add-on is available."""
     context = _ctx(request)
-    return _ok(addon=await context.ha.async_addon_update_info())
+    info = await context.ha.async_addon_update_info()
+    return _ok(addon=_addon_update_payload(context, info))
 
 
 async def addon_update_check(request: Request) -> JSONResponse:
     """Force Supervisor to look for a new add-on version.
 
-    A refused or unreachable Supervisor is reported inside the payload instead of
-    as an error, so the interface can show the reason in one place.
+    A missing or refused Supervisor is reported inside the payload instead of as
+    an error, so the interface can show the version it knows plus the reason.
     """
     context = _ctx(request)
-    if not context.ha.enabled:
-        return await _error(request, "supervisor_missing", 503)
+    if context.ha.enabled:
+        reloaded = await context.ha.async_store_reload()
+    else:
+        reloaded = False
 
-    reloaded = await context.ha.async_store_reload()
     info = await context.ha.async_addon_update_info()
     if not info.get("error"):
         info["error"] = context.ha.last_error
     _LOGGER.info(
-        "Add-on update check: installed %s, latest %s, reloaded=%s",
+        "Add-on update check: installed %s, latest %s, reloaded=%s, source=%s",
         info.get("version"),
         info.get("version_latest"),
         reloaded,
+        info.get("source"),
     )
-    return _ok(reloaded=reloaded, addon=info)
+    return _ok(reloaded=reloaded, addon=_addon_update_payload(context, info))
 
 
 async def addon_update_install(request: Request) -> JSONResponse:
-    """Ask Supervisor to update this add-on and restart it."""
+    """Ask Supervisor - or Home Assistant - to update this add-on."""
     context = _ctx(request)
-    if not context.ha.enabled:
-        return await _error(request, "supervisor_missing", 503)
-    if not await context.ha.async_update_addon():
+
+    if context.ha.enabled:
+        if not await context.ha.async_update_addon():
+            return await _error(request, "update_failed", 502)
+        _LOGGER.info("Add-on update started by Supervisor, the container will restart")
+        context.installer.mark_restart_needed()
+        return _ok(
+            update_started=True,
+            via="supervisor",
+            addon=_addon_update_payload(context, await context.ha.async_addon_update_info()),
+        )
+
+    # Without a Supervisor token the integration does it through Home Assistant.
+    if not request_action(
+        context.settings,
+        ACTION_INSTALL_ADDON_UPDATE,
+        version=context.settings.addon_version,
+    ):
         return await _error(request, "update_failed", 502)
 
-    _LOGGER.info("Add-on update started, the container will restart")
-    # The new version installs the integration again and asks for a restart.
     context.installer.mark_restart_needed()
-    return _ok(update_started=True, addon=await context.ha.async_addon_update_info())
+    return _ok(
+        update_started=True,
+        via="home_assistant",
+        addon=_addon_update_payload(context, await context.ha.async_addon_update_info()),
+    )
 
 
 # ----------------------------------------------------------- background jobs
@@ -810,13 +840,17 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     if report["token"]:
         _LOGGER.info("Supervisor API reachable via %s", report["api_url"])
     else:
+        local = context.ha.read_local_addon_info()
         _LOGGER.warning(
             "No Supervisor token in this container (variables: %s, socket: %s). "
-            "Supervisor injects SUPERVISOR_TOKEN when the manifest has hassio_api "
-            "enabled - update or reinstall the add-on so Supervisor recreates the "
-            "container. The update check stays read-only until then.",
+            "The manifest asks for hassio_api; Home Assistant has it on record as "
+            "%s (role %s, repository %s). Reload the add-on store and update the "
+            "add-on so Supervisor recreates the container with SUPERVISOR_TOKEN.",
             report["variables"] or "none",
             report["socket"],
+            local.get("hassio_api") if local else "unknown",
+            local.get("hassio_role") if local else "unknown",
+            local.get("repository") if local else "unknown",
         )
 
     context.store.load()

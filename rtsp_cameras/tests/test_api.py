@@ -466,6 +466,10 @@ def test_addon_update_is_read_from_the_hassio_storage_file(
                             "version": "0.1.11",
                             "version_latest": "0.1.12",
                             "update_available": True,
+                            "hassio_api": True,
+                            "hassio_role": "default",
+                            "homeassistant_api": True,
+                            "repository": "local",
                         },
                     ]
                 },
@@ -482,6 +486,10 @@ def test_addon_update_is_read_from_the_hassio_storage_file(
     assert payload["update_available"] is True
     assert payload["source"] == "hassio_storage"
     assert payload["can_install"] is False
+    # The permissions on record are what explains a missing token.
+    assert payload["permissions"]["hassio_api"] is True
+    assert payload["permissions"]["hassio_role"] == "default"
+    assert payload["permissions"]["repository"] == "local"
 
 
 def test_the_legacy_hassio_token_is_accepted(workspace: Path, integration_source: Path) -> None:
@@ -502,14 +510,48 @@ def test_addon_update_is_quiet_without_a_storage_file(client: TestClient) -> Non
     assert "No Supervisor token" in (payload["error"] or "")
 
 
-def test_addon_update_needs_the_supervisor_api(client: TestClient) -> None:
-    check = client.post("/api/addon/update/check")
-    assert check.status_code == 503
-    assert check.json()["error"] == "supervisor_missing"
+def test_addon_update_is_delegated_to_home_assistant(
+    client: TestClient, settings: Settings
+) -> None:
+    """Without a Supervisor token the integration performs the update."""
+    response = client.post("/api/addon/update/install")
 
-    install = client.post("/api/addon/update/install")
-    assert install.status_code == 503
-    assert install.json()["error"] == "supervisor_missing"
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["update_started"] is True
+    assert payload["via"] == "home_assistant"
+    assert payload["addon"]["via_home_assistant"] is True
+
+    request = json.loads(settings.actions_file.read_text(encoding="utf-8"))
+    assert request["action"] == "install_addon_update"
+    assert request["handled_at"] is None
+    assert request["requested_at"]
+
+
+def test_options_are_read_from_the_configured_data_folder(
+    workspace: Path, integration_source: Path
+) -> None:
+    """Options next to the data folder win over the /data default."""
+    settings = build_settings(
+        workspace,
+        {"preview_mode": "hls", "test_timeout": 42},
+        integration_source=integration_source,
+    )
+
+    assert settings.preview_mode == "hls"
+    assert settings.test_timeout == 42
+
+
+def test_addon_update_reports_the_missing_supervisor(client: TestClient) -> None:
+    """The check answers even without a token, and says what is missing."""
+    check = client.post("/api/addon/update/check")
+
+    assert check.status_code == 200
+    payload = check.json()
+    assert payload["reloaded"] is False
+    assert payload["addon"]["hint"] == "token_missing"
+    assert payload["addon"]["can_install"] is False
+    assert payload["addon"]["via_home_assistant"] is True
 
 
 def test_addon_update_check_and_install(

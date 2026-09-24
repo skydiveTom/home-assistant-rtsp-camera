@@ -5,6 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 DOMAIN = "rtsp_cameras"
+# The add-on uses the same string as its slug, which the hassio integration uses
+# as the unique id of the add-on update entity.
+ADDON_SLUG = DOMAIN
 
 # Config entry data / options
 CONF_CAMERAS_FILE = "cameras_file"

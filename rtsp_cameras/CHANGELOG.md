@@ -4,6 +4,24 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-09-24
+
+### Added
+
+- **Updates also work without a Supervisor token.** The button now asks Home
+  Assistant to install the update: the add-on writes a request into the folder it
+  shares with the integration (`rtsp_cameras/actions.json`), the integration picks
+  it up within its poll and calls the `update.install` service on the add-on's
+  `hassio` update entity. Nothing else needs a token, so the button works on
+  installations where Supervisor hands out no `SUPERVISOR_TOKEN`.
+- The update card and the start-up log report **how Home Assistant has the add-on
+  on record**: `hassio_api`, the role, `homeassistant_api` and the repository
+  (read from `/config/.storage/hassio`, no API needed). That is the information
+  deciding whether Supervisor hands out a token.
+- The version information of the update check is read from the same storage file
+  when the Supervisor API is unavailable, so the newest known version is still
+  shown.
+
 ## [0.1.12] - 2026-09-24
 
 ### Fixed
