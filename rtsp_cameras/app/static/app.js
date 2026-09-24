@@ -18,6 +18,7 @@
     languages: bootstrap.languages || ['en'],
     language: 'en',
     editing: null,
+    addonUpdate: { available: false, update_available: false, busy: false },
     preview: { cameraId: null, mode: 'auto', hls: null, loaded: {}, resolved: {}, timer: null },
   };
 
@@ -233,7 +234,18 @@
     region.replaceChildren();
     const settings = state.settings;
     const integration = state.integration;
+    const addon = state.addonUpdate;
 
+    if (addon.update_available && !addon.busy) {
+      region.append(
+        banner(
+          '',
+          t('addon_update.title'),
+          t('addon_update.available', { version: addon.version_latest || '?' }),
+          [button(t('addon_update.update'), (event) => installAddonUpdate(event.currentTarget), 'primary')],
+        ),
+      );
+    }
     if (settings.publish_error) {
       region.append(
         banner('err', t('settings.title'), t('settings.cameras_file_error', { path: settings.publish_error }), []),
@@ -504,6 +516,55 @@
     renderBanner();
     renderCameras();
     renderSettings();
+    renderAddonUpdate();
+  }
+
+  function renderAddonUpdate() {
+    const box = document.getElementById('addon-update-box');
+    if (!box) return;
+    const info = state.addonUpdate;
+    const current = state.settings.version || '?';
+    const children = [
+      el('h3', { text: t('addon_update.title') }),
+      el('p', {
+        class: 'note note--tight',
+        text: t('addon_update.installed', { version: current }),
+      }),
+    ];
+
+    if (!info.available) {
+      children.push(el('p', { class: 'note note--tight', text: t('addon_update.no_supervisor') }));
+    } else if (info.busy) {
+      children.push(el('p', { class: 'note note--tight', text: t('addon_update.updating') }));
+    } else if (info.update_available) {
+      children.push(
+        el('p', {
+          class: 'note note--tight note--warn',
+          text: t('addon_update.available', { version: info.version_latest || '?' }),
+        }),
+      );
+    } else if (info.checked_at) {
+      children.push(el('p', { class: 'note note--tight', text: t('addon_update.up_to_date') }));
+    }
+
+    const actions = el('div', { class: 'addon-update__actions' }, [
+      button(
+        t('addon_update.check'),
+        (event) => checkAddonUpdate(event.currentTarget),
+        'ghost',
+      ),
+    ]);
+    if (info.available && info.update_available && !info.busy) {
+      actions.append(
+        button(
+          t('addon_update.update'),
+          (event) => installAddonUpdate(event.currentTarget),
+          'primary',
+        ),
+      );
+    }
+    children.push(actions);
+    box.replaceChildren(...children);
   }
 
   /* ------------------------------------------------------------------ modal */
@@ -990,6 +1051,76 @@
     }
   }
 
+  /* --------------------------------------------------------- add-on updates */
+  async function refreshAddonUpdate() {
+    try {
+      const data = await api('api/addon/update');
+      if (data.addon) state.addonUpdate = Object.assign({}, state.addonUpdate, data.addon);
+    } catch (err) {
+      /* the add-on version is informative only */
+    }
+    renderAddonUpdate();
+    renderBanner();
+  }
+
+  async function checkAddonUpdate(node) {
+    if (node) node.disabled = true;
+    try {
+      const data = await api('api/addon/update/check', { method: 'POST' });
+      if (data.addon) state.addonUpdate = Object.assign({}, state.addonUpdate, data.addon);
+      state.addonUpdate.checked_at = new Date().toISOString();
+      renderAddonUpdate();
+      renderBanner();
+      if (state.addonUpdate.update_available) {
+        toast(t('addon_update.available', { version: state.addonUpdate.version_latest }), 'warn');
+      } else {
+        toast(t('addon_update.up_to_date'), 'ok');
+      }
+    } catch (err) {
+      fail(err);
+    } finally {
+      if (node) node.disabled = false;
+    }
+  }
+
+  async function installAddonUpdate(node) {
+    if (node) node.disabled = true;
+    try {
+      await api('api/addon/update/install', { method: 'POST' });
+      state.addonUpdate.busy = true;
+      state.integration = Object.assign({}, state.integration, { needs_restart: true });
+      renderAddonUpdate();
+      renderBanner();
+      toast(t('addon_update.updating'), 'ok');
+      waitForAddonRestart();
+    } catch (err) {
+      fail(err);
+      if (node) node.disabled = false;
+    }
+  }
+
+  /* The container restarts during the update, so poll until it answers again. */
+  function waitForAddonRestart() {
+    let attempts = 0;
+    const poll = () => {
+      attempts += 1;
+      window.setTimeout(async () => {
+        try {
+          const data = await api('api/addon/update');
+          if (data.addon) {
+            state.addonUpdate = Object.assign({}, state.addonUpdate, data.addon, { busy: false });
+            renderAddonUpdate();
+            renderBanner();
+            toast(t('addon_update.updated', { version: data.addon.version }), 'ok');
+          }
+        } catch (err) {
+          if (attempts < 40) poll();
+        }
+      }, attempts === 0 ? 1000 : 5000);
+    };
+    poll();
+  }
+
   /* ------------------------------------------------------------------ chrome */
   function selectPanel(name) {
     document.querySelectorAll('.tab').forEach((tab) => {
@@ -1144,6 +1275,7 @@
     renderAll();
     selectPanel('cameras');
     syncRevealButton();
+    refreshAddonUpdate();
     window.setInterval(() => {
       if (document.hidden) return;
       refreshStatuses();

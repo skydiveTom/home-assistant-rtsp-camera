@@ -50,6 +50,8 @@ exactly one place — the add-on panel.
   Assistant when a camera card stays black.
 - **Live in seconds** – adding, renaming, disabling or deleting a camera is picked
   up by Home Assistant within seconds, without a restart and without YAML.
+- **Self-updating** – the Settings tab checks for a new add-on version on demand
+  (Supervisor store reload) and installs it with one button.
 - **Four languages** – English (default), German, Spanish and Polish. The
   interface follows the language configured in Home Assistant.
 - **Safe by design** – reachable only through the authenticated Home Assistant

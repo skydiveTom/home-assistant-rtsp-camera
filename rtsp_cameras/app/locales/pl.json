@@ -75,6 +75,17 @@
     "mode_mjpeg": "MJPEG (wszystkie przeglądarki)",
     "mode_hls": "HLS (małe obciążenie przy kamerach H.264)"
   },
+  "addon_update": {
+    "title": "Wersja dodatku",
+    "installed": "Zainstalowana: {version}",
+    "check": "Sprawdź aktualizacje",
+    "available": "Dostępna jest wersja {version}",
+    "update": "Zaktualizuj dodatek",
+    "updating": "Dodatek aktualizuje się i zrestartuje. Strona połączy się ponownie automatycznie.",
+    "updated": "Dodatek zaktualizowany do {version}",
+    "up_to_date": "To jest najnowsza wersja",
+    "no_supervisor": "Brak dostępu do API Supervisora — aktualizacje sprawdzisz w Ustawienia → Dodatki."
+  },
   "integration": {
     "title": "Integracja z Home Assistant",
     "description": "Dodatek zapisuje kamery do pliku JSON i instaluje małą integrację, która zamienia każdy wpis w encję kamery gotową do umieszczenia na dowolnym pulpicie.",
@@ -134,7 +145,10 @@
     "source_missing": "Nie znaleziono dołączonej integracji w tym kontenerze",
     "install_failed": "Nie udało się zainstalować integracji",
     "restart_failed": "Home Assistant nie przyjął żądania restartu",
-    "stream_failed": "Podgląd zakończył się przed pierwszą klatką"
+    "stream_failed": "Podgląd zakończył się przed pierwszą klatką",
+    "supervisor_missing": "Supervisor Home Assistant jest nieosiągalny z tego dodatku",
+    "update_check_failed": "Nie udało się sprawdzić wersji, spróbuj ponownie za chwilę",
+    "update_failed": "Nie udało się rozpocząć aktualizacji dodatku"
   },
   "common": {
     "close": "Zamknij",

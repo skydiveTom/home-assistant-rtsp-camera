@@ -78,6 +78,9 @@ API_ERRORS = (
     "install_failed",
     "restart_failed",
     "stream_failed",
+    "supervisor_missing",
+    "update_check_failed",
+    "update_failed",
 )
 
 
@@ -699,6 +702,45 @@ async def ha_restart(request: Request) -> JSONResponse:
     return _ok(restarted=True)
 
 
+# --------------------------------------------------------------- add-on update
+async def addon_update_status(request: Request) -> JSONResponse:
+    """Report whether a newer version of this add-on is available."""
+    context = _ctx(request)
+    return _ok(addon=await context.ha.async_addon_update_info())
+
+
+async def addon_update_check(request: Request) -> JSONResponse:
+    """Force Supervisor to look for a new add-on version."""
+    context = _ctx(request)
+    if not context.ha.enabled:
+        return await _error(request, "supervisor_missing", 503)
+
+    reloaded = await context.ha.async_store_reload()
+    info = await context.ha.async_addon_update_info()
+    if not info.get("available"):
+        return await _error(request, "update_check_failed", 502)
+    _LOGGER.info(
+        "Add-on update check: installed %s, latest %s",
+        info.get("version"),
+        info.get("version_latest"),
+    )
+    return _ok(reloaded=reloaded, addon=info)
+
+
+async def addon_update_install(request: Request) -> JSONResponse:
+    """Ask Supervisor to update this add-on and restart it."""
+    context = _ctx(request)
+    if not context.ha.enabled:
+        return await _error(request, "supervisor_missing", 503)
+    if not await context.ha.async_update_addon():
+        return await _error(request, "update_failed", 502)
+
+    _LOGGER.info("Add-on update started, the container will restart")
+    # The new version installs the integration again and asks for a restart.
+    context.installer.mark_restart_needed()
+    return _ok(update_started=True, addon=await context.ha.async_addon_update_info())
+
+
 # ----------------------------------------------------------- background jobs
 async def _check_all(context: AppContext) -> None:
     """Probe every enabled camera once."""
@@ -817,6 +859,9 @@ def create_app(settings: Settings | None = None) -> Starlette:
         Route("/api/integration", integration_status),
         Route("/api/integration/install", integration_install, methods=["POST"]),
         Route("/api/ha/restart", ha_restart, methods=["POST"]),
+        Route("/api/addon/update", addon_update_status),
+        Route("/api/addon/update/check", addon_update_check, methods=["POST"]),
+        Route("/api/addon/update/install", addon_update_install, methods=["POST"]),
         Mount("/static", app=StaticFiles(directory=str(STATIC_DIR)), name="static"),
     ]
 

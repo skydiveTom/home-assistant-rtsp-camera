@@ -111,6 +111,44 @@ class HomeAssistantClient:
         data = response.get("data") if isinstance(response, dict) else None
         return data if isinstance(data, dict) else {}
 
+    async def async_addon_update_info(self) -> dict[str, Any]:
+        """Return the version information of this add-on.
+
+        Supervisor reports ``version_latest`` and ``update_available`` next to the
+        installed version, which is exactly what the interface needs to offer an
+        update button.
+        """
+        info = await self.async_self_info()
+        return {
+            "available": bool(info),
+            "version": info.get("version"),
+            "version_latest": info.get("version_latest"),
+            "update_available": bool(info.get("update_available")),
+            "state": info.get("state"),
+        }
+
+    async def async_store_reload(self) -> bool:
+        """Ask Supervisor to re-read the add-on store.
+
+        This is the "check for updates" button: without it Supervisor only looks
+        for new add-on versions on its own schedule.
+        """
+        try:
+            await self._call("/store/reload", method="POST", payload={})
+        except (HomeAssistantUnavailable, HTTPError, URLError, OSError, ValueError) as err:
+            _LOGGER.warning("Cannot reload the add-on store: %s", err)
+            return False
+        return True
+
+    async def async_update_addon(self) -> bool:
+        """Ask Supervisor to update this add-on to the newest version."""
+        try:
+            await self._call("/addons/self/update", method="POST", payload={})
+        except (HomeAssistantUnavailable, HTTPError, URLError, OSError, ValueError) as err:
+            _LOGGER.error("Cannot update the add-on: %s", err)
+            return False
+        return True
+
     async def async_restart_core(self) -> bool:
         """Ask Home Assistant to restart itself."""
         try:

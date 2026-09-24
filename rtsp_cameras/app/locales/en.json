@@ -75,6 +75,17 @@
     "mode_mjpeg": "MJPEG (all browsers)",
     "mode_hls": "HLS (low CPU on H.264 cameras)"
   },
+  "addon_update": {
+    "title": "Add-on version",
+    "installed": "Installed: {version}",
+    "check": "Check for updates",
+    "available": "Version {version} is available",
+    "update": "Update add-on",
+    "updating": "The add-on is updating itself and will restart. This page reconnects automatically.",
+    "updated": "Add-on updated to {version}",
+    "up_to_date": "This is the newest version",
+    "no_supervisor": "The Supervisor API is not reachable, so updates can only be checked in Settings → Add-ons."
+  },
   "integration": {
     "title": "Home Assistant integration",
     "description": "The add-on writes every camera into a JSON file and installs a small integration that turns each entry into a camera entity you can put on any dashboard.",
@@ -134,7 +145,10 @@
     "source_missing": "The bundled integration was not found in this container",
     "install_failed": "The integration could not be installed",
     "restart_failed": "Home Assistant did not accept the restart request",
-    "stream_failed": "The live preview stopped before the first frame"
+    "stream_failed": "The live preview stopped before the first frame",
+    "supervisor_missing": "Home Assistant Supervisor is not reachable from this add-on",
+    "update_check_failed": "The version could not be checked, try again in a moment",
+    "update_failed": "The add-on update could not be started"
   },
   "common": {
     "close": "Close",

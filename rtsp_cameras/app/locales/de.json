@@ -75,6 +75,17 @@
     "mode_mjpeg": "MJPEG (alle Browser)",
     "mode_hls": "HLS (wenig CPU bei H.264-Kameras)"
   },
+  "addon_update": {
+    "title": "Add-on-Version",
+    "installed": "Installiert: {version}",
+    "check": "Nach Updates suchen",
+    "available": "Version {version} ist verfügbar",
+    "update": "Add-on aktualisieren",
+    "updating": "Das Add-on aktualisiert sich selbst und startet neu. Diese Seite verbindet sich automatisch wieder.",
+    "updated": "Add-on auf {version} aktualisiert",
+    "up_to_date": "Das ist die neueste Version",
+    "no_supervisor": "Die Supervisor-API ist nicht erreichbar, Updates gibt es unter Einstellungen → Add-ons."
+  },
   "integration": {
     "title": "Home Assistant Integration",
     "description": "Das Add-on schreibt jede Kamera in eine JSON-Datei und installiert eine kleine Integration, die jeden Eintrag in eine Kamera-Entität für jedes Dashboard verwandelt.",
@@ -134,7 +145,10 @@
     "source_missing": "Die mitgelieferte Integration wurde in diesem Container nicht gefunden",
     "install_failed": "Die Integration konnte nicht installiert werden",
     "restart_failed": "Home Assistant hat die Neustart-Anfrage nicht akzeptiert",
-    "stream_failed": "Die Vorschau endete vor dem ersten Bild"
+    "stream_failed": "Die Vorschau endete vor dem ersten Bild",
+    "supervisor_missing": "Der Home-Assistant-Supervisor ist aus diesem Add-on nicht erreichbar",
+    "update_check_failed": "Die Version konnte nicht geprüft werden, bitte gleich erneut versuchen",
+    "update_failed": "Die Aktualisierung des Add-ons konnte nicht gestartet werden"
   },
   "common": {
     "close": "Schließen",

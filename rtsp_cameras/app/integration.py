@@ -158,3 +158,11 @@ class IntegrationInstaller:
         if state.get("restart_required"):
             state["restart_required"] = False
             self._write_state(state)
+
+    def mark_restart_needed(self, version: str | None = None) -> None:
+        """Remember that Home Assistant must be restarted to load integration files."""
+        state = self._read_state()
+        state["restart_required"] = True
+        if version:
+            state["version"] = version
+        self._write_state(state)

@@ -46,6 +46,22 @@ the `image` key from `rtsp_cameras/config.yaml` and push your version: Superviso
 then builds locally again (and the workflow publishes the image under your own
 GitHub namespace).
 
+## Updating the add-on
+
+Two ways, both end with a restart of Home Assistant:
+
+1. **From inside the add-on** – open the *Settings* tab of the add-on panel and
+   press **Check for updates**. It asks Supervisor to re-read the add-on store and
+   shows the newest published version. When a newer one exists, press
+   **Update add-on** (also offered as a banner on every tab): Supervisor updates
+   the container, the page reconnects by itself, and the new version refreshes the
+   bundled integration and asks for the Home Assistant restart.
+2. **From Home Assistant** – *Settings → Add-ons → RTSP Camera Manager*, press
+   **Update** (or use the ⋮ menu → *Check for updates* to refresh the store first).
+
+Without the button Supervisor only looks for new versions on its own schedule, so
+a fresh release can take a while to show up.
+
 ## Adding a camera
 
 Cameras are added **in the add-on**, not inside Home Assistant:

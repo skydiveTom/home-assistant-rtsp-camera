@@ -75,6 +75,17 @@
     "mode_mjpeg": "MJPEG (todos los navegadores)",
     "mode_hls": "HLS (poca CPU con cámaras H.264)"
   },
+  "addon_update": {
+    "title": "Versión del complemento",
+    "installed": "Instalada: {version}",
+    "check": "Buscar actualizaciones",
+    "available": "La versión {version} está disponible",
+    "update": "Actualizar el complemento",
+    "updating": "El complemento se está actualizando y se reiniciará. Esta página se reconecta automáticamente.",
+    "updated": "Complemento actualizado a {version}",
+    "up_to_date": "Esta es la versión más reciente",
+    "no_supervisor": "La API del Supervisor no es accesible, las actualizaciones se revisan en Ajustes → Complementos."
+  },
   "integration": {
     "title": "Integración con Home Assistant",
     "description": "El complemento escribe cada cámara en un archivo JSON e instala una pequeña integración que convierte cada entrada en una entidad de cámara lista para cualquier panel.",
@@ -134,7 +145,10 @@
     "source_missing": "No se encontró la integración incluida en este contenedor",
     "install_failed": "No se pudo instalar la integración",
     "restart_failed": "Home Assistant no aceptó la solicitud de reinicio",
-    "stream_failed": "La vista previa terminó antes del primer fotograma"
+    "stream_failed": "La vista previa terminó antes del primer fotograma",
+    "supervisor_missing": "El Supervisor de Home Assistant no es accesible desde este complemento",
+    "update_check_failed": "No se pudo comprobar la versión, inténtalo de nuevo en un momento",
+    "update_failed": "No se pudo iniciar la actualización del complemento"
   },
   "common": {
     "close": "Cerrar",

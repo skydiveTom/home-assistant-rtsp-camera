@@ -4,6 +4,19 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-09-24
+
+### Added
+
+- **Update check with one click.** The *Settings* tab shows the installed add-on
+  version and a **Check for updates** button. It makes Supervisor re-read the
+  add-on store and reports the newest published version; as soon as one exists, an
+  **Update add-on** button (plus a banner at the top of every tab) starts the
+  update through the Supervisor API. The interface reconnects by itself after the
+  add-on restarted with the new version and then offers the usual
+  "Restart Home Assistant" step, because the new version also refreshes the
+  bundled integration.
+
 ## [0.1.8] - 2026-09-24
 
 ### Added

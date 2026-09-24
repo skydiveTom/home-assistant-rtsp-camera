@@ -431,6 +431,112 @@ def test_restart_requires_a_supervisor_token(client: TestClient) -> None:
     assert response.json()["error"] == "restart_failed"
 
 
+def test_addon_update_status_without_supervisor(client: TestClient) -> None:
+    payload = client.get("/api/addon/update").json()
+
+    assert payload["ok"] is True
+    assert payload["addon"]["available"] is False
+    assert payload["addon"]["update_available"] is False
+
+
+def test_addon_update_needs_the_supervisor_api(client: TestClient) -> None:
+    check = client.post("/api/addon/update/check")
+    assert check.status_code == 503
+    assert check.json()["error"] == "supervisor_missing"
+
+    install = client.post("/api/addon/update/install")
+    assert install.status_code == 503
+    assert install.json()["error"] == "supervisor_missing"
+
+
+def test_addon_update_check_and_install(
+    workspace: Path, integration_source: Path, fake_tools: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = build_settings(
+        workspace,
+        None,
+        integration_source=integration_source,
+        SUPERVISOR_TOKEN="test-token",
+    )
+    with TestClient(create_app(settings)) as test_client:
+        supervisor = test_client.app.state.ctx.ha
+        calls: list[str] = []
+
+        async def fake_reload() -> bool:
+            calls.append("reload")
+            return True
+
+        async def fake_info() -> dict:
+            calls.append("info")
+            return {
+                "available": True,
+                "version": "0.1.8",
+                "version_latest": "0.1.9",
+                "update_available": True,
+                "state": "started",
+            }
+
+        async def fake_update() -> bool:
+            calls.append("update")
+            return True
+
+        monkeypatch.setattr(supervisor, "async_store_reload", fake_reload)
+        monkeypatch.setattr(supervisor, "async_addon_update_info", fake_info)
+        monkeypatch.setattr(supervisor, "async_update_addon", fake_update)
+
+        checked = test_client.post("/api/addon/update/check")
+        assert checked.status_code == 200
+        body = checked.json()
+        assert body["reloaded"] is True
+        assert body["addon"]["update_available"] is True
+        assert body["addon"]["version_latest"] == "0.1.9"
+        assert calls == ["reload", "info"]
+
+        started = test_client.post("/api/addon/update/install")
+        assert started.status_code == 200
+        assert started.json()["update_started"] is True
+        # The update is started first, then the state is reported back.
+        assert calls[-2:] == ["update", "info"]
+
+        # The new version installs the integration again, so HA must restart.
+        status = test_client.get("/api/integration").json()["integration"]
+        assert status["needs_restart"] is True
+
+
+def test_addon_update_errors_are_reported(
+    workspace: Path, integration_source: Path, fake_tools: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = build_settings(
+        workspace,
+        None,
+        integration_source=integration_source,
+        SUPERVISOR_TOKEN="test-token",
+    )
+    with TestClient(create_app(settings)) as test_client:
+        supervisor = test_client.app.state.ctx.ha
+
+        async def failing_reload() -> bool:
+            return False
+
+        async def unknown_info() -> dict:
+            return {"available": False, "version": None, "version_latest": None}
+
+        async def failing_update() -> bool:
+            return False
+
+        monkeypatch.setattr(supervisor, "async_store_reload", failing_reload)
+        monkeypatch.setattr(supervisor, "async_addon_update_info", unknown_info)
+        monkeypatch.setattr(supervisor, "async_update_addon", failing_update)
+
+        check = test_client.post("/api/addon/update/check")
+        assert check.status_code == 502
+        assert check.json()["error"] == "update_check_failed"
+
+        install = test_client.post("/api/addon/update/install")
+        assert install.status_code == 502
+        assert install.json()["error"] == "update_failed"
+
+
 def test_endpoints_report_missing_ffmpeg(bare_client: TestClient) -> None:
     camera = add_camera(bare_client)
 

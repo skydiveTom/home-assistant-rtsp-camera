@@ -51,6 +51,8 @@ w panelu dodatku.
   Assistant pozostaje czarna.
 - **Działa od razu** – dodanie, zmiana nazwy, wyłączenie lub usunięcie kamery jest
   widoczne w Home Assistant w kilka sekund, bez restartu i bez YAML.
+- **Aktualizuje się sam** – zakładka Ustawienia sprawdza na żądanie nową wersję
+  dodatku (przeładowanie sklepu Supervisora) i instaluje ją jednym przyciskiem.
 - **Cztery języki** – angielski (domyślny), niemiecki, hiszpański i polski.
   Interfejs podąża za językiem ustawionym w Home Assistant.
 - **Bezpieczeństwo** – dodatek dostępny wyłącznie przez uwierzytelniony ingress

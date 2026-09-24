@@ -469,6 +469,30 @@ textarea {
   max-width: none;
 }
 
+/* Add-on version card on the settings panel. */
+.addon-update {
+  margin-top: 22px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.addon-update:empty {
+  display: none;
+}
+
+.addon-update h3 {
+  margin-bottom: 6px;
+}
+
+.addon-update__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* ------------------------------------------------------------------- banner */
 .banner-region:empty {
   display: none;
