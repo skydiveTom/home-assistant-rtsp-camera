@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
+from http import HTTPStatus
 from typing import Any
 
+import aiohttp
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.components.stream.const import CONF_RTSP_TRANSPORT, RTSP_TRANSPORTS
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -22,7 +26,9 @@ from .const import (
     ATTR_SOURCE_FILE,
     ATTR_STREAM_URL,
     DOMAIN,
+    KEYFRAME_WAIT_SECONDS,
     MANUFACTURER,
+    SNAPSHOT_TIMEOUT_SECONDS,
 )
 from .coordinator import RtspCamerasCoordinator
 from .models import RtspCameraDefinition, redact_url
@@ -116,8 +122,10 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
     """A camera entity backed by a plain RTSP/RTMP/HTTP stream URL."""
 
     _attr_has_entity_name = False
-    _attr_use_stream_for_stills = True
     _attr_supported_features = CameraEntityFeature.STREAM
+    # NOTE: Home Assistant 2026.9 has no ``_attr_use_stream_for_stills`` attribute -
+    # ``Camera.use_stream_for_stills`` is a plain property that returns False - so
+    # stills are produced by ``async_camera_image`` below.
 
     def __init__(
         self,
@@ -216,5 +224,51 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        """Let Home Assistant generate still images from the live stream."""
-        return None
+        """Return a still image for the camera card and ``camera.snapshot``.
+
+        Home Assistant grabs stills from the live stream with
+        ``Stream.async_get_image`` - but its ``use_stream_for_stills`` flag is a
+        plain property (``_attr_use_stream_for_stills`` does not exist in 2026.9),
+        and the first call right after a stream start often has no keyframe yet and
+        returns ``None`` (Home Assistant then reports "Unable to get image").
+        Therefore the still is taken here: a keyframe is awaited with a bound
+        timeout, then whatever frame is available is used. A snapshot URL known to
+        the add-on has priority.
+        """
+        if self._definition.snapshot_url:
+            image = await self._async_fetch_snapshot(self._definition.snapshot_url)
+            if image is not None:
+                return image
+
+        stream = await self.async_create_stream()
+        if stream is None:
+            return None
+
+        try:
+            async with asyncio.timeout(KEYFRAME_WAIT_SECONDS):
+                image = await stream.async_get_image(
+                    width=width, height=height, wait_for_next_keyframe=True
+                )
+        except TimeoutError:
+            _LOGGER.debug("No keyframe for %s within %s s", self.entity_id, KEYFRAME_WAIT_SECONDS)
+            image = None
+
+        if image is None:
+            image = await stream.async_get_image(width=width, height=height)
+        return image
+
+    async def _async_fetch_snapshot(self, url: str) -> bytes | None:
+        """Download an image from the optional snapshot URL of the camera."""
+        session = async_get_clientsession(self.hass)
+        try:
+            async with asyncio.timeout(SNAPSHOT_TIMEOUT_SECONDS):
+                async with session.get(url) as response:
+                    if response.status != HTTPStatus.OK:
+                        _LOGGER.warning(
+                            "Snapshot of %s returned HTTP %s", self.entity_id, response.status
+                        )
+                        return None
+                    return await response.read()
+        except (TimeoutError, aiohttp.ClientError) as err:
+            _LOGGER.warning("Snapshot of %s failed: %s", self.entity_id, err)
+            return None

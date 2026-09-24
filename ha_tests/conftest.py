@@ -40,15 +40,41 @@ def _install_turbojpeg_stub() -> None:
     module = types.ModuleType("turbojpeg")
 
     class TurboJPEG:  # noqa: D101
-        """Placeholder that refuses to process images."""
+        """Placeholder that refuses to process images.
+
+        ``Encoder`` is the one method Home Assistant's stream really needs - it
+        turns the decoded keyframe into a JPEG - so it is implemented with PyAV,
+        which is a hard dependency of ``stream`` anyway.
+        """
 
         def decode_header(self, jpeg_buf: bytes) -> tuple[int, int, int, int]:
-            """Refuse to decode images."""
+            """Refuse to inspect a JPEG."""
             raise OSError("PyTurboJPEG is not installed in this environment")
 
         def scale(self, *args: object, **kwargs: object) -> bytes:
             """Refuse to scale images."""
             raise OSError("PyTurboJPEG is not installed in this environment")
+
+        def scale_with_quality(self, *args: object, **kwargs: object) -> bytes:
+            """Refuse to scale images."""
+            raise OSError("PyTurboJPEG is not installed in this environment")
+
+        def encode(self, bgr_array: object, quality: int = 75) -> bytes:
+            """Encode a BGR numpy array as JPEG with PyAV."""
+            import io  # noqa: PLC0415
+
+            import av  # noqa: PLC0415
+
+            frame = av.VideoFrame.from_ndarray(bgr_array, format="bgr24")
+            buffer = io.BytesIO()
+            with av.open(buffer, mode="w", format="image2pipe") as container:
+                stream = container.add_stream("mjpeg", rate=1)
+                stream.width = frame.width
+                stream.height = frame.height
+                stream.pix_fmt = "yuvj420p"
+                container.mux(stream.encode(frame))
+                container.mux(stream.encode(None))
+            return buffer.getvalue()
 
     module.TurboJPEG = TurboJPEG
     sys.modules["turbojpeg"] = module

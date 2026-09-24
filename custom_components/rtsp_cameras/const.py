@@ -37,6 +37,13 @@ ATTR_CODEC = "codec"
 
 SUPPORTED_SCHEMES = ("rtsp://", "rtsps://", "rtmp://", "http://", "https://")
 
+# Stills: Home Assistant's stream needs a decoded keyframe before it can hand out
+# an image. The first call right after starting a stream has none yet, so the
+# entity waits this long for the next keyframe before it uses the last frame.
+KEYFRAME_WAIT_SECONDS = 8
+# Optional snapshot URL of a camera (downloaded by the integration for stills).
+SNAPSHOT_TIMEOUT_SECONDS = 10
+
 
 def resolve_cameras_path(configured: str | None, config_dir: str | Path) -> Path:
     """Resolve the configured camera file path against the configuration folder.

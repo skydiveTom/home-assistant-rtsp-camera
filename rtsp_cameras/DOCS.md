@@ -151,6 +151,23 @@ exceptions). Check the codec in the camera tile of the add-on:
   download the integration **Diagnostics** (Settings → Devices & services → RTSP
   Camera Manager → ⋮ → Download diagnostics), which lists the checked file, the
   cameras and their (masked) stream URLs.
+- Still images (thumbnail, `camera.snapshot`) are taken from the live stream by the
+  integration - it waits up to 8 seconds for a keyframe. If a camera offers an HTTP
+  snapshot URL, enter it in the add-on: that snapshot is used first and is faster.
+
+**Testing against a real camera (developers)**
+
+The end-to-end tests can talk to a camera on your network instead of the fakes:
+
+```bash
+export RTSP_LIVE_CAMERA_URL="rtsp://user:pass@192.168.1.28:554/stream1"
+python -m pytest -c ha_tests/pytest.ini ha_tests/test_live_camera.py -q
+```
+
+They check that the camera published by the add-on becomes `camera.<name>`, that
+Home Assistant gets the RTSP URL and the transport, that its `stream` component
+decodes a live frame and that `camera.async_get_image` returns a JPEG. Without the
+variable the tests are skipped, so CI (and any other machine) stays offline.
 
 Changes in the add-on (add, rename, disable, delete) are picked up within
 seconds, because the integration watches the JSON file. No restart is needed for

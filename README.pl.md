@@ -116,6 +116,20 @@ python -m venv .venv-ha
 .venv-ha/Scripts/python -m pytest -c ha_tests/pytest.ini ha_tests
 ```
 
+### 4. Testy na prawdziwej kamerze (end-to-end)
+
+Jeśli masz kamerę w sieci, ten sam zestaw przejdzie całą drogę: plik dodatku →
+encja `camera.<nazwa>` → strumień HA → zdekodowana klatka → JPEG. Ustaw adres
+i uruchom sam plik z testami na żywo:
+
+```bash
+export RTSP_LIVE_CAMERA_URL="rtsp://user:haslo@192.168.1.28:554/stream1"   # Windows: $env:RTSP_LIVE_CAMERA_URL = "..."
+.venv-ha/Scripts/python -m pytest -c ha_tests/pytest.ini ha_tests/test_live_camera.py -q
+```
+
+Bez tej zmiennej środowiskowej testy są pomijane, więc CI i każda inna maszyna
+działają nadal bez sieci.
+
 ## Jak to działa
 
 ```

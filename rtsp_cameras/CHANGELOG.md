@@ -4,6 +4,37 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.21] - 2026-09-24
+
+### Fixed
+
+- **Still images (camera card thumbnail, `camera.snapshot`, `camera/async_get_image`)
+  returned nothing.** Home Assistant 2026.9 does not know
+  `_attr_use_stream_for_stills` - `Camera.use_stream_for_stills` is a plain property
+  that returns `False` - and the entity answered `async_camera_image` with `None`.
+  Home Assistant therefore failed with `Unable to get image` even though live video
+  worked. The entity now takes the still from its own live stream, waiting for the
+  next **keyframe** (bounded to 8 s, then the last decoded frame is used) and uses
+  an optional snapshot URL of the camera first, falling back to the stream when it
+  does not answer.
+- Found while testing against a real camera (H.264, 1280x720, 30 fps) on a live
+  Home Assistant 2026.9: Home Assistant's own `stream` component decodes the
+  camera and produces JPEG stills again.
+
+### Added
+
+- **Live camera tests** (`ha_tests/test_live_camera.py`). Export
+  `RTSP_LIVE_CAMERA_URL` and the suite checks the whole chain against a real
+  camera: the add-on file becomes `camera.<name>`, `stream_source` hands over the
+  RTSP URL, the transport reaches `stream_options`, Home Assistant decodes a live
+  frame and `camera.async_get_image` returns a JPEG. Without the variable the tests
+  are skipped, so CI stays offline.
+- Offline tests for the still path (`ha_tests/test_camera_stills.py`): keyframe
+  wait, bounded timeout with fallback, snapshot URL priority and a broken snapshot
+  URL.
+- The test harness stub for `turbojpeg` now encodes real JPEGs with PyAV, so the
+  still path is exercised end-to-end on machines without libjpeg-turbo.
+
 ## [0.1.20] - 2026-09-24
 
 ### Added
