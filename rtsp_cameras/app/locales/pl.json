@@ -72,6 +72,8 @@
     "mode_auto": "Automatyczny (sprawdź raz)",
     "mode_auto_result": "auto · {mode}",
     "detecting": "Sprawdzam, który tryb podglądu działa ...",
+    "detecting_slow": "Sprawdzam, który tryb podglądu działa — tę kamerę trzeba zdekodować (H.265), pierwsza klatka może zająć kilka sekund ...",
+    "transport_fallback": "UDP gubił zbyt wiele pakietów — podgląd używa transportu {transport}",
     "mode_mjpeg": "MJPEG (wszystkie przeglądarki)",
     "mode_hls": "HLS (małe obciążenie przy kamerach H.264)"
   },

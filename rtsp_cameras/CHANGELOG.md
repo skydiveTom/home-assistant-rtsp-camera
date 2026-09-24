@@ -4,6 +4,28 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] - 2026-09-24
+
+### Fixed
+
+- **Preview stayed black although the stream test was green.** Reading a stream
+  header with ffprobe says nothing about whether the frames arrive, and RTSP over
+  **UDP** loses packets that only hurt once the stream is decoded. The preview now
+  retries every mode over **TCP** when the configured transport produces nothing,
+  and the successful transport is returned in the API (`transport`) and shown as a
+  hint in the UI.
+- **H.265 cameras were declared broken too early.** Previews of codecs that have to
+  be decoded or transcoded now wait up to 30 seconds for the first frame instead of
+  `test_timeout` only. The detection stays fast (10 s) so the panel does not hang.
+
+### Added
+
+- While the automatic preview detection runs on an H.265 camera the panel explains
+  that the first frame can take a few seconds (`preview.detecting_slow`, all four
+  languages).
+- New fake ffmpeg mode `udp-fail` and three regression tests covering the TCP
+  fallback of `preview/detect`, `mjpeg` and `hls/start`.
+
 ## [0.1.18] - 2026-09-24
 
 ### Fixed

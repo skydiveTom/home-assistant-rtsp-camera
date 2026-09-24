@@ -72,6 +72,8 @@
     "mode_auto": "Automático (comprobar una vez)",
     "mode_auto_result": "auto · {mode}",
     "detecting": "Comprobando qué modo de vista previa funciona ...",
+    "detecting_slow": "Comprobando qué modo de vista previa funciona: esta cámara necesita decodificación (H.265), el primer fotograma puede tardar unos segundos ...",
+    "transport_fallback": "UDP perdió demasiados paquetes: la vista previa usa {transport} en su lugar",
     "mode_mjpeg": "MJPEG (todos los navegadores)",
     "mode_hls": "HLS (poca CPU con cámaras H.264)"
   },

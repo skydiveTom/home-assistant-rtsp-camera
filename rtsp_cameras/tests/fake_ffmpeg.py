@@ -48,6 +48,15 @@ def output_format(command: list[str]) -> str:
     return ""
 
 
+def input_transport(command: list[str]) -> str:
+    """Return the RTSP transport ffmpeg was asked to use."""
+    if "-rtsp_transport" in command:
+        index = command.index("-rtsp_transport")
+        if index + 1 < len(command):
+            return command[index + 1]
+    return ""
+
+
 def write_hls(command: list[str]) -> int:
     """Create a tiny playlist plus one segment, like the real HLS muxer."""
     playlist = command[-1]
@@ -88,6 +97,19 @@ def main() -> int:
                 "rtsp://camera.local:554/stream: Invalid data found when processing input\n"
             )
             return 1
+        return write_hls(command)
+    if MODE == "udp-fail":
+        # Emulates a camera whose UDP packets get lost: only TCP produces frames.
+        if input_transport(command) == "udp":
+            sys.stderr.write(
+                "rtsp://camera.local:554/stream: RTP: dropping old packet received too late\n"
+            )
+            return 1
+        if output_format(command) in ("mjpeg", "image2", "image2pipe"):
+            for _ in range(FRAMES):
+                write_bytes(JPEG)
+                time.sleep(0.05)
+            return 0
         return write_hls(command)
 
     return 1

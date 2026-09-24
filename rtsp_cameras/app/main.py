@@ -66,6 +66,10 @@ HLS_IDLE_SECONDS = 45
 HEALTH_MIN_INTERVAL = 15
 # How long the automatic preview detection waits for the first frame / playlist.
 PREVIEW_DETECT_TIMEOUT = 10
+# Decoding (H.265) or transcoding takes longer than reading a stream header, and
+# RTSP over UDP can lose packets that ffprobe never notices.
+PREVIEW_SLOW_CODEC_TIMEOUT = 30
+BROWSER_FRIENDLY_CODECS = ("h264", "avc1", "mjpeg")
 
 API_ERRORS = (
     "generic",
@@ -427,6 +431,38 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
+def _camera_codec(camera: Camera) -> str:
+    """Return the codec ffprobe reported for a camera, lower case."""
+    details = (camera.last_probe or {}).get("details") or {}
+    return str(details.get("codec") or "").strip().lower()
+
+
+def _preview_timeout(context: AppContext, camera: Camera) -> int:
+    """Return how long a preview may take before it counts as failed.
+
+    Streams that have to be decoded or transcoded (H.265 for example) need more
+    time than a plain H.264 copy - and reading a header with ffprobe says nothing
+    about whether the frames arrive.
+    """
+    timeout = int(context.settings.test_timeout)
+    if _camera_codec(camera) not in BROWSER_FRIENDLY_CODECS:
+        timeout = max(timeout, PREVIEW_SLOW_CODEC_TIMEOUT)
+    return timeout
+
+
+def _preview_transports(camera: Camera) -> list[str]:
+    """Return the transports a preview should try, best guess first.
+
+    RTSP over UDP loses packets easily, which only shows up when the stream is
+    decoded - the stream test (ffprobe) still succeeds. TCP is therefore always
+    tried as a fallback.
+    """
+    transports = [str(camera.rtsp_transport or "tcp").strip().lower()]
+    if "tcp" not in transports:
+        transports.append("tcp")
+    return transports
+
+
 def _mjpeg_part(frame: bytes) -> bytes:
     """Frame one JPEG image as a multipart body part."""
     header = (
@@ -469,30 +505,39 @@ async def camera_mjpeg(request: Request) -> Response:
     if not context.ffmpeg.available:
         return await _error(request, "ffmpeg_missing", 503)
 
-    frames = context.ffmpeg.mjpeg_stream(
-        camera.url,
-        camera.rtsp_transport,
-        fps=_optional_int(request.query_params.get("fps")),
-        max_height=_optional_int(request.query_params.get("height")),
-    )
-    try:
-        first = await asyncio.wait_for(
-            anext(frames), timeout=context.settings.test_timeout + 5
+    fps = _optional_int(request.query_params.get("fps"))
+    height = _optional_int(request.query_params.get("height"))
+    deadline = _preview_timeout(context, camera)
+    last_error = "stream_failed"
+    frames = None
+    first: bytes | None = None
+
+    # UDP drops packets that only matter once the stream is decoded, so the
+    # configured transport is tried first and TCP second.
+    for transport in _preview_transports(camera):
+        candidate = context.ffmpeg.mjpeg_stream(
+            camera.url, transport, fps=fps, max_height=height
         )
-    except (StreamFailed, FFmpegUnavailable) as err:
+        try:
+            first = await asyncio.wait_for(anext(candidate), timeout=deadline)
+        except (StreamFailed, FFmpegUnavailable) as err:
+            last_error = str(err)
+        except TimeoutError:
+            last_error = f"No frame within {deadline} seconds"
+        except StopAsyncIteration:
+            last_error = "ffmpeg stopped without producing a frame"
+        else:
+            frames = candidate
+            break
         with contextlib.suppress(Exception):
-            await frames.aclose()
-        _LOGGER.info("MJPEG preview of %s failed: %s", camera.id, err)
+            await candidate.aclose()
+
+    if frames is None or first is None:
+        _LOGGER.info("MJPEG preview of %s failed: %s", camera.id, last_error)
         return JSONResponse(
-            {"ok": False, "error": "stream_failed", "detail": str(err)},
+            {"ok": False, "error": "stream_failed", "detail": last_error},
             status_code=502,
         )
-    except TimeoutError:
-        with contextlib.suppress(Exception):
-            await frames.aclose()
-        return await _error(request, "timeout", 504)
-    except StopAsyncIteration:
-        return await _error(request, "stream_failed", 502)
 
     async def body() -> AsyncIterator[bytes]:
         """Yield the multipart stream until the client disconnects."""
@@ -514,7 +559,7 @@ async def camera_mjpeg(request: Request) -> Response:
 
 
 async def _start_hls_session(
-    context: AppContext, camera: Camera
+    context: AppContext, camera: Camera, transport: str | None = None
 ) -> tuple[HlsSession | None, str | None]:
     """Start an HLS session for a camera and wait until its playlist exists.
 
@@ -526,13 +571,13 @@ async def _start_hls_session(
         session = await context.ffmpeg.start_hls(
             camera.id,
             camera.url,
-            camera.rtsp_transport,
+            transport or camera.rtsp_transport,
             codec=probe_details.get("codec"),
         )
     except FFmpegUnavailable:
         return None, "ffmpeg_missing"
 
-    deadline = time.monotonic() + context.settings.test_timeout
+    deadline = time.monotonic() + _preview_timeout(context, camera)
     while time.monotonic() < deadline:
         if session.playlist.is_file():
             return session, None
@@ -554,7 +599,15 @@ async def camera_hls_start(request: Request) -> JSONResponse:
     if not context.ffmpeg.available:
         return await _error(request, "ffmpeg_missing", 503)
 
-    session, error = await _start_hls_session(context, camera)
+    session: HlsSession | None = None
+    error: str | None = None
+    transport = camera.rtsp_transport
+    for candidate in _preview_transports(camera):
+        session, error = await _start_hls_session(context, camera, candidate)
+        if session is not None:
+            transport = candidate
+            break
+
     if session is None:
         if error == "ffmpeg_missing":
             return await _error(request, "ffmpeg_missing", 503)
@@ -565,13 +618,18 @@ async def camera_hls_start(request: Request) -> JSONResponse:
         )
     return _ok(
         mode="hls",
+        transport=transport,
         playlist=f"api/cameras/{camera.id}/hls/index.m3u8",
     )
 
 
-async def _probe_mjpeg(context: AppContext, camera: Camera, timeout: int) -> str | None:
+async def _probe_mjpeg(
+    context: AppContext, camera: Camera, timeout: int, transport: str | None = None
+) -> str | None:
     """Return None when MJPEG produced a frame, otherwise the reason."""
-    frames = context.ffmpeg.mjpeg_stream(camera.url, camera.rtsp_transport)
+    frames = context.ffmpeg.mjpeg_stream(
+        camera.url, transport or camera.rtsp_transport
+    )
     try:
         await asyncio.wait_for(anext(frames), timeout=timeout)
     except (StreamFailed, FFmpegUnavailable) as err:
@@ -622,40 +680,52 @@ async def camera_preview_detect(request: Request) -> JSONResponse:
     timeout = min(int(context.settings.test_timeout), PREVIEW_DETECT_TIMEOUT)
     attempts: dict[str, str] = {}
 
-    mjpeg_error = await _probe_mjpeg(context, camera, timeout)
-    if mjpeg_error is None:
-        context.store.set_preview_mode(camera.id, "mjpeg")
-        _LOGGER.info("Preview of %s uses MJPEG", camera.id)
-        return _ok(
-            mode="mjpeg",
-            auto=True,
-            cached=False,
-            camera=camera.to_api_dict(),
+    # UDP loses packets that only hurt when the stream is decoded, so TCP is tried
+    # as well before the detection reports a failure.
+    for transport in _preview_transports(camera):
+        mjpeg_error = await _probe_mjpeg(context, camera, timeout, transport)
+        if mjpeg_error is None:
+            context.store.set_preview_mode(camera.id, "mjpeg")
+            _LOGGER.info("Preview of %s uses MJPEG over %s", camera.id, transport)
+            return _ok(
+                mode="mjpeg",
+                auto=True,
+                cached=False,
+                transport=transport,
+                attempts=attempts,
+                camera=camera.to_api_dict(),
+            )
+
+        attempts[f"mjpeg/{transport}"] = mjpeg_error
+        _LOGGER.info(
+            "MJPEG preview of %s is not usable over %s: %s",
+            camera.id,
+            transport,
+            mjpeg_error,
         )
 
-    attempts["mjpeg"] = mjpeg_error
-    _LOGGER.info("MJPEG preview of %s is not usable: %s", camera.id, mjpeg_error)
+        session, hls_error = await _start_hls_session(context, camera, transport)
+        if session is not None:
+            context.store.set_preview_mode(camera.id, "hls")
+            _LOGGER.info("Preview of %s uses HLS over %s", camera.id, transport)
+            return _ok(
+                mode="hls",
+                auto=True,
+                cached=False,
+                transport=transport,
+                playlist=f"api/cameras/{camera.id}/hls/index.m3u8",
+                attempts=attempts,
+                camera=camera.to_api_dict(),
+            )
 
-    session, hls_error = await _start_hls_session(context, camera)
-    if session is not None:
-        context.store.set_preview_mode(camera.id, "hls")
-        _LOGGER.info("Preview of %s uses HLS", camera.id)
-        return _ok(
-            mode="hls",
-            auto=True,
-            cached=False,
-            playlist=f"api/cameras/{camera.id}/hls/index.m3u8",
-            attempts=attempts,
-            camera=camera.to_api_dict(),
-        )
+        attempts[f"hls/{transport}"] = hls_error or "stream_failed"
 
-    attempts["hls"] = hls_error or "stream_failed"
     _LOGGER.info("No working preview mode for %s: %s", camera.id, attempts)
     return JSONResponse(
         {
             "ok": False,
             "error": "stream_failed",
-            "detail": attempts.get("hls") or attempts.get("mjpeg"),
+            "detail": next(reversed(attempts.values()), None),
             "attempts": attempts,
         },
         status_code=502,

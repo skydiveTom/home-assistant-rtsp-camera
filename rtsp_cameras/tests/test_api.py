@@ -268,8 +268,51 @@ def test_preview_detect_falls_back_to_hls(
     assert payload["mode"] == "hls"
     assert payload["auto"] is True
     assert payload["playlist"] == f"api/cameras/{camera['id']}/hls/index.m3u8"
-    assert "Invalid data" in payload["attempts"]["mjpeg"]
+    assert "Invalid data" in payload["attempts"]["mjpeg/tcp"]
     assert payload["camera"]["preview_mode"] == "hls"
+
+
+def test_preview_detect_falls_back_to_tcp(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """UDP loses packets that ffprobe never notices: the preview retries over TCP."""
+    camera = add_camera(client, rtsp_transport="udp")
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "udp-fail")
+
+    payload = client.post(f"/api/cameras/{camera['id']}/preview/detect").json()
+
+    assert payload["ok"] is True
+    assert payload["transport"] == "tcp"
+    assert payload["mode"] == "mjpeg"
+    assert "mjpeg/udp" in payload["attempts"], "the UDP attempt must be reported"
+
+
+def test_mjpeg_preview_falls_back_to_tcp(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The streaming endpoint retries with TCP as well."""
+    camera = add_camera(client, rtsp_transport="udp")
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "udp-fail")
+    monkeypatch.setenv("FAKE_FRAMES", "2")
+
+    with client.stream("GET", f"/api/cameras/{camera['id']}/mjpeg") as response:
+        assert response.status_code == 200
+        first_chunk = next(response.iter_bytes())
+
+    assert JPEG in first_chunk
+
+
+def test_hls_preview_falls_back_to_tcp(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HLS starts over TCP when UDP produced nothing."""
+    camera = add_camera(client, rtsp_transport="udp")
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "udp-fail")
+
+    started = client.post(f"/api/cameras/{camera['id']}/hls/start")
+
+    assert started.status_code == 200
+    assert started.json()["transport"] == "tcp"
 
 
 def test_preview_detect_honours_the_addon_option(
@@ -312,8 +355,8 @@ def test_preview_detect_reports_when_nothing_works(
     assert response.status_code == 502
     payload = response.json()
     assert payload["error"] == "stream_failed"
-    assert set(payload["attempts"]) == {"mjpeg", "hls"}
-    assert "Connection refused" in payload["attempts"]["mjpeg"]
+    assert set(payload["attempts"]) == {"mjpeg/tcp", "hls/tcp"}
+    assert "Connection refused" in payload["attempts"]["mjpeg/tcp"]
     assert client.get("/api/cameras").json()["cameras"][0]["preview_mode"] is None
 
 

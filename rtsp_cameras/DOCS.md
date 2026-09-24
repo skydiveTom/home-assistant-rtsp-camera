@@ -268,8 +268,15 @@ Assistant cannot create - use the default `rtsp_cameras/cameras.json`.
 
 **The preview stays black**
 
+- The stream test can be green while the preview fails: ffprobe only reads the
+  stream header, the preview has to **decode** the frames. RTSP over **UDP** loses
+  packets easily, so the add-on retries the preview over **TCP** automatically - the
+  panel then shows `UDP lost too many packets ...` as a hint.
 - H.264/H.265 streams work best in the HLS mode; switch the mode in the preview
   window.
+- A camera in **H.265/HEVC** has to be decoded (and for Home Assistant also
+  transcoded), so the first frame can take a few seconds - 1080p50 footage may need
+  a stronger host. Enter the H.264 sub stream as *Stream URL for Home Assistant*.
 - Browsers limit parallel MJPEG connections per host; close other previews.
 
 **Home Assistant shows the camera as unavailable**

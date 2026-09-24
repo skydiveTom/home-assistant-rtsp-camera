@@ -72,6 +72,8 @@
     "mode_auto": "Automatic (test once)",
     "mode_auto_result": "auto · {mode}",
     "detecting": "Checking which preview mode works ...",
+    "detecting_slow": "Checking which preview mode works - this camera has to be decoded (H.265), the first frame can take a few seconds ...",
+    "transport_fallback": "UDP lost too many packets, the preview uses {transport} instead",
     "mode_mjpeg": "MJPEG (all browsers)",
     "mode_hls": "HLS (low CPU on H.264 cameras)"
   },

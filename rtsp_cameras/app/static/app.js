@@ -951,7 +951,10 @@
     }
     let mode = force ? null : state.preview.resolved[cameraId];
     if (!mode) {
-      placeholderText(t('preview.detecting'));
+      const camera = cameraById(cameraId) || {};
+      const codec = String(probeDetails(camera).codec || '').toLowerCase();
+      const slow = codec !== '' && ['h264', 'avc1', 'mjpeg'].indexOf(codec) < 0;
+      placeholderText(slow ? t('preview.detecting_slow') : t('preview.detecting'));
       try {
         const data = await api(
           'api/cameras/' + cameraId + '/preview/detect' + (force ? '?force=1' : ''),
@@ -960,6 +963,9 @@
         mode = data.mode || 'mjpeg';
         state.preview.resolved[cameraId] = mode;
         applyCamera(data.camera);
+        if (data.transport && camera.rtsp_transport && data.transport !== camera.rtsp_transport) {
+          toast(t('preview.transport_fallback', { transport: data.transport }), 'warn');
+        }
       } catch (err) {
         const code = err instanceof ApiError ? err.code : 'generic';
         const detail =

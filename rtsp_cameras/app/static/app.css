@@ -1164,6 +1164,10 @@ select:focus {
   border-left-color: var(--err);
 }
 
+.toast--warn {
+  border-left-color: var(--warn, #d6a01d);
+}
+
 /* --------------------------------------------------------------- animations */
 @keyframes rise {
   from {
