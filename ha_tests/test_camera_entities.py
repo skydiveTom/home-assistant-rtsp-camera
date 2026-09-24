@@ -111,9 +111,11 @@ async def test_published_cameras_become_camera_entities(hass, entry):
         == "camera.front_door"
     )
 
-    # ``device_registry.devices`` must be iterated, mapping access is deprecated
-    devices = list(dr.async_get(hass).devices)
-    assert "Front Door" in {device.name for device in devices}
+    entity_entry = registry.async_get("camera.front_door")
+    assert entity_entry is not None and entity_entry.device_id is not None
+    device = dr.async_get(hass).async_get(entity_entry.device_id)
+    assert device is not None
+    assert device.name == "Front Door"
 
 
 async def test_camera_added_after_startup_appears_without_restart(hass, entry):
