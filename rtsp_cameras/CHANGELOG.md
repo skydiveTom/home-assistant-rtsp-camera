@@ -4,6 +4,15 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.16] - 2026-09-24
+
+### Fixed
+
+- The helper files for the add-on update (`actions.json`, `addon_update.json`) can
+  no longer affect the camera entities: a problem with them is logged and ignored,
+  so the camera platform keeps providing its entities (Home Assistant otherwise
+  shows them as "no longer provided by rtsp_cameras").
+
 ## [0.1.15] - 2026-09-24
 
 ### Fixed

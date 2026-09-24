@@ -304,6 +304,30 @@ async def test_addon_refresh_request_asks_home_assistant(hass, entry):
     assert calls == [{"entity_id": "update.rtsp_camera_manager"}]
 
 
+async def test_helper_file_problems_do_not_break_the_cameras(hass, entry):
+    """A broken helper file must never take the camera entities down."""
+    from pathlib import Path
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.async_entity_ids("camera")
+
+    # Make the action file unreadable/unwritable (a directory instead of a file).
+    actions = Path(hass.config.path("rtsp_cameras", "actions.json"))
+    actions.unlink(missing_ok=True)
+    actions.mkdir(parents=True, exist_ok=True)
+
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert entry.runtime_data.last_update_success is True
+    assert sorted(hass.states.async_entity_ids("camera")) == [
+        "camera.front_door",
+        "camera.garage",
+    ]
+
+
 async def test_camera_file_is_resolved_inside_the_config_folder(hass, entry):
     """The default path matches exactly what the add-on publishes."""
     assert await hass.config_entries.async_setup(entry.entry_id)

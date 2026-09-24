@@ -73,8 +73,15 @@ class RtspCamerasCoordinator(DataUpdateCoordinator[dict[str, RtspCameraDefinitio
     async def _async_update_data(self) -> dict[str, RtspCameraDefinition]:
         """Read the camera file and report changes of the camera count."""
         cameras = await self.hass.async_add_executor_job(self._read_cameras)
-        await async_handle_actions(self.hass, actions_file_for(self.cameras_file))
-        await async_publish_addon_update(self.hass, status_file_for(self.cameras_file))
+        try:
+            # The helper files used for the add-on update must never be able to
+            # break the cameras.
+            await async_handle_actions(self.hass, actions_file_for(self.cameras_file))
+            await async_publish_addon_update(
+                self.hass, status_file_for(self.cameras_file)
+            )
+        except Exception:  # noqa: BLE001 - helper files are optional
+            _LOGGER.exception("Cannot handle the add-on helper files")
         if len(cameras) != self.reported_count:
             self.reported_count = len(cameras)
             if cameras:
