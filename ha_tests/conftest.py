@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,40 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+
+def _install_turbojpeg_stub() -> None:
+    """Provide a stand-in for the native PyTurboJPEG bindings when missing.
+
+    ``homeassistant.components.camera`` imports ``turbojpeg`` at module level,
+    which needs the native libjpeg-turbo library. Image scaling is not exercised
+    by these tests, so a stub keeps the suite runnable everywhere.
+    """
+    try:
+        import turbojpeg  # noqa: F401, PLC0415
+    except ImportError:
+        pass
+    else:
+        return
+
+    module = types.ModuleType("turbojpeg")
+
+    class TurboJPEG:  # noqa: D101
+        """Placeholder that refuses to process images."""
+
+        def decode_header(self, jpeg_buf: bytes) -> tuple[int, int, int, int]:
+            """Refuse to decode images."""
+            raise OSError("PyTurboJPEG is not installed in this environment")
+
+        def scale(self, *args: object, **kwargs: object) -> bytes:
+            """Refuse to scale images."""
+            raise OSError("PyTurboJPEG is not installed in this environment")
+
+    module.TurboJPEG = TurboJPEG
+    sys.modules["turbojpeg"] = module
+
+
+_install_turbojpeg_stub()
 
 if sys.platform == "win32":
     # The Home Assistant test harness blocks every socket, keeping only AF_UNIX
