@@ -116,12 +116,14 @@ def test_probe_returns_stream_details(
 
     recorded = args_file.read_text(encoding="utf-8")
     assert "-rtsp_transport" in recorded
-    assert "-rw_timeout" in recorded
+    assert "-timeout" in recorded
 
     arguments = json.loads(recorded)
     assert STREAM_URL in arguments
     # ffmpeg 8 rejects -nostdin in front of other options; stdin is closed instead.
     assert "-nostdin" not in arguments
+    # Some ffmpeg builds reject -rw_timeout, so it must never be passed.
+    assert "-rw_timeout" not in arguments
 
 
 def test_processes_run_with_a_closed_stdin(

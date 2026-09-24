@@ -428,7 +428,10 @@ async def camera_mjpeg(request: Request) -> Response:
         with contextlib.suppress(Exception):
             await frames.aclose()
         _LOGGER.info("MJPEG preview of %s failed: %s", camera.id, err)
-        return await _error(request, "stream_failed", 502)
+        return JSONResponse(
+            {"ok": False, "error": "stream_failed", "detail": str(err)},
+            status_code=502,
+        )
     except TimeoutError:
         with contextlib.suppress(Exception):
             await frames.aclose()

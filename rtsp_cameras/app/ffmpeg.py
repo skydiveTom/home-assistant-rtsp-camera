@@ -131,15 +131,16 @@ class FFmpegService:
     def _input_args(self, url: str, transport: str, timeout: int) -> list[str]:
         """Build the input options shared by all ffmpeg and ffprobe calls.
 
-        ``-nostdin`` is not used: ffmpeg 8 rejects it when it is followed by other
-        options. The child processes get ``stdin=DEVNULL`` instead, which has the
-        same effect and works on every version.
+        Only options that every ffmpeg build accepts are used. ``-rw_timeout`` is
+        deliberately not passed: some builds reject it (it made previews fail with
+        ``Option rw_timeout not found``) and the Python side already enforces
+        timeouts for every call.
         """
         args = ["-hide_banner", "-loglevel", "error"]
-        micro = max(1, int(timeout)) * 1_000_000
         if url.lower().startswith(("rtsp://", "rtsps://")):
+            micro = max(1, int(timeout)) * 1_000_000
             args += ["-rtsp_transport", transport or "tcp", "-timeout", str(micro)]
-        return args + ["-rw_timeout", str(micro)]
+        return args
 
     def _ffmpeg_input(self, url: str, transport: str, timeout: int) -> list[str]:
         """Return the input options followed by the input URL itself."""

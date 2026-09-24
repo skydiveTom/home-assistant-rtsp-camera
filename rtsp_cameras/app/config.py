@@ -15,7 +15,7 @@ DEFAULT_LANGUAGE = "en"
 SUPPORTED_TRANSPORTS: tuple[str, ...] = ("tcp", "udp", "udp_multicast", "http")
 SUPPORTED_PREVIEW_MODES: tuple[str, ...] = ("mjpeg", "hls")
 
-ADDON_VERSION = "0.1.5"
+ADDON_VERSION = "0.1.6"
 ADDON_SLUG = "rtsp_cameras"
 DEFAULT_OPTIONS_FILE = "/data/options.json"
 DEFAULT_DATA_DIR = "/data"

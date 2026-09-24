@@ -209,7 +209,9 @@ def test_mjpeg_endpoint_reports_broken_streams(
     response = client.get(f"/api/cameras/{camera['id']}/mjpeg")
 
     assert response.status_code == 502
-    assert response.json()["error"] == "stream_failed"
+    payload = response.json()
+    assert payload["error"] == "stream_failed"
+    assert "Connection refused" in payload["detail"], "ffmpeg's message must be visible"
 
 
 def test_hls_endpoints(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

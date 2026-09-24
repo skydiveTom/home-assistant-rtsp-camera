@@ -4,6 +4,22 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-09-23
+
+### Fixed
+
+- **Live previews failed on some ffmpeg builds with** `Option rw_timeout not
+  found`, while the stream test worked (ffprobe ignores unknown options, ffmpeg
+  refuses to start). `-rw_timeout` is no longer passed: RTSP inputs get
+  `-timeout`, and every call is bounded on the Python side anyway.
+- A failing MJPEG preview now shows the raw ffmpeg message in the preview window
+  instead of only "the preview stopped before the first frame".
+
+### Added
+
+- A test that keeps `-rw_timeout` out of the command lines, and one that checks
+  that ffmpeg's error text reaches the client.
+
 ## [0.1.5] - 2026-09-23
 
 ### Fixed

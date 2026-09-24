@@ -727,6 +727,29 @@
     box.textContent = message;
   }
 
+  async function reportPreviewError(url, fallback) {
+    let message = fallback;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      const data = await response.json();
+      if (data && data.detail) {
+        message = errorText(data.error || 'stream_failed') + ' — ' + data.detail;
+      } else if (data && data.error) {
+        message = errorText(data.error);
+      }
+    } catch (err) {
+      /* keep the fallback message */
+    } finally {
+      window.clearTimeout(timer);
+    }
+    previewError(message);
+  }
+
   function startPreview() {
     const cameraId = state.preview.cameraId;
     if (!cameraId) return;
@@ -744,7 +767,10 @@
       document.getElementById('preview-placeholder').hidden = true;
       image.hidden = false;
     };
-    image.onerror = () => previewError(errorText('stream_failed'));
+    image.onerror = () => reportPreviewError(
+      apiUrl('api/cameras/' + cameraId + '/mjpeg'),
+      errorText('stream_failed'),
+    );
     image.src = apiUrl('api/cameras/' + cameraId + '/mjpeg?t=' + Date.now());
   }
 
