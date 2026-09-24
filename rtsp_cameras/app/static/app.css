@@ -1,7 +1,11 @@
-/* RTSP Camera Manager — control-room theme
+﻿/* RTSP Camera Manager â€” control-room theme
    Dark first, light theme follows the OS colour scheme. */
 
 :root {
+  /* The panel is a dark interface: tell the browser so native widgets - most
+     importantly the <option> list of a <select> - are drawn dark as well.
+     Without this the popup is white while the text stays light and unreadable. */
+  color-scheme: dark;
   --bg: #070a0f;
   --bg-grid: rgba(120, 165, 205, 0.055);
   --panel: #0d131b;
@@ -28,6 +32,7 @@
 
 @media (prefers-color-scheme: light) {
   :root {
+    color-scheme: light;
     --bg: #eaeff5;
     --bg-grid: rgba(20, 60, 90, 0.045);
     --panel: #ffffff;
@@ -85,6 +90,19 @@ input,
 select,
 textarea {
   font-family: var(--font-mono);
+}
+
+/* Keep the browser drawn option list inside the current palette, and make the
+   selected entry stand out with the accent colour. */
+select option,
+select optgroup {
+  background-color: var(--panel-2);
+  color: var(--text);
+}
+
+select option:checked {
+  background-color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .visually-hidden {
@@ -215,12 +233,14 @@ textarea {
 }
 
 .lang select {
-  appearance: none;
+  /* Keep the native arrow: it follows color-scheme, so it stays visible in both
+     themes and users immediately see that this is a dropdown. */
   border: 0;
   background: transparent;
   color: var(--text);
   font-size: 12.5px;
-  padding-right: 4px;
+  padding-right: 2px;
+  cursor: pointer;
 }
 
 .lang--tight {
@@ -503,7 +523,7 @@ textarea {
 }
 
 .chip--button:hover {
-  border-color: var(--accent, #38bdf8);
+  border-color: var(--accent);
 }
 
 .chip--alert {

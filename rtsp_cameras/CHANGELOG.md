@@ -4,6 +4,19 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] - 2026-09-24
+
+### Fixed
+
+- **Dropdowns were unreadable on the dark interface.** The `<option>` list of a
+  `<select>` is drawn by the browser, and without `color-scheme` the popup stayed
+  white while the text kept the light colour of the dark theme. The panel now
+  declares `color-scheme: dark` (and `light` inside the light theme) and styles
+  `option`/`optgroup` with the panel palette, so the list follows the theme and
+  the selected entry uses the accent colour.
+- Selects in the header and the preview window keep the native arrow instead of
+  hiding it, so it is obvious again that they are dropdowns.
+
 ## [0.1.14] - 2026-09-24
 
 ### Fixed
