@@ -205,6 +205,21 @@ Registered 2 camera entity/entities: Front Door, Garage
 - `Found 0 camera(s)` - no camera is enabled, or the file was written by another
   tool with a different structure.
 
+**The update check says "no SUPERVISOR_TOKEN"**
+
+The add-on talks to Supervisor with the `SUPERVISOR_TOKEN` environment variable,
+which Supervisor injects when the manifest enables `hassio_api`. If the container
+does not have it (for example because it was created before that flag made it into
+the running version), update or reinstall the add-on once: Supervisor recreates the
+container and injects the token. Until then the check only reports versions
+read from `/config/.storage/hassio` and you update in *Settings → Add-ons*.
+
+The add-on log prints what it sees at startup, for example:
+
+```text
+WARNING [app.ha] No Supervisor token in this container (variables: none, socket: False)
+```
+
 **The add-on stops with `s6-overlay-suexec: fatal: can only run as pid 1`**
 
 That happened in versions before 0.1.3: the manifest did not declare `init: false`,

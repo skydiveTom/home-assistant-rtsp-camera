@@ -806,6 +806,19 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
             "ffmpeg or ffprobe is missing, stream tests and previews are disabled"
         )
 
+    report = context.ha.environment_report()
+    if report["token"]:
+        _LOGGER.info("Supervisor API reachable via %s", report["api_url"])
+    else:
+        _LOGGER.warning(
+            "No Supervisor token in this container (variables: %s, socket: %s). "
+            "Supervisor injects SUPERVISOR_TOKEN when the manifest has hassio_api "
+            "enabled - update or reinstall the add-on so Supervisor recreates the "
+            "container. The update check stays read-only until then.",
+            report["variables"] or "none",
+            report["socket"],
+        )
+
     context.store.load()
 
     if context.settings.install_integration:

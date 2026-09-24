@@ -249,7 +249,7 @@
     const integration = state.integration;
     const addon = state.addonUpdate;
 
-    if (addon.update_available && !addon.busy) {
+    if (addon.update_available && !addon.busy && addon.can_install) {
       region.append(
         banner(
           '',
@@ -559,11 +559,21 @@
       children.push(
         el('p', {
           class: 'note note--tight note--warn',
-          text: info.error
-            ? t('addon_update.failed', { reason: info.error })
-            : t('addon_update.no_supervisor'),
+          text: info.hint === 'token_missing'
+            ? t('addon_update.token_missing')
+            : info.error
+              ? t('addon_update.failed', { reason: info.error })
+              : t('addon_update.no_supervisor'),
         }),
       );
+      if (info.version_latest) {
+        children.push(
+          el('p', {
+            class: 'note note--tight note--warn',
+            text: t('addon_update.available', { version: info.version_latest }),
+          }),
+        );
+      }
     } else if (info.busy) {
       children.push(el('p', { class: 'note note--tight', text: t('addon_update.updating') }));
     } else if (info.update_available) {
@@ -585,13 +595,19 @@
       ),
     ]);
     if (info.available && info.update_available && !info.busy) {
-      actions.append(
-        button(
-          t('addon_update.update'),
-          (event) => installAddonUpdate(event.currentTarget),
-          'primary',
-        ),
-      );
+      if (info.can_install) {
+        actions.append(
+          button(
+            t('addon_update.update'),
+            (event) => installAddonUpdate(event.currentTarget),
+            'primary',
+          ),
+        );
+      } else {
+        actions.append(
+          el('p', { class: 'note note--tight', text: t('addon_update.update_in_ha') }),
+        );
+      }
     }
     children.push(actions);
     box.replaceChildren(...children);
@@ -1101,9 +1117,11 @@
       renderAddonState();
       if (!state.addonUpdate.available) {
         toast(
-          state.addonUpdate.error
-            ? t('addon_update.failed', { reason: state.addonUpdate.error })
-            : t('addon_update.no_supervisor'),
+          state.addonUpdate.hint === 'token_missing'
+            ? t('addon_update.token_missing')
+            : state.addonUpdate.error
+              ? t('addon_update.failed', { reason: state.addonUpdate.error })
+              : t('addon_update.no_supervisor'),
           'err',
         );
       } else if (state.addonUpdate.update_available) {
@@ -1112,6 +1130,11 @@
         toast(t('addon_update.up_to_date'), 'ok');
       }
     } catch (err) {
+      const code = err instanceof ApiError ? err.code : 'generic';
+      if (code === 'supervisor_missing' && state.addonUpdate.hint === 'token_missing') {
+        toast(t('addon_update.token_missing'), 'err');
+        return;
+      }
       fail(err);
     } finally {
       if (node) node.disabled = false;

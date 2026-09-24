@@ -444,6 +444,62 @@ def test_addon_update_status_without_supervisor(client: TestClient) -> None:
     assert payload["ok"] is True
     assert payload["addon"]["available"] is False
     assert payload["addon"]["update_available"] is False
+    assert payload["addon"]["can_install"] is False
+    assert payload["addon"]["hint"] == "token_missing"
+
+
+def test_addon_update_is_read_from_the_hassio_storage_file(
+    workspace: Path, settings: Settings, fake_tools: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a Supervisor token the version still comes from HA's own storage."""
+    storage = settings.config_dir / ".storage"
+    storage.mkdir(parents=True, exist_ok=True)
+    (storage / "hassio").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "data": {
+                    "addons": [
+                        {"slug": "other_addon", "version": "1.0.0"},
+                        {
+                            "slug": "rtsp_cameras",
+                            "version": "0.1.11",
+                            "version_latest": "0.1.12",
+                            "update_available": True,
+                        },
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with TestClient(create_app(settings)) as test_client:
+        payload = test_client.get("/api/addon/update").json()["addon"]
+
+    assert payload["version"] == "0.1.11"
+    assert payload["version_latest"] == "0.1.12"
+    assert payload["update_available"] is True
+    assert payload["source"] == "hassio_storage"
+    assert payload["can_install"] is False
+
+
+def test_the_legacy_hassio_token_is_accepted(workspace: Path, integration_source: Path) -> None:
+    """Older Supervisor versions export HASSIO_TOKEN instead of SUPERVISOR_TOKEN."""
+    settings = build_settings(
+        workspace, None, integration_source=integration_source, HASSIO_TOKEN="legacy-token"
+    )
+    supervisor = HomeAssistantClient(settings)
+
+    assert supervisor.enabled is True
+
+
+def test_addon_update_is_quiet_without_a_storage_file(client: TestClient) -> None:
+    payload = client.get("/api/addon/update").json()["addon"]
+
+    assert payload["version"] is None
+    assert payload["source"] == "self"
+    assert "No Supervisor token" in (payload["error"] or "")
 
 
 def test_addon_update_needs_the_supervisor_api(client: TestClient) -> None:

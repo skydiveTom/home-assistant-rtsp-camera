@@ -87,6 +87,8 @@
     "short": "Dodatek",
     "new_version": "→ {version}",
     "failed": "Sprawdzenie nie udało się: {reason}",
+    "token_missing": "W tym kontenerze brakuje zmiennej SUPERVISOR_TOKEN, więc dodatek nie może niczego zapytać Supervisora. Zaktualizuj lub zainstaluj dodatek ponownie (Supervisor odtworzy kontener i wstrzyknie token), potem sprawdź ponownie.",
+    "update_in_ha": "Zaktualizuj w Ustawienia → Dodatki → RTSP Camera Manager (bez dostępu do Supervisora dodatek nie może tego uruchomić).",
     "no_supervisor": "Brak dostępu do API Supervisora — aktualizacje sprawdzisz w Ustawienia → Dodatki."
   },
   "integration": {

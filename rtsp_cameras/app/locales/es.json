@@ -87,6 +87,8 @@
     "short": "Complemento",
     "new_version": "→ {version}",
     "failed": "La comprobación falló: {reason}",
+    "token_missing": "Este contenedor no tiene SUPERVISOR_TOKEN, así que el complemento no puede preguntar nada al Supervisor. Actualiza o reinstala el complemento (el Supervisor recrea el contenedor e inyecta el token) y vuelve a comprobar.",
+    "update_in_ha": "Actualiza en Ajustes → Complementos → RTSP Camera Manager (sin acceso al Supervisor el complemento no puede iniciarlo).",
     "no_supervisor": "La API del Supervisor no es accesible, las actualizaciones se revisan en Ajustes → Complementos."
   },
   "integration": {

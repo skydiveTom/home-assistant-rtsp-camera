@@ -87,6 +87,8 @@
     "short": "Add-on",
     "new_version": "→ {version}",
     "failed": "Prüfung fehlgeschlagen: {reason}",
+    "token_missing": "In diesem Container fehlt SUPERVISOR_TOKEN, das Add-on kann den Supervisor also nichts fragen. Add-on aktualisieren oder neu installieren (Supervisor erstellt den Container neu und setzt den Token), dann erneut prüfen.",
+    "update_in_ha": "Unter Einstellungen → Add-ons → RTSP Camera Manager aktualisieren (ohne Supervisor-Zugriff kann das Add-on es nicht starten).",
     "no_supervisor": "Die Supervisor-API ist nicht erreichbar, Updates gibt es unter Einstellungen → Add-ons."
   },
   "integration": {

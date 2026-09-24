@@ -4,6 +4,22 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] - 2026-09-24
+
+### Fixed
+
+- **A container without `SUPERVISOR_TOKEN` no longer breaks the update check.**
+  The check reported `/available_updates: No Supervisor token available` and the
+  button answered "Supervisor not reachable", because the container had no token
+  at all (Supervisor injects it when the manifest has `hassio_api` enabled - an
+  update or reinstall recreates the container and adds it). The check now:
+  - accepts the legacy `HASSIO_TOKEN` variable as well,
+  - falls back to the add-on list Home Assistant keeps in `/config/.storage/hassio`
+    (`version`/`version_latest`), which needs no API access at all,
+  - says exactly what is missing and what to do instead of a bare failure, and
+    offers the update only when the add-on can actually start it,
+  - logs the API environment at start (variable names only, never values).
+
 ## [0.1.11] - 2026-09-24
 
 ### Fixed

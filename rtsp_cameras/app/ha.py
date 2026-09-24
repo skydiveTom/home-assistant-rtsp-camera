@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -115,10 +117,12 @@ class HomeAssistantClient:
     async def async_addon_update_info(self) -> dict[str, Any]:
         """Return the version information of this add-on.
 
-        Supervisor reports ``version_latest`` and ``update_available`` next to the
-        installed version, which is exactly what the interface needs to offer an
-        update button. When the add-on information does not carry the latest
-        version, the list of pending updates is consulted as a fallback.
+        Supervisor reports ``version_latest`` together with ``update_available``,
+        which is what the interface needs to offer an update button. If the
+        Supervisor API cannot be used at all (or does not know the newest
+        version), the add-on list Home Assistant keeps in
+        ``/config/.storage/hassio`` is read instead - that works without any API
+        access.
         """
         info = await self.async_self_info()
         version = info.get("version")
@@ -133,14 +137,74 @@ class HomeAssistantClient:
                 update_available = True
                 source = "available_updates"
 
+        if not info:
+            local = self.read_local_addon_info()
+            if local:
+                version = version or local.get("version")
+                latest = latest or local.get("version_latest")
+                update_available = update_available or bool(local.get("update_available"))
+                source = "hassio_storage"
+
         return {
-            "available": bool(info),
+            "available": bool(info) or source == "hassio_storage",
             "version": version,
             "version_latest": latest,
             "update_available": update_available,
             "state": info.get("state"),
             "source": source,
+            "can_install": self.enabled,
+            "hint": None if self.enabled else "token_missing",
             "error": None if info else self.last_error,
+        }
+
+    def read_local_addon_info(self) -> dict[str, Any]:
+        """Read the add-on entry Home Assistant stores in ``.storage/hassio``."""
+        path = self.settings.config_dir / ".storage" / "hassio"
+        if not path.is_file():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as err:
+            _LOGGER.debug("Cannot read %s: %s", path, err)
+            return {}
+
+        addons = (data.get("data") or {}).get("addons") if isinstance(data, dict) else None
+        if not isinstance(addons, list):
+            return {}
+
+        slug = self.settings.addon_slug
+        for entry in addons:
+            if not isinstance(entry, dict) or entry.get("slug") != slug:
+                continue
+            return {
+                "version": entry.get("version"),
+                "version_latest": entry.get("version_latest"),
+                "update_available": bool(
+                    entry.get("update_available")
+                    or (
+                        entry.get("version")
+                        and entry.get("version_latest")
+                        and entry.get("version") != entry.get("version_latest")
+                    )
+                ),
+            }
+        return {}
+
+    def environment_report(self) -> dict[str, Any]:
+        """Describe how (and whether) this container can reach the Supervisor.
+
+        Only names are reported, never values, so the log stays free of secrets.
+        """
+        names = sorted(
+            name
+            for name in os.environ
+            if "SUPERVISOR" in name.upper() or "HASSIO" in name.upper()
+        )
+        return {
+            "api_url": self.settings.supervisor_url,
+            "token": self.enabled,
+            "variables": names,
+            "socket": (Path("/run/supervisor.sock")).exists(),
         }
 
     async def async_available_addon_update(self) -> str | None:
