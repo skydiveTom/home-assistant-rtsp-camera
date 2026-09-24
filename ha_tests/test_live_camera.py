@@ -36,9 +36,14 @@ from custom_components.rtsp_cameras.const import (
 
 LIVE_URL = os.environ.get("RTSP_LIVE_CAMERA_URL", "").strip()
 
-pytestmark = pytest.mark.skipif(
-    not LIVE_URL, reason="set RTSP_LIVE_CAMERA_URL to run the live camera tests"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not LIVE_URL, reason="set RTSP_LIVE_CAMERA_URL to run the live camera tests"
+    ),
+    # These tests talk to a real camera, so the socket blocking of the Home
+    # Assistant test harness has to stay out of the way.
+    pytest.mark.usefixtures("socket_enabled"),
+]
 
 CAMERAS_FILE = "rtsp_cameras/cameras.json"
 

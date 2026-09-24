@@ -11,6 +11,7 @@ matching Home Assistant release) and are kept apart from the fast unit tests in
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import types
@@ -82,10 +83,11 @@ def _install_turbojpeg_stub() -> None:
 
 _install_turbojpeg_stub()
 
-if sys.platform == "win32":
+if sys.platform == "win32" and not os.environ.get("HA_TESTS_BLOCK_SOCKETS"):
     # The Home Assistant test harness blocks every socket, keeping only AF_UNIX
     # in place for asyncio. Windows has no AF_UNIX socketpair, so even creating
     # the event loop would fail - keep the guard out of the way on this platform.
+    # Export HA_TESTS_BLOCK_SOCKETS=1 to emulate Linux/CI behaviour.
     import pytest_socket
 
     pytest_socket.disable_socket = lambda *args, **kwargs: None

@@ -14,8 +14,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import pytest
-from aiohttp import web
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -39,11 +39,51 @@ def stream_factory(stream: FakeStream) -> Any:
     return create
 
 
-def snapshot_app(handler: Any) -> web.Application:
-    """Return an application serving ``/snapshot.jpg`` with a handler."""
-    app = web.Application()
-    app.router.add_get("/snapshot.jpg", handler)
-    return app
+class FakeResponse:
+    """Minimal stand-in for the aiohttp response of a snapshot URL.
+
+    The Home Assistant test harness blocks sockets, so the snapshot URL is checked
+    with a fake session instead of a web server - the integration only reads the
+    status code and the body.
+    """
+
+    def __init__(self, body: bytes = b"", status: int = 200) -> None:
+        self.content = body
+        self.status = status
+        self.requested: list[str] = []
+
+    async def read(self) -> bytes:
+        """Return the body of the snapshot."""
+        return self.content
+
+    async def __aenter__(self) -> FakeResponse:
+        """Enter the response context."""
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        """Leave the response context."""
+        return False
+
+
+class FakeSession:
+    """Stand-in for the shared aiohttp session of Home Assistant."""
+
+    def __init__(self, response: FakeResponse | None = None, error: Exception | None = None):
+        self.response = response or FakeResponse()
+        self.error = error
+        self.urls: list[str] = []
+
+    def get(self, url: str) -> FakeResponse:
+        """Record the URL and return the prepared response."""
+        self.urls.append(url)
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
+def use_session(monkeypatch: pytest.MonkeyPatch, session: FakeSession) -> None:
+    """Make the integration use the fake aiohttp session."""
+    monkeypatch.setattr(camera_module, "async_get_clientsession", lambda hass: session)
 
 
 class FakeStream:
@@ -128,29 +168,49 @@ async def test_still_falls_back_when_no_keyframe_arrives(hass, entry, monkeypatc
     assert stream.calls == [True, False], "after the timeout the last frame is used"
 
 
-async def test_snapshot_url_has_priority(hass, entry, aiohttp_client, monkeypatch):
+async def test_snapshot_url_has_priority(hass, entry, monkeypatch):
     """A snapshot URL published by the add-on is used for the still."""
     payload = b"\xff\xd8\xff\xe0" + b"from-the-snapshot-url" + b"\xff\xd9"
-
-    async def snapshot(request: web.Request) -> web.Response:
-        return web.Response(body=payload, content_type="image/jpeg")
-
-    server = await aiohttp_client(snapshot_app(snapshot))
-    url = str(server.make_url("/snapshot.jpg"))
+    url = "http://10.0.0.5/snapshot.jpg"
 
     camera = await setup_camera(hass, entry, snapshot_url=url)
     stream = FakeStream()
     monkeypatch.setattr(camera, "async_create_stream", stream_factory(stream))
+    session = FakeSession(FakeResponse(body=payload))
+    use_session(monkeypatch, session)
 
     assert await camera.async_camera_image() == payload
+    assert session.urls == [url]
     assert stream.calls == [], "the stream is not needed when a snapshot exists"
 
 
-async def test_broken_snapshot_url_falls_back_to_the_stream(hass, entry, monkeypatch):
+async def test_failing_snapshot_url_falls_back_to_the_stream(hass, entry, monkeypatch, caplog):
     """A snapshot URL that does not answer must not break the still."""
-    camera = await setup_camera(hass, entry, snapshot_url="http://127.0.0.1:9/snapshot.jpg")
+    camera = await setup_camera(
+        hass, entry, snapshot_url="http://10.0.0.5/snapshot.jpg"
+    )
     stream = FakeStream()
     monkeypatch.setattr(camera, "async_create_stream", stream_factory(stream))
+    use_session(monkeypatch, FakeSession(error=aiohttp.ClientError("no answer")))
 
-    assert await camera.async_camera_image() == JPEG
+    with caplog.at_level("WARNING"):
+        assert await camera.async_camera_image() == JPEG
+
     assert stream.calls == [True]
+    assert any("Snapshot of camera.front_door failed" in record.message for record in caplog.records)
+
+
+async def test_error_status_of_the_snapshot_url_falls_back(hass, entry, monkeypatch, caplog):
+    """A snapshot URL answering with an error status is ignored."""
+    camera = await setup_camera(
+        hass, entry, snapshot_url="http://10.0.0.5/snapshot.jpg"
+    )
+    stream = FakeStream()
+    monkeypatch.setattr(camera, "async_create_stream", stream_factory(stream))
+    use_session(monkeypatch, FakeSession(FakeResponse(status=404)))
+
+    with caplog.at_level("WARNING"):
+        assert await camera.async_camera_image() == JPEG
+
+    assert stream.calls == [True]
+    assert any("returned HTTP 404" in record.message for record in caplog.records)
