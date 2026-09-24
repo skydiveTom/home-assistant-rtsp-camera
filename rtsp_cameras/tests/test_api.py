@@ -23,8 +23,9 @@ def test_index_renders_the_bootstrap(client: TestClient) -> None:
     assert response.status_code == 200
     assert "RTSP Camera Manager" in response.text
     assert 'id="bootstrap"' in response.text
-    assert "/static/app.js" in response.text
-    assert "/static/app.css" in response.text
+    # Assets are versioned so an update can never hide behind the browser cache.
+    assert "/static/app.js?v=" in response.text
+    assert "/static/app.css?v=" in response.text
     assert "camera-modal" in response.text
     assert "preview-modal" in response.text
     # The update check lives in the settings panel and behind the version chip.
@@ -32,6 +33,13 @@ def test_index_renders_the_bootstrap(client: TestClient) -> None:
     assert 'id="btn-addon-version"' in response.text
     # The optional H.264 sub stream for Home Assistant.
     assert 'id="field-ha-stream-url"' in response.text
+
+
+def test_static_files_must_be_revalidated(client: TestClient) -> None:
+    response = client.get("/static/app.css")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
 
 
 def test_index_uses_the_ingress_base_path(client: TestClient) -> None:

@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import (
     FileResponse,
@@ -102,6 +104,21 @@ class AppContext:
     templates: Jinja2Templates
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
     started_at: float = field(default_factory=time.monotonic)
+
+
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+    """Make browsers revalidate the panel assets on every load.
+
+    The asset URLs carry the add-on version as well, so a stale copy can never
+    keep an updated interface - or a fixed stylesheet - hidden.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        """Add the cache header for files served from /static."""
+        response = await call_next(request)
+        if "/static/" in request.url.path:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def _ctx(request: Request) -> AppContext:
@@ -918,7 +935,11 @@ def create_app(settings: Settings | None = None) -> Starlette:
         Mount("/static", app=StaticFiles(directory=str(STATIC_DIR)), name="static"),
     ]
 
-    application = Starlette(routes=routes, lifespan=lifespan)
+    application = Starlette(
+        routes=routes,
+        middleware=[Middleware(NoCacheStaticMiddleware)],
+        lifespan=lifespan,
+    )
     application.state.ctx = context
     return application
 

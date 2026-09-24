@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>{{ title }}</title>
-  <link rel="stylesheet" href="{{ base_path }}/static/app.css">
+  <link rel="stylesheet" href="{{ base_path }}/static/app.css?v={{ addon_version }}">
   <link rel="icon" href="{{ base_path }}/static/icon.svg" type="image/svg+xml">
 </head>
 <body>
@@ -223,6 +223,6 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
 
   <script id="bootstrap" type="application/json">{{ bootstrap|safe }}</script>
-  <script src="{{ base_path }}/static/app.js" defer></script>
+  <script src="{{ base_path }}/static/app.js?v={{ addon_version }}" defer></script>
 </body>
 </html>
