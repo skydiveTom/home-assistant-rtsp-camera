@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
 from app.config import Settings
+from app.main import create_app
+from tests.conftest import build_settings
 from tests.fake_ffmpeg import JPEG
-from tests.helpers import add_camera
+from tests.helpers import DEFAULT_URL, add_camera
 
 
 def test_index_renders_the_bootstrap(client: TestClient) -> None:
@@ -212,6 +215,162 @@ def test_mjpeg_endpoint_reports_broken_streams(
     payload = response.json()
     assert payload["error"] == "stream_failed"
     assert "Connection refused" in payload["detail"], "ffmpeg's message must be visible"
+
+
+def test_preview_detect_keeps_the_working_mode(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "mjpeg")
+
+    detected = client.post(f"/api/cameras/{camera['id']}/preview/detect")
+    assert detected.status_code == 200
+    payload = detected.json()
+    assert payload["mode"] == "mjpeg"
+    assert payload["auto"] is True
+    assert payload["cached"] is False
+    assert payload["camera"]["preview_mode"] == "mjpeg"
+
+    # The learned mode is reused instead of probing the camera again.
+    again = client.post(f"/api/cameras/{camera['id']}/preview/detect").json()
+    assert again["mode"] == "mjpeg"
+    assert again["cached"] is True
+
+    # ... and it is published so the add-on remembers it across restarts.
+    published = json.loads(settings.published_file.read_text(encoding="utf-8"))
+    assert published["cameras"][0]["preview_mode"] == "mjpeg"
+
+
+def test_preview_detect_falls_back_to_hls(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    camera = add_camera(client)
+    # The camera cannot be decoded, so only HLS works.
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "mixed")
+
+    payload = client.post(f"/api/cameras/{camera['id']}/preview/detect").json()
+
+    assert payload["mode"] == "hls"
+    assert payload["auto"] is True
+    assert payload["playlist"] == f"api/cameras/{camera['id']}/hls/index.m3u8"
+    assert "Invalid data" in payload["attempts"]["mjpeg"]
+    assert payload["camera"]["preview_mode"] == "hls"
+
+
+def test_preview_detect_honours_the_addon_option(
+    workspace: Path, integration_source: Path, fake_tools: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = build_settings(
+        workspace, {"preview_mode": "hls"}, integration_source=integration_source
+    )
+    with TestClient(create_app(settings)) as test_client:
+        camera = add_camera(test_client)
+        monkeypatch.setenv("FAKE_FFMPEG_MODE", "mjpeg")
+
+        payload = test_client.post(f"/api/cameras/{camera['id']}/preview/detect").json()
+
+    assert payload["mode"] == "hls"
+    assert payload["auto"] is False, "an explicit choice must not be overridden"
+
+
+def test_preview_detect_can_be_forced(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "mjpeg")
+    client.post(f"/api/cameras/{camera['id']}/preview/detect")
+
+    payload = client.post(f"/api/cameras/{camera['id']}/preview/detect?force=1").json()
+
+    assert payload["mode"] == "mjpeg"
+    assert payload["cached"] is False
+
+
+def test_preview_detect_reports_when_nothing_works(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "fail")
+
+    response = client.post(f"/api/cameras/{camera['id']}/preview/detect")
+
+    assert response.status_code == 502
+    payload = response.json()
+    assert payload["error"] == "stream_failed"
+    assert set(payload["attempts"]) == {"mjpeg", "hls"}
+    assert "Connection refused" in payload["attempts"]["mjpeg"]
+    assert client.get("/api/cameras").json()["cameras"][0]["preview_mode"] is None
+
+
+def test_preview_detect_needs_ffmpeg(bare_client: TestClient) -> None:
+    camera = add_camera(bare_client)
+
+    response = bare_client.post(f"/api/cameras/{camera['id']}/preview/detect")
+
+    assert response.status_code == 503
+    assert response.json()["error"] == "ffmpeg_missing"
+
+
+def test_ha_stream_url_is_published(client: TestClient, settings: Settings) -> None:
+    sub_stream = "rtsp://user:pass@192.168.1.10:554/Streaming/Channels/102"
+    camera = add_camera(client, ha_stream_url=sub_stream)
+
+    assert camera["ha_stream_url"] == sub_stream
+    assert (
+        camera["ha_stream_url_masked"]
+        == "rtsp://***:***@192.168.1.10:554/Streaming/Channels/102"
+    )
+
+    published = json.loads(settings.published_file.read_text(encoding="utf-8"))
+    assert published["cameras"][0]["stream_url"] == sub_stream
+
+
+def test_ha_stream_url_can_be_cleared_and_is_validated(client: TestClient) -> None:
+    camera = add_camera(client, ha_stream_url="rtsp://192.168.1.10:554/sub")
+
+    cleared = client.put(
+        f"/api/cameras/{camera['id']}", json={"ha_stream_url": ""}
+    ).json()["camera"]
+    assert cleared["ha_stream_url"] is None
+
+    broken = client.put(
+        f"/api/cameras/{camera['id']}", json={"ha_stream_url": "ftp://camera/sub"}
+    )
+    assert broken.status_code == 400
+    assert broken.json()["error"] == "url_scheme"
+
+    rejected = client.post(
+        "/api/cameras",
+        json={"name": "Back door", "url": DEFAULT_URL, "ha_stream_url": "nonsense"},
+    )
+    assert rejected.status_code == 400
+
+
+def test_changing_the_url_forgets_the_preview_mode(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "mjpeg")
+    client.post(f"/api/cameras/{camera['id']}/preview/detect")
+
+    updated = client.put(
+        f"/api/cameras/{camera['id']}", json={"url": "rtsp://192.168.1.11:554/other"}
+    ).json()["camera"]
+
+    assert updated["preview_mode"] is None, "the learned mode belongs to the old URL"
+
+
+def test_stream_test_publishes_the_codec(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_PROBE_MODE", "ok")
+
+    client.post(f"/api/cameras/{camera['id']}/test")
+
+    published = json.loads(settings.published_file.read_text(encoding="utf-8"))
+    # Home Assistant warns about streams browsers cannot play.
+    assert published["cameras"][0]["codec"] == "h264"
 
 
 def test_hls_endpoints(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

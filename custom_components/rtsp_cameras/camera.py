@@ -16,13 +16,15 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import (
     ADD_CAMERA_URL,
     ATTR_CAMERA_ID,
+    ATTR_CODEC,
     ATTR_RTSP_TRANSPORT,
     ATTR_SOURCE_FILE,
+    ATTR_STREAM_URL,
     DOMAIN,
     MANUFACTURER,
 )
 from .coordinator import RtspCamerasCoordinator
-from .models import RtspCameraDefinition
+from .models import RtspCameraDefinition, redact_url
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,6 +99,15 @@ class RtspCameraEntityManager:
                 len(new_entities),
                 ", ".join(sorted(entity.definition.name for entity in new_entities)),
             )
+            for entity in new_entities:
+                if not entity.definition.plays_in_browsers:
+                    _LOGGER.warning(
+                        "Camera %s streams %s. Home Assistant camera cards can only "
+                        "play H.265 in a few browsers - set the camera to H.264 or "
+                        "publish an H.264 sub stream for Home Assistant",
+                        entity.definition.name,
+                        entity.definition.codec,
+                    )
             self._async_add_entities(new_entities, update_before_add=True)
 
 
@@ -157,11 +168,16 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose diagnostic attributes."""
-        return {
+        attributes: dict[str, Any] = {
             ATTR_CAMERA_ID: self._definition.id,
             ATTR_RTSP_TRANSPORT: self._definition.rtsp_transport,
             ATTR_SOURCE_FILE: str(self.coordinator.cameras_file),
         }
+        if self._definition.codec:
+            attributes[ATTR_CODEC] = self._definition.codec
+        if self._definition.stream_url:
+            attributes[ATTR_STREAM_URL] = redact_url(self._definition.stream_url)
+        return attributes
 
     @property
     def entity_picture(self) -> str | None:
@@ -171,7 +187,7 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
     @property
     def stream_source(self) -> str | None:
         """Return the stream URL handed over to the Home Assistant stream component."""
-        return self._definition.url
+        return self._definition.stream_source
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None

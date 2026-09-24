@@ -13,11 +13,15 @@ SUPPORTED_LANGUAGES: tuple[str, ...] = ("en", "de", "es", "pl")
 LANGUAGE_AUTO = "auto"
 DEFAULT_LANGUAGE = "en"
 SUPPORTED_TRANSPORTS: tuple[str, ...] = ("tcp", "udp", "udp_multicast", "http")
+# Preview implementations the add-on can run.
 SUPPORTED_PREVIEW_MODES: tuple[str, ...] = ("mjpeg", "hls")
+# Value for "find out which one works and keep using it".
+PREVIEW_MODE_AUTO = "auto"
+PREVIEW_MODE_CHOICES: tuple[str, ...] = (PREVIEW_MODE_AUTO, *SUPPORTED_PREVIEW_MODES)
+DEFAULT_PREVIEW_MODE = PREVIEW_MODE_AUTO
 
-ADDON_VERSION = "0.1.7"
+ADDON_VERSION = "0.1.8"
 ADDON_SLUG = "rtsp_cameras"
-DEFAULT_OPTIONS_FILE = "/data/options.json"
 DEFAULT_DATA_DIR = "/data"
 DEFAULT_CONFIG_DIR = "/config"
 DEFAULT_TEMP_DIR = "/tmp"
@@ -61,7 +65,7 @@ class Settings:
     ha_restart_after_install: bool = False
     health_check_interval: int = 60
     test_timeout: int = 15
-    preview_mode: str = "mjpeg"
+    preview_mode: str = DEFAULT_PREVIEW_MODE
     preview_max_height: int = 1080
     preview_fps: int = 5
     redact_credentials_in_logs: bool = True
@@ -114,10 +118,11 @@ class Settings:
         def env_path(name: str, default: str) -> Path:
             return Path(environment.get(name) or default)
 
+        data_dir = env_path("RTSP_ADDON_DATA_DIR", DEFAULT_DATA_DIR)
         path = Path(
             options_path
             or environment.get("RTSP_ADDON_OPTIONS_FILE")
-            or DEFAULT_OPTIONS_FILE
+            or data_dir / "options.json"
         )
         options: dict[str, Any] = {}
         if path.is_file():
@@ -146,7 +151,7 @@ class Settings:
             ),
             test_timeout=_as_int(options.get("test_timeout"), 15, 5, 120),
             preview_mode=_as_choice(
-                options.get("preview_mode"), SUPPORTED_PREVIEW_MODES, "mjpeg"
+                options.get("preview_mode"), PREVIEW_MODE_CHOICES, DEFAULT_PREVIEW_MODE
             ),
             preview_max_height=_as_int(
                 options.get("preview_max_height"), 1080, 240, 2160
@@ -155,7 +160,7 @@ class Settings:
             redact_credentials_in_logs=_as_bool(
                 options.get("redact_credentials_in_logs"), True
             ),
-            data_dir=env_path("RTSP_ADDON_DATA_DIR", DEFAULT_DATA_DIR),
+            data_dir=data_dir,
             config_dir=env_path("RTSP_ADDON_CONFIG_DIR", DEFAULT_CONFIG_DIR),
             temp_dir=env_path("RTSP_ADDON_TEMP_DIR", DEFAULT_TEMP_DIR),
             integration_source=env_path(

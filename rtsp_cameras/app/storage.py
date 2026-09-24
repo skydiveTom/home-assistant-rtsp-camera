@@ -142,6 +142,7 @@ class CameraStore:
         url: str,
         rtsp_transport: str = "tcp",
         enabled: bool = True,
+        ha_stream_url: str | None = None,
     ) -> Camera:
         """Create a new camera and persist the list."""
         with self._lock:
@@ -151,6 +152,7 @@ class CameraStore:
                 url=url.strip(),
                 rtsp_transport=rtsp_transport,
                 enabled=enabled,
+                ha_stream_url=(ha_stream_url or "").strip() or None,
             )
             self._cameras[camera.id] = camera
         self.save()
@@ -170,7 +172,27 @@ class CameraStore:
                 camera.rtsp_transport = str(changes["rtsp_transport"]).strip().lower()
             if changes.get("enabled") is not None:
                 camera.enabled = bool(changes["enabled"])
-            camera.updated_at = utcnow()
+            if "ha_stream_url" in changes:
+                # An empty value removes the Home Assistant URL override.
+                camera.ha_stream_url = str(changes["ha_stream_url"] or "").strip() or None
+            if "preview_mode" in changes:
+                value = str(changes["preview_mode"] or "").strip().lower()
+                camera.preview_mode = value or None
+            if changes.get("touch", True):
+                camera.updated_at = utcnow()
+        self.save()
+        return camera
+
+    def set_preview_mode(self, camera_id: str, mode: str | None) -> Camera | None:
+        """Remember which preview implementation works for a camera."""
+        value = str(mode or "").strip().lower() or None
+        with self._lock:
+            camera = self._cameras.get(camera_id)
+            if camera is None:
+                return None
+            if camera.preview_mode == value:
+                return camera
+            camera.preview_mode = value
         self.save()
         return camera
 

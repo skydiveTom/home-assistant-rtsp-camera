@@ -141,6 +141,12 @@
           <span class="field__hint mono" data-i18n="camera.url_hint"></span>
         </div>
 
+        <label class="field">
+          <span class="field__label" data-i18n="camera.ha_stream_url"></span>
+          <input type="text" id="field-ha-stream-url" name="ha_stream_url" autocomplete="off" spellcheck="false">
+          <span class="field__hint" data-i18n="camera.ha_stream_url_hint"></span>
+        </label>
+
         <div class="form__grid">
           <label class="field">
             <span class="field__label" data-i18n="camera.transport"></span>
@@ -188,6 +194,7 @@
         <label class="lang lang--tight">
           <span class="visually-hidden" data-i18n="preview.mode"></span>
           <select id="preview-mode-select">
+            <option value="auto" data-i18n="preview.mode_auto"></option>
             <option value="mjpeg" data-i18n="preview.mode_mjpeg"></option>
             <option value="hls" data-i18n="preview.mode_hls"></option>
           </select>

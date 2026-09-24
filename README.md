@@ -40,11 +40,14 @@ exactly one place — the add-on panel.
   `rtmp://` and `http(s)://` MJPEG streams are supported.
 - **Test stream** – `ffprobe` reports codec, profile, resolution, frame rate, bit
   rate and the raw error message, even for URLs you have not saved yet.
-- **Quick preview** – live view inside the add-on as MJPEG (works in every
-  browser) or HLS (stream copy for H.264 cameras, so a Raspberry Pi stays idle).
+- **Quick preview** – live view inside the add-on. The mode is detected
+  automatically: MJPEG is tried first, HLS second, and only the one that works is
+  kept for that camera.
 - **Real camera entities** – `camera.<name>` with the RTSP URL as the stream
   source, so Home Assistant handles the live view with its own stream component
-  (HLS/WebRTC) and can generate still images.
+  (HLS/WebRTC) and can generate still images. A second, optional stream URL (for
+  example the H.264 sub stream of an H.265 camera) can be published to Home
+  Assistant when a camera card stays black.
 - **Live in seconds** – adding, renaming, disabling or deleting a camera is picked
   up by Home Assistant within seconds, without a restart and without YAML.
 - **Four languages** – English (default), German, Spanish and Polish. The

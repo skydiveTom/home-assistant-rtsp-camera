@@ -29,6 +29,8 @@ ADD_CAMERA_URL = f"{DOCS_URL}#adding-a-camera"
 ATTR_CAMERA_ID = "rtsp_camera_id"
 ATTR_RTSP_TRANSPORT = "rtsp_transport"
 ATTR_SOURCE_FILE = "source_file"
+ATTR_STREAM_URL = "stream_url"
+ATTR_CODEC = "codec"
 
 SUPPORTED_SCHEMES = ("rtsp://", "rtsps://", "rtmp://", "http://", "https://")
 

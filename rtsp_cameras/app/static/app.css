@@ -457,6 +457,18 @@ textarea {
   font-size: 12.5px;
 }
 
+/* Warning below the meta list of a tile (for example an H.265 stream). */
+.note--warn {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: rgba(251, 191, 36, 0.08);
+  color: var(--text);
+  font-size: 12.5px;
+  max-width: none;
+}
+
 /* ------------------------------------------------------------------- banner */
 .banner-region:empty {
   display: none;

@@ -3,6 +3,10 @@
   'use strict';
 
   const STORAGE_KEY = 'rtsp-camera-manager.language';
+  const MJPEG_FLAG_KEY = 'rtsp-camera-manager.mjpeg-blocked';
+  /* How long the browser waits for the first MJPEG frame before it assumes the
+     frames never make it through the reverse proxy and switches to HLS. */
+  const PREVIEW_FIRST_FRAME_MS = 8000;
   const bootstrap = JSON.parse(document.getElementById('bootstrap').textContent || '{}');
   const BASE = String(bootstrap.base_path || '').replace(/\/+$/, '');
 
@@ -14,7 +18,7 @@
     languages: bootstrap.languages || ['en'],
     language: 'en',
     editing: null,
-    preview: { cameraId: null, mode: 'mjpeg', hls: null, loaded: {} },
+    preview: { cameraId: null, mode: 'auto', hls: null, loaded: {}, resolved: {}, timer: null },
   };
 
   /* ------------------------------------------------------------------ i18n */
@@ -282,6 +286,21 @@
     return (camera.last_probe && camera.last_probe.details) || {};
   }
 
+  /* Home Assistant camera cards play H.265 in very few browsers, so it is worth
+     pointing that out next to the codec. */
+  function isH265(codec) {
+    const value = String(codec || '').toLowerCase();
+    return value === 'hevc' || value === 'h265';
+  }
+
+  function applyCamera(updated) {
+    if (!updated || !updated.id) return;
+    const camera = cameraById(updated.id);
+    if (!camera) return;
+    Object.assign(camera, updated);
+    renderCameras();
+  }
+
   function tile(camera, index) {
     const classes = ['tile'];
     if (camera.enabled && camera.status === 'offline') classes.push('tile--offline');
@@ -326,6 +345,9 @@
       [t('camera.fps'), details.fps !== null && details.fps !== undefined ? String(details.fps) : '—'],
       [t('camera.transport_value'), camera.rtsp_transport],
     ];
+    if (camera.preview_mode) {
+      pairs.push([t('camera.preview_mode'), camera.preview_mode]);
+    }
     const meta = el(
       'dl',
       { class: 'tile__meta' },
@@ -357,10 +379,19 @@
       }, [icon('trash'), el('span', { text: t('camera.delete') })]),
     ]);
 
+    const notes = [];
+    if (camera.enabled && isH265(details.codec)) {
+      notes.push(el('p', {
+        class: 'note note--tight note--warn',
+        text: t('camera.ha_codec_warning', { codec: details.codec }),
+      }));
+    }
+
     const node = el('article', { class: classes.join(' '), dataset: { cameraId: camera.id } }, [
       head,
       thumb,
       meta,
+      ...notes,
       foot,
     ]);
     node.style.setProperty('--i', String(index));
@@ -543,6 +574,9 @@
     document.getElementById('field-transport').value = camera
       ? camera.rtsp_transport
       : state.settings.default_rtsp_transport || 'tcp';
+    document.getElementById('field-ha-stream-url').value = camera && camera.ha_stream_url
+      ? camera.ha_stream_url
+      : '';
     document.getElementById('field-enabled').checked = camera ? camera.enabled : true;
     document.getElementById('btn-save').textContent = camera ? t('camera.save_changes') : t('camera.save');
     document.getElementById('btn-preview-form').hidden = !camera;
@@ -559,6 +593,7 @@
     const url = document.getElementById('field-url').value.trim();
     const rtsp_transport = document.getElementById('field-transport').value;
     const enabled = document.getElementById('field-enabled').checked;
+    const ha_stream_url = document.getElementById('field-ha-stream-url').value.trim();
 
     if (!name) {
       toast(errorText('name_required'), 'err');
@@ -572,7 +607,7 @@
     const saveButton = document.getElementById('btn-save');
     saveButton.disabled = true;
     try {
-      const body = { name, url, rtsp_transport, enabled };
+      const body = { name, url, rtsp_transport, enabled, ha_stream_url };
       const data = state.editing
         ? await api('api/cameras/' + state.editing, { method: 'PUT', body })
         : await api('api/cameras', { method: 'POST', body });
@@ -686,12 +721,40 @@
     state.preview.cameraId = cameraId;
     document.getElementById('preview-title').textContent = t('preview.title', { name: camera.name });
     document.getElementById('preview-mode-select').value =
-      state.preview.mode || state.settings.preview_mode || 'mjpeg';
+      state.preview.mode || state.settings.preview_mode || 'auto';
     showModal('preview-modal');
     startPreview();
   }
 
+  function mjpegBlocked() {
+    if (state.preview.mjpegBlocked) return true;
+    try {
+      return window.localStorage.getItem(MJPEG_FLAG_KEY) === '1';
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function rememberMjpegBlocked() {
+    state.preview.mjpegBlocked = true;
+    try {
+      window.localStorage.setItem(MJPEG_FLAG_KEY, '1');
+    } catch (err) {
+      /* the flag is optional */
+    }
+  }
+
+  function placeholderText(text) {
+    const node = document.getElementById('preview-placeholder');
+    node.textContent = text;
+    node.hidden = false;
+  }
+
   function resetStage() {
+    if (state.preview.timer) {
+      window.clearTimeout(state.preview.timer);
+      state.preview.timer = null;
+    }
     if (state.preview.hls) {
       try {
         state.preview.hls.destroy();
@@ -750,27 +813,95 @@
     previewError(message);
   }
 
-  function startPreview() {
+  function startPreview(force) {
     const cameraId = state.preview.cameraId;
     if (!cameraId) return;
-    const mode = document.getElementById('preview-mode-select').value || 'mjpeg';
+    const mode = document.getElementById('preview-mode-select').value || 'auto';
     state.preview.mode = mode;
-    document.getElementById('preview-chip').textContent = mode;
     resetStage();
+    if (mode === 'auto') {
+      startAutoPreview(cameraId, force);
+      return;
+    }
+    playPreview(cameraId, mode);
+  }
+
+  /* Automatic mode: ask the add-on which implementation works for this camera
+     and use only that one from then on. */
+  async function startAutoPreview(cameraId, force) {
+    document.getElementById('preview-chip').textContent = t('preview.mode_auto');
+    if (mjpegBlocked() && !force) {
+      playPreview(cameraId, 'hls', 'auto');
+      return;
+    }
+    let mode = force ? null : state.preview.resolved[cameraId];
+    if (!mode) {
+      placeholderText(t('preview.detecting'));
+      try {
+        const data = await api(
+          'api/cameras/' + cameraId + '/preview/detect' + (force ? '?force=1' : ''),
+          { method: 'POST' },
+        );
+        mode = data.mode || 'mjpeg';
+        state.preview.resolved[cameraId] = mode;
+        applyCamera(data.camera);
+      } catch (err) {
+        const code = err instanceof ApiError ? err.code : 'generic';
+        const detail =
+          err instanceof ApiError && err.data && err.data.detail ? ' — ' + err.data.detail : '';
+        previewError(errorText(code) + detail);
+        return;
+      }
+    }
+    playPreview(cameraId, mode, 'auto');
+  }
+
+  function playPreview(cameraId, mode, source) {
+    const chip = document.getElementById('preview-chip');
+    chip.textContent = source === 'auto' ? t('preview.mode_auto_result', { mode }) : mode;
+    resetStage();
+    placeholderText(t('preview.loading'));
 
     const image = document.getElementById('preview-image');
     if (mode === 'hls') {
       startHlsPreview(cameraId);
       return;
     }
+
+    let received = false;
+    if (source === 'auto') {
+      state.preview.timer = window.setTimeout(() => {
+        state.preview.timer = null;
+        if (received) return;
+        // ffmpeg did produce frames, but they never arrived in this browser.
+        rememberMjpegBlocked();
+        playPreview(cameraId, 'hls', 'auto');
+      }, PREVIEW_FIRST_FRAME_MS);
+    }
     image.onload = () => {
+      received = true;
+      if (state.preview.timer) {
+        window.clearTimeout(state.preview.timer);
+        state.preview.timer = null;
+      }
       document.getElementById('preview-placeholder').hidden = true;
       image.hidden = false;
     };
-    image.onerror = () => reportPreviewError(
-      apiUrl('api/cameras/' + cameraId + '/mjpeg'),
-      errorText('stream_failed'),
-    );
+    image.onerror = () => {
+      if (state.preview.timer) {
+        window.clearTimeout(state.preview.timer);
+        state.preview.timer = null;
+      }
+      if (source === 'auto') {
+        rememberMjpegBlocked();
+        playPreview(cameraId, 'hls', 'auto');
+        return;
+      }
+      reportPreviewError(
+        apiUrl('api/cameras/' + cameraId + '/mjpeg'),
+        errorText('stream_failed'),
+      );
+    };
     image.src = apiUrl('api/cameras/' + cameraId + '/mjpeg?t=' + Date.now());
   }
 
@@ -986,7 +1117,7 @@
       input.type = input.type === 'password' ? 'text' : 'password';
       syncRevealButton();
     });
-    document.getElementById('preview-mode-select').addEventListener('change', startPreview);
+    document.getElementById('preview-mode-select').addEventListener('change', () => startPreview(true));
     document.querySelectorAll('.tab').forEach((tab) => {
       tab.addEventListener('click', () => selectPanel(tab.dataset.panel));
     });

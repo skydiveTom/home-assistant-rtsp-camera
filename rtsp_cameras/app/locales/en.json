@@ -56,6 +56,10 @@
     "reload_list": "Refresh",
     "enabled_label": "In Home Assistant",
     "disabled_label": "Hidden in Home Assistant",
+    "preview_mode": "Preview mode",
+    "ha_stream_url": "Stream URL for Home Assistant (optional)",
+    "ha_stream_url_hint": "Used by the camera entity instead of the URL above, for example the H.264 sub stream of an H.265 camera.",
+    "ha_codec_warning": "This camera sends {codec}. Home Assistant camera cards only play H.265 in a few browsers - use the H.264 sub stream above when the picture stays black.",
     "preview_save_first": "Save the camera first to use the live preview"
   },
   "preview": {
@@ -65,6 +69,9 @@
     "error": "Cannot play this stream",
     "hint": "The preview runs ffmpeg inside the add-on and stops as soon as you close this window.",
     "mode": "Preview mode",
+    "mode_auto": "Automatic (test once)",
+    "mode_auto_result": "auto · {mode}",
+    "detecting": "Checking which preview mode works ...",
     "mode_mjpeg": "MJPEG (all browsers)",
     "mode_hls": "HLS (low CPU on H.264 cameras)"
   },

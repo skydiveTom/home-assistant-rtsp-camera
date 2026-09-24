@@ -31,8 +31,9 @@ configuration:
   preview_mode:
     name: Tryb podglądu
     description: >-
-      mjpeg koduje każdą klatkę na nowo i działa w każdej przeglądarce. hls
-      kopiuje strumień H.264, gdy to możliwe, i zużywa znacznie mniej CPU.
+      auto sprawdza oba tryby raz na kamerę i zostawia ten, który działa. mjpeg
+      koduje każdą klatkę na nowo i działa w każdej przeglądarce. hls kopiuje
+      strumień H.264, gdy to możliwe, i zużywa znacznie mniej CPU.
   preview_max_height:
     name: Limit wysokości podglądu
     description: Maksymalna wysokość w pikselach dla miniatur i podglądu.

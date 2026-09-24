@@ -27,12 +27,14 @@ from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
 from .config import (
+    PREVIEW_MODE_AUTO,
+    PREVIEW_MODE_CHOICES,
     SUPPORTED_LANGUAGES,
     SUPPORTED_PREVIEW_MODES,
     SUPPORTED_TRANSPORTS,
     Settings,
 )
-from .ffmpeg import FFmpegService, FFmpegUnavailable, StreamFailed
+from .ffmpeg import FFmpegService, FFmpegUnavailable, HlsSession, StreamFailed
 from .ha import HomeAssistantClient
 from .i18n import Translations, detect_language
 from .integration import IntegrationInstaller
@@ -41,6 +43,7 @@ from .models import (
     STATUS_ONLINE,
     Camera,
     utcnow,
+    validate_optional_stream_url,
     validate_stream_url,
 )
 from .storage import CameraStore
@@ -54,6 +57,8 @@ STATIC_DIR = APP_DIR / "static"
 MJPEG_BOUNDARY = "rtspcamframe"
 HLS_IDLE_SECONDS = 45
 HEALTH_MIN_INTERVAL = 15
+# How long the automatic preview detection waits for the first frame / playlist.
+PREVIEW_DETECT_TIMEOUT = 10
 
 API_ERRORS = (
     "generic",
@@ -178,6 +183,8 @@ def _settings_payload(context: AppContext) -> dict[str, Any]:
         "publish_error": context.store.publish_error,
         "transports": list(SUPPORTED_TRANSPORTS),
         "preview_modes": list(SUPPORTED_PREVIEW_MODES),
+        "preview_mode_choices": list(PREVIEW_MODE_CHOICES),
+        "preview_mode_auto": PREVIEW_MODE_AUTO,
         "languages": list(SUPPORTED_LANGUAGES),
         "supervisor_api": context.ha.enabled,
     }
@@ -255,17 +262,25 @@ async def cameras(request: Request) -> JSONResponse:
         .lower()
     )
     enabled = bool(body.get("enabled", True))
+    ha_stream_url = str(body.get("ha_stream_url") or "").strip()
 
     if not name:
         return await _error(request, "name_required", 400)
     url_error = validate_stream_url(url)
     if url_error:
         return await _error(request, url_error, 400)
+    ha_url_error = validate_optional_stream_url(ha_stream_url)
+    if ha_url_error:
+        return await _error(request, ha_url_error, 400)
     if transport not in SUPPORTED_TRANSPORTS:
         transport = context.settings.default_rtsp_transport
 
     camera = context.store.add(
-        name=name, url=url, rtsp_transport=transport, enabled=enabled
+        name=name,
+        url=url,
+        rtsp_transport=transport,
+        enabled=enabled,
+        ha_stream_url=ha_stream_url,
     )
     if context.store.publish_error:
         _LOGGER.error("Camera file could not be published")
@@ -313,6 +328,16 @@ async def camera_item(request: Request) -> JSONResponse:
             changes["rtsp_transport"] = context.settings.default_rtsp_transport
     if "enabled" in body:
         changes["enabled"] = bool(body.get("enabled"))
+    if "ha_stream_url" in body:
+        ha_stream_url = str(body.get("ha_stream_url") or "").strip()
+        ha_url_error = validate_optional_stream_url(ha_stream_url)
+        if ha_url_error:
+            return await _error(request, ha_url_error, 400)
+        changes["ha_stream_url"] = ha_stream_url
+
+    if "url" in changes or "rtsp_transport" in changes:
+        # The learned preview mode belongs to the previous stream.
+        changes["preview_mode"] = ""
 
     updated = context.store.update(camera_id, **changes)
     if updated is None:
@@ -353,7 +378,12 @@ async def camera_test(request: Request) -> JSONResponse:
 
     result = await context.ffmpeg.probe(url, transport)
     if camera is not None:
+        before = (camera.status, camera.last_probe)
         _apply_probe(camera, result)
+        if (camera.status, camera.last_probe) != before:
+            # The published file also carries the codec, which is what tells
+            # Home Assistant whether it can play the stream.
+            context.store.save()
     return _ok(
         probe=result.to_dict(),
         camera=camera.to_api_dict() if camera is not None else None,
@@ -458,15 +488,14 @@ async def camera_mjpeg(request: Request) -> Response:
     )
 
 
-async def camera_hls_start(request: Request) -> JSONResponse:
-    """Start an HLS session and wait until the playlist exists."""
-    context = _ctx(request)
-    camera = context.store.get(request.path_params["camera_id"])
-    if camera is None:
-        return await _error(request, "not_found", 404)
-    if not context.ffmpeg.available:
-        return await _error(request, "ffmpeg_missing", 503)
+async def _start_hls_session(
+    context: AppContext, camera: Camera
+) -> tuple[HlsSession | None, str | None]:
+    """Start an HLS session for a camera and wait until its playlist exists.
 
+    Returns the running session, or None together with an error message. The
+    special value ``ffmpeg_missing`` means the container has no ffmpeg at all.
+    """
     probe_details = (camera.last_probe or {}).get("details") or {}
     try:
         session = await context.ffmpeg.start_hls(
@@ -476,24 +505,134 @@ async def camera_hls_start(request: Request) -> JSONResponse:
             codec=probe_details.get("codec"),
         )
     except FFmpegUnavailable:
-        return await _error(request, "ffmpeg_missing", 503)
+        return None, "ffmpeg_missing"
 
     deadline = time.monotonic() + context.settings.test_timeout
     while time.monotonic() < deadline:
         if session.playlist.is_file():
-            return _ok(
-                mode="hls",
-                playlist=f"api/cameras/{camera.id}/hls/index.m3u8",
-            )
+            return session, None
         if session.process.returncode is not None:
             break
         await asyncio.sleep(0.25)
 
     error = await context.ffmpeg.hls_error(session)
     await context.ffmpeg.stop_hls(camera.id)
-    _LOGGER.info("HLS preview of %s failed: %s", camera.id, error)
+    return None, error or "stream_failed"
+
+
+async def camera_hls_start(request: Request) -> JSONResponse:
+    """Start an HLS session and wait until the playlist exists."""
+    context = _ctx(request)
+    camera = context.store.get(request.path_params["camera_id"])
+    if camera is None:
+        return await _error(request, "not_found", 404)
+    if not context.ffmpeg.available:
+        return await _error(request, "ffmpeg_missing", 503)
+
+    session, error = await _start_hls_session(context, camera)
+    if session is None:
+        if error == "ffmpeg_missing":
+            return await _error(request, "ffmpeg_missing", 503)
+        _LOGGER.info("HLS preview of %s failed: %s", camera.id, error)
+        return JSONResponse(
+            {"ok": False, "error": "stream_failed", "detail": error},
+            status_code=502,
+        )
+    return _ok(
+        mode="hls",
+        playlist=f"api/cameras/{camera.id}/hls/index.m3u8",
+    )
+
+
+async def _probe_mjpeg(context: AppContext, camera: Camera, timeout: int) -> str | None:
+    """Return None when MJPEG produced a frame, otherwise the reason."""
+    frames = context.ffmpeg.mjpeg_stream(camera.url, camera.rtsp_transport)
+    try:
+        await asyncio.wait_for(anext(frames), timeout=timeout)
+    except (StreamFailed, FFmpegUnavailable) as err:
+        return str(err)
+    except TimeoutError:
+        return f"No frame within {timeout} seconds"
+    except StopAsyncIteration:
+        return "ffmpeg stopped without producing a frame"
+    finally:
+        with contextlib.suppress(Exception):
+            await frames.aclose()
+    return None
+
+
+async def camera_preview_detect(request: Request) -> JSONResponse:
+    """Find out which preview implementation works and remember it.
+
+    With the add-on option set to a concrete mode nothing is tested: the
+    configured mode is used. In automatic mode MJPEG is tried first (lowest
+    latency) and HLS second, and the winner is stored on the camera.
+    """
+    context = _ctx(request)
+    camera = context.store.get(request.path_params["camera_id"])
+    if camera is None:
+        return await _error(request, "not_found", 404)
+    if not context.ffmpeg.available:
+        return await _error(request, "ffmpeg_missing", 503)
+
+    configured = context.settings.preview_mode
+    if configured in SUPPORTED_PREVIEW_MODES:
+        context.store.set_preview_mode(camera.id, configured)
+        return _ok(
+            mode=configured,
+            auto=False,
+            cached=False,
+            camera=camera.to_api_dict(),
+        )
+
+    forced = str(request.query_params.get("force") or "").lower() in ("1", "true", "yes")
+    if camera.preview_mode and not forced:
+        return _ok(
+            mode=camera.preview_mode,
+            auto=True,
+            cached=True,
+            camera=camera.to_api_dict(),
+        )
+
+    timeout = min(int(context.settings.test_timeout), PREVIEW_DETECT_TIMEOUT)
+    attempts: dict[str, str] = {}
+
+    mjpeg_error = await _probe_mjpeg(context, camera, timeout)
+    if mjpeg_error is None:
+        context.store.set_preview_mode(camera.id, "mjpeg")
+        _LOGGER.info("Preview of %s uses MJPEG", camera.id)
+        return _ok(
+            mode="mjpeg",
+            auto=True,
+            cached=False,
+            camera=camera.to_api_dict(),
+        )
+
+    attempts["mjpeg"] = mjpeg_error
+    _LOGGER.info("MJPEG preview of %s is not usable: %s", camera.id, mjpeg_error)
+
+    session, hls_error = await _start_hls_session(context, camera)
+    if session is not None:
+        context.store.set_preview_mode(camera.id, "hls")
+        _LOGGER.info("Preview of %s uses HLS", camera.id)
+        return _ok(
+            mode="hls",
+            auto=True,
+            cached=False,
+            playlist=f"api/cameras/{camera.id}/hls/index.m3u8",
+            attempts=attempts,
+            camera=camera.to_api_dict(),
+        )
+
+    attempts["hls"] = hls_error or "stream_failed"
+    _LOGGER.info("No working preview mode for %s: %s", camera.id, attempts)
     return JSONResponse(
-        {"ok": False, "error": "stream_failed", "detail": error},
+        {
+            "ok": False,
+            "error": "stream_failed",
+            "detail": attempts.get("hls") or attempts.get("mjpeg"),
+            "attempts": attempts,
+        },
         status_code=502,
     )
 
@@ -566,11 +705,18 @@ async def _check_all(context: AppContext) -> None:
     if not context.ffmpeg.available:
         return
     timeout = min(context.settings.test_timeout, 10)
+    changed = False
     for camera in context.store.list():
         if not camera.enabled:
             continue
         result = await context.ffmpeg.probe(camera.url, camera.rtsp_transport, timeout)
+        before = (camera.status, camera.last_probe)
         _apply_probe(camera, result)
+        if (camera.status, camera.last_probe) != before:
+            changed = True
+    if changed:
+        # Keep the published codec (used by the integration) up to date.
+        context.store.save()
 
 
 async def _health_loop(context: AppContext) -> None:
@@ -665,6 +811,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
         Route("/api/cameras/{camera_id}/test", camera_test, methods=["POST"]),
         Route("/api/cameras/{camera_id}/snapshot.jpg", camera_snapshot),
         Route("/api/cameras/{camera_id}/mjpeg", camera_mjpeg),
+        Route("/api/cameras/{camera_id}/preview/detect", camera_preview_detect, methods=["POST"]),
         Route("/api/cameras/{camera_id}/hls/start", camera_hls_start, methods=["POST"]),
         Route("/api/cameras/{camera_id}/hls/{filename}", camera_hls_file),
         Route("/api/integration", integration_status),

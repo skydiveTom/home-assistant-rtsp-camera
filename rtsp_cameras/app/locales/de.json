@@ -56,6 +56,10 @@
     "reload_list": "Aktualisieren",
     "enabled_label": "In Home Assistant",
     "disabled_label": "In Home Assistant ausgeblendet",
+    "preview_mode": "Vorschaumodus",
+    "ha_stream_url": "Stream-URL für Home Assistant (optional)",
+    "ha_stream_url_hint": "Wird von der Kamera-Entität statt der URL oben verwendet, zum Beispiel der H.264-Substream einer H.265-Kamera.",
+    "ha_codec_warning": "Diese Kamera sendet {codec}. Kamerakarten in Home Assistant spielen H.265 nur in wenigen Browsern ab - nutze den H.264-Substream oben, wenn das Bild schwarz bleibt.",
     "preview_save_first": "Speichere die Kamera zuerst, um die Live-Vorschau zu nutzen"
   },
   "preview": {
@@ -65,6 +69,9 @@
     "error": "Dieser Stream kann nicht wiedergegeben werden",
     "hint": "Die Vorschau startet ffmpeg im Add-on und endet, sobald dieses Fenster geschlossen wird.",
     "mode": "Vorschaumodus",
+    "mode_auto": "Automatisch (einmal testen)",
+    "mode_auto_result": "auto · {mode}",
+    "detecting": "Es wird geprüft, welcher Vorschaumodus funktioniert ...",
     "mode_mjpeg": "MJPEG (alle Browser)",
     "mode_hls": "HLS (wenig CPU bei H.264-Kameras)"
   },

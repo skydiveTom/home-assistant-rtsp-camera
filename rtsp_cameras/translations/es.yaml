@@ -31,6 +31,7 @@ configuration:
   preview_mode:
     name: Modo de vista previa
     description: >-
+      auto prueba ambos modos una vez por cámara y conserva el que funciona.
       mjpeg recodifica cada fotograma y funciona en todos los navegadores. hls
       copia el stream H.264 cuando es posible y usa mucha menos CPU.
   preview_max_height:

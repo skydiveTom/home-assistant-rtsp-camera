@@ -4,6 +4,32 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-09-24
+
+### Added
+
+- **The preview mode is detected automatically.** The new default `auto` tests
+  MJPEG first and HLS second when you open a preview and keeps the mode that
+  works for that camera - only that one is offered from then on. The result is
+  stored per camera and survives a restart; `mjpeg` and `hls` still work as
+  explicit overrides. If MJPEG works inside the add-on but its frames never
+  reach the browser (a buffering reverse proxy), the interface falls back to HLS
+  on its own.
+- **Stream URL for Home Assistant.** Every camera can carry a second URL, for
+  example the H.264 sub stream of an H.265 camera. Home Assistant uses it for
+  the camera entity, the add-on keeps testing and previewing the main URL.
+- The add-on publishes the probed codec, and the integration logs a warning for
+  streams that browsers cannot play (H.265/HEVC), because those camera cards
+  stay black in most browsers.
+- The integration offers **Diagnostics** (Settings → Devices & services → RTSP
+  Camera Manager → Download diagnostics) with the watched file, the cameras and
+  their (masked) URLs.
+
+### Fixed
+
+- Add-on options were ignored when the data folder was not the default `/data`
+  (relevant for local runs and tests).
+
 ## [0.1.7] - 2026-09-23
 
 ### Fixed

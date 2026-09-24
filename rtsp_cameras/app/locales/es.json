@@ -56,6 +56,10 @@
     "reload_list": "Actualizar",
     "enabled_label": "En Home Assistant",
     "disabled_label": "Oculta en Home Assistant",
+    "preview_mode": "Modo de vista previa",
+    "ha_stream_url": "URL del stream para Home Assistant (opcional)",
+    "ha_stream_url_hint": "La entidad de cámara la usa en lugar de la URL anterior, por ejemplo el subflujo H.264 de una cámara H.265.",
+    "ha_codec_warning": "Esta cámara emite {codec}. Las tarjetas de cámara de Home Assistant solo reproducen H.265 en algunos navegadores: usa el subflujo H.264 si la imagen se queda en negro.",
     "preview_save_first": "Guarda la cámara primero para usar la vista previa en vivo"
   },
   "preview": {
@@ -65,6 +69,9 @@
     "error": "No se puede reproducir este stream",
     "hint": "La vista previa ejecuta ffmpeg dentro del complemento y se detiene al cerrar esta ventana.",
     "mode": "Modo de vista previa",
+    "mode_auto": "Automático (comprobar una vez)",
+    "mode_auto_result": "auto · {mode}",
+    "detecting": "Comprobando qué modo de vista previa funciona ...",
     "mode_mjpeg": "MJPEG (todos los navegadores)",
     "mode_hls": "HLS (poca CPU con cámaras H.264)"
   },

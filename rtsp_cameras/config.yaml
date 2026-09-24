@@ -1,5 +1,5 @@
 name: RTSP Camera Manager
-version: "0.1.7"
+version: "0.1.8"
 slug: rtsp_cameras
 description: >-
   Add RTSP camera instances to Home Assistant using only the stream URL. Name
@@ -38,7 +38,7 @@ options:
   ha_restart_after_install: false
   health_check_interval: 60
   test_timeout: 15
-  preview_mode: mjpeg
+  preview_mode: auto
   preview_max_height: 1080
   preview_fps: 5
   redact_credentials_in_logs: true
@@ -49,7 +49,7 @@ schema:
   ha_restart_after_install: bool
   health_check_interval: int(0,86400)
   test_timeout: int(5,120)
-  preview_mode: list(mjpeg|hls)
+  preview_mode: list(auto|mjpeg|hls)
   preview_max_height: int(240,2160)
   preview_fps: int(1,30)
   redact_credentials_in_logs: bool

@@ -10,6 +10,8 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from .config import SUPPORTED_PREVIEW_MODES
+
 SUPPORTED_SCHEMES: tuple[str, ...] = (
     "rtsp://",
     "rtsps://",
@@ -67,6 +69,13 @@ def validate_stream_url(url: Any) -> str | None:
     return None
 
 
+def validate_optional_stream_url(url: Any) -> str | None:
+    """Validate an optional URL: an empty value is allowed and means "unset"."""
+    if not str(url or "").strip():
+        return None
+    return validate_stream_url(url)
+
+
 def redact_url(url: Any) -> str:
     """Replace user and password inside a stream URL with asterisks."""
     value = str(url or "")
@@ -118,6 +127,13 @@ class Camera:
     url: str
     rtsp_transport: str = "tcp"
     enabled: bool = True
+    # Optional second URL used by the Home Assistant camera entity. Cameras that
+    # stream H.265 (or a very large picture) are best exposed to Home Assistant
+    # through their H.264 sub stream.
+    ha_stream_url: str | None = None
+    # Preview implementation that was found to work for this camera (mjpeg/hls),
+    # learned automatically when the add-on option is set to "auto".
+    preview_mode: str | None = None
     created_at: str = field(default_factory=utcnow)
     updated_at: str = field(default_factory=utcnow)
 
@@ -134,13 +150,22 @@ class Camera:
 
     def to_integration_dict(self) -> dict[str, Any]:
         """Return the representation consumed by the Home Assistant integration."""
-        return {
+        details = (self.last_probe or {}).get("details") or {}
+        payload: dict[str, Any] = {
             "id": self.id,
             "name": self.name,
             "url": self.url,
             "rtsp_transport": self.rtsp_transport,
             "enabled": self.enabled,
         }
+        if self.ha_stream_url:
+            # Home Assistant uses this URL instead of the main one when present.
+            payload["stream_url"] = self.ha_stream_url
+        if details.get("codec"):
+            payload["codec"] = str(details["codec"])
+        if self.preview_mode:
+            payload["preview_mode"] = self.preview_mode
+        return payload
 
     def to_api_dict(self) -> dict[str, Any]:
         """Return the representation used by the web interface."""
@@ -152,6 +177,9 @@ class Camera:
             "has_credentials": has_credentials(self.url),
             "rtsp_transport": self.rtsp_transport,
             "enabled": self.enabled,
+            "ha_stream_url": self.ha_stream_url,
+            "ha_stream_url_masked": redact_url(self.ha_stream_url or "") or None,
+            "preview_mode": self.preview_mode,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "status": self.status,
@@ -171,12 +199,20 @@ class Camera:
         url = str(data.get("url") or "").strip()
         if not camera_id or not name or validate_stream_url(url):
             return None
+        ha_stream_url = str(data.get("ha_stream_url") or "").strip() or None
+        if ha_stream_url and validate_stream_url(ha_stream_url):
+            ha_stream_url = None
+        preview_mode = str(data.get("preview_mode") or "").strip().lower() or None
+        if preview_mode not in SUPPORTED_PREVIEW_MODES:
+            preview_mode = None
         return cls(
             id=camera_id,
             name=name,
             url=url,
             rtsp_transport=str(data.get("rtsp_transport") or "tcp").strip().lower(),
             enabled=bool(data.get("enabled", True)),
+            ha_stream_url=ha_stream_url,
+            preview_mode=preview_mode,
             created_at=str(data.get("created_at") or utcnow()),
             updated_at=str(data.get("updated_at") or utcnow()),
         )

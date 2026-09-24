@@ -66,6 +66,7 @@ Home Assistant - cameras are managed in exactly one place.
 | --- | --- |
 | **Name** | Becomes the entity name, e.g. `Front door` → `camera.front_door`. |
 | **RTSP URL** | For example `rtsp://user:password@192.168.1.10:554/stream1`. Credentials may be part of the URL. |
+| **Stream URL for Home Assistant** | Optional. Used by the `camera` entity instead of the URL above - ideal for the H.264 sub stream of an H.265 camera, because Home Assistant camera cards only play H.265 in a few browsers. |
 | **RTSP transport** | `tcp` works for almost every camera, some devices need `udp` or `http`. |
 | **Enabled** | Disabled cameras stay in the add-on but are hidden from Home Assistant. |
 
@@ -73,9 +74,18 @@ Buttons:
 
 - **Test stream** – runs `ffprobe` and shows codec, resolution, FPS, bit rate and
   the raw error message when it fails. Works before you save the camera.
-- **Quick preview** – live MJPEG or HLS picture in a modal. The preview process
-  runs inside the add-on and stops as soon as you close the window (at the latest
-  after 45 seconds without playback requests).
+- **Quick preview** – live picture in a modal. The preview process runs inside
+  the add-on and stops as soon as you close the window (at the latest after 45
+  seconds without playback requests).
+
+### Which preview mode is used?
+
+The add-on option *Preview mode* defaults to `auto`: the first time you open the
+preview of a camera, MJPEG is tried first and HLS second. The mode that produced
+a picture is stored on that camera and is the only one used afterwards - so a
+camera whose MJPEG stream cannot be decoded (or whose frames are swallowed by a
+buffering reverse proxy) simply switches to HLS and stays there. Set the option
+to `mjpeg` or `hls` to skip the detection and force one mode.
 
 ## The camera entity in Home Assistant
 
@@ -86,8 +96,23 @@ After the restart you get one device per camera:
   (HLS/WebRTC, exactly like the built-in Generic Camera).
 - Still images are generated from the stream by Home Assistant, so the add-on does
   not have to run for a snapshot.
-- Attributes show the add-on camera id, the RTSP transport and the file the
-  definition came from.
+- Attributes show the add-on camera id, the RTSP transport, the codec and the file
+  the definition came from.
+
+**Nothing plays in the Home Assistant card (black picture or spinner)**
+
+Home Assistant proxies the stream with its own `stream` component and only
+remuxes it - it does not transcode. Streams in **H.265/HEVC** therefore stay
+black in most browsers (Safari, and Edge with the HEVC extension, are the
+exceptions). Check the codec in the camera tile of the add-on:
+
+- `hevc`/`h265` → enter the **H.264 sub stream** of the camera in *Stream URL for
+  Home Assistant* (for example `/Streaming/Channels/102` on Hikvision or
+  `subtype=1` on Dahua), or switch the camera itself to H.264.
+- `h264` → look at the Home Assistant log for `stream`/`camera` errors, then
+  download the integration **Diagnostics** (Settings → Devices & services → RTSP
+  Camera Manager → ⋮ → Download diagnostics), which lists the checked file, the
+  cameras and their (masked) stream URLs.
 
 Changes in the add-on (add, rename, disable, delete) are picked up within
 seconds, because the integration watches the JSON file. No restart is needed for

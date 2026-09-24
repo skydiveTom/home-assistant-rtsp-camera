@@ -56,6 +56,10 @@
     "reload_list": "Odśwież",
     "enabled_label": "W Home Assistant",
     "disabled_label": "Ukryta w Home Assistant",
+    "preview_mode": "Tryb podglądu",
+    "ha_stream_url": "URL strumienia dla Home Assistant (opcjonalnie)",
+    "ha_stream_url_hint": "Encja kamery użyje go zamiast adresu powyżej — np. podstrumienia H.264 kamery H.265.",
+    "ha_codec_warning": "Ta kamera nadaje w {codec}. Karty kamer Home Assistant odtwarzają H.265 tylko w nielicznych przeglądarkach — jeśli obraz jest czarny, wpisz powyżej adres podstrumienia H.264.",
     "preview_save_first": "Najpierw zapisz kamerę, aby użyć podglądu na żywo"
   },
   "preview": {
@@ -65,6 +69,9 @@
     "error": "Nie można odtworzyć tego strumienia",
     "hint": "Podgląd uruchamia ffmpeg wewnątrz dodatku i kończy się natychmiast po zamknięciu tego okna.",
     "mode": "Tryb podglądu",
+    "mode_auto": "Automatyczny (sprawdź raz)",
+    "mode_auto_result": "auto · {mode}",
+    "detecting": "Sprawdzam, który tryb podglądu działa ...",
     "mode_mjpeg": "MJPEG (wszystkie przeglądarki)",
     "mode_hls": "HLS (małe obciążenie przy kamerach H.264)"
   },

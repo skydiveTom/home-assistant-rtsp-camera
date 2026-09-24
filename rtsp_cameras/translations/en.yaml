@@ -31,8 +31,9 @@ configuration:
   preview_mode:
     name: Preview mode
     description: >-
-      mjpeg re-encodes every frame and works in every browser. hls copies the
-      H.264 stream when possible and needs much less CPU.
+      auto tests both modes once per camera and keeps the one that works. mjpeg
+      re-encodes every frame and works in every browser. hls copies the H.264
+      stream when possible and needs much less CPU.
   preview_max_height:
     name: Preview height limit
     description: Maximum height in pixels used for snapshots and previews.

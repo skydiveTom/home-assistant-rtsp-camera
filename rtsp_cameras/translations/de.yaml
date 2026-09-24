@@ -31,6 +31,7 @@ configuration:
   preview_mode:
     name: Vorschaumodus
     description: >-
+      auto testet beide Modi einmal pro Kamera und behält den funktionierenden.
       mjpeg kodiert jedes Bild neu und läuft in jedem Browser. hls kopiert den
       H.264-Stream wenn möglich und braucht deutlich weniger CPU.
   preview_max_height:

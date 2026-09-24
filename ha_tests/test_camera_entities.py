@@ -151,3 +151,52 @@ async def test_camera_file_is_resolved_inside_the_config_folder(hass, entry):
     """The default path matches exactly what the add-on publishes."""
     assert await hass.config_entries.async_setup(entry.entry_id)
     assert entry.runtime_data.cameras_file == cameras_file_path(hass)
+
+
+async def test_home_assistant_stream_url_wins(hass, entry):
+    """An H.264 sub stream published by the add-on is used for the stream."""
+    cameras = [dict(CAMERAS[0]), dict(CAMERAS[1])]
+    cameras[0]["stream_url"] = "rtsp://10.0.0.5:554/Streaming/Channels/102"
+    write_cameras_file(hass, cameras)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    camera = hass.data["camera"].get_entity("camera.front_door")
+    assert camera is not None
+    assert camera.stream_source == "rtsp://10.0.0.5:554/Streaming/Channels/102"
+    assert camera.extra_state_attributes["stream_url"].startswith("rtsp://")
+
+
+async def test_codec_is_exposed_and_h265_is_flagged(hass, entry, caplog):
+    """The published codec lands in the attributes and warns about H.265."""
+    cameras = [dict(CAMERAS[0])]
+    cameras[0]["codec"] = "hevc"
+    write_cameras_file(hass, cameras)
+
+    with caplog.at_level("WARNING"):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    state = hass.states.get("camera.front_door")
+    assert state is not None
+    assert state.attributes["codec"] == "hevc"
+    assert any("H.265" in record.message for record in caplog.records)
+
+
+async def test_diagnostics_masks_credentials(hass, entry):
+    """The diagnostics download must not leak the camera password."""
+    from custom_components.rtsp_cameras.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["cameras_file"]["exists"] is True
+    assert "camera.front_door" in diagnostics["entities"]
+    url = diagnostics["cameras"][0]["url"]
+    assert "pass" not in url and "***" in url
