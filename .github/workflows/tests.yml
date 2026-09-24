@@ -49,3 +49,24 @@ jobs:
           assert set(config["options"]) == set(config["schema"]), "options/schema differ"
           print("manifest is consistent:", config["version"])
           PY
+
+  integration:
+    name: Camera entities on a real Home Assistant
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install the Home Assistant test harness
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest-homeassistant-custom-component av
+
+      - name: Cameras published by the add-on become camera entities
+        run: python -m pytest -c ha_tests/pytest.ini ha_tests -q
+

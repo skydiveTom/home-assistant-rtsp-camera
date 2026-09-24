@@ -143,6 +143,27 @@ If you manage the integration yourself, set the add-on option
   the integration manually, add it there.
 - Look at the add-on log for `Installing the Home Assistant integration`.
 
+**Cameras still do not show up as entities after a restart**
+
+Versions before 0.1.7 never created a camera entity. The entity inherited from
+both the data coordinator and the camera base class, but only the coordinator was
+initialised, so the camera had no access token, no image cache and no stream
+bookkeeping - Home Assistant dropped it while setting up the platform. Update the
+add-on to 0.1.7 or newer and restart Home Assistant.
+
+From 0.1.7 on the Home Assistant log states exactly what is going on:
+
+```text
+Found 2 camera(s) in /config/rtsp_cameras/cameras.json: front_door, garage
+Registered 2 camera entity/entities: Front Door, Garage
+```
+
+- `Camera file ... does not exist yet` - the path configured in the integration
+  is not the file the add-on publishes. Compare it with the *Settings* tab of the
+  add-on (default: `/config/rtsp_cameras/cameras.json`).
+- `Found 0 camera(s)` - no camera is enabled, or the file was written by another
+  tool with a different structure.
+
 **The add-on stops with `s6-overlay-suexec: fatal: can only run as pid 1`**
 
 That happened in versions before 0.1.3: the manifest did not declare `init: false`,

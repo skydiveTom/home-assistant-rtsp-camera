@@ -16,6 +16,7 @@ line-length = 100
 target-version = "py311"
 extend-exclude = [
     ".venv",
+    ".venv-ha",
     "rtsp_cameras/app/static",
     "rtsp_cameras/custom_components",
     "rtsp_cameras/tests/fake_ffmpeg.py",

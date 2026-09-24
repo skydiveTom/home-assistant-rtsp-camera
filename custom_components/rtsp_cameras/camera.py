@@ -76,7 +76,9 @@ class RtspCameraEntityManager:
             if camera_id in wanted:
                 continue
             entity = self._entities.pop(camera_id)
-            _LOGGER.debug("Camera %s disappeared from the add-on, removing entity", camera_id)
+            _LOGGER.info(
+                "Camera %s disappeared from the add-on, removing its entity", camera_id
+            )
             self.hass.async_create_task(entity.async_remove(force_remove=True))
 
         new_entities: list[RtspCamera] = []
@@ -90,7 +92,11 @@ class RtspCameraEntityManager:
                 entity.async_update_definition(definition)
 
         if new_entities:
-            _LOGGER.debug("Registering %d camera entities", len(new_entities))
+            _LOGGER.info(
+                "Registered %d camera entity/entities: %s",
+                len(new_entities),
+                ", ".join(sorted(entity.definition.name for entity in new_entities)),
+            )
             self._async_add_entities(new_entities, update_before_add=True)
 
 
@@ -106,8 +112,15 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         coordinator: RtspCamerasCoordinator,
         definition: RtspCameraDefinition,
     ) -> None:
-        """Initialise the entity."""
-        super().__init__(coordinator)
+        """Initialise the entity.
+
+        ``CoordinatorEntity.__init__`` does not take part in the cooperative
+        initialisation chain, so both base classes have to be initialised
+        explicitly - otherwise the camera never gets its access token, cache and
+        stream bookkeeping and Home Assistant rejects the entity.
+        """
+        Camera.__init__(self)
+        CoordinatorEntity.__init__(self, coordinator)
         self._definition = definition
         self._attr_name = definition.name
         self._attr_unique_id = f"{DOMAIN}_{definition.id}"

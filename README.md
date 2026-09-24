@@ -32,6 +32,7 @@ exactly one place — the add-on panel.
 | `rtsp_cameras/custom_components/` | A copy of the integration shipped inside the add-on, because the add-on folder is the Docker build context. |
 | `scripts/sync_integration.ps1` | Keeps both integration copies identical (the test suite enforces it). |
 | `rtsp_cameras/tests/` | Unit tests for the API, storage, ffmpeg layer, translations and repository layout. |
+| `ha_tests/` | Integration tests that run a real Home Assistant core and prove cameras become `camera` entities. |
 
 ## Features
 
@@ -94,6 +95,16 @@ python -m venv .venv
 ```
 
 The suite uses fake `ffmpeg`/`ffprobe` binaries, so no camera is needed.
+
+The camera entities themselves are covered by a second suite that boots a real
+Home Assistant core (the same version the CI pins) and checks that cameras
+published by the add-on end up as `camera` entities:
+
+```bash
+python -m venv .venv-ha
+.venv-ha/Scripts/python -m pip install pytest-homeassistant-custom-component av
+.venv-ha/Scripts/python -m pytest -c ha_tests/pytest.ini ha_tests
+```
 
 ## How it works
 

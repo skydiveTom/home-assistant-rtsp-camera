@@ -33,6 +33,7 @@ w panelu dodatku.
 | `rtsp_cameras/custom_components/` | Kopia integracji wysyłana w obrazie dodatku (katalog dodatku jest kontekstem budowania Dockera). |
 | `scripts/sync_integration.ps1` | Utrzymuje identyczność obu kopii integracji (pilnuje tego zestaw testów). |
 | `rtsp_cameras/tests/` | Testy API, magazynu danych, warstwy ffmpeg, tłumaczeń i struktury repozytorium. |
+| `ha_tests/` | Testy integracyjne na prawdziwym Home Assistant — dowodzą, że kamery stają się encjami `camera`. |
 
 ## Funkcje
 
@@ -97,6 +98,16 @@ python -m venv .venv
 ```
 
 Testy używają atrap `ffmpeg`/`ffprobe`, więc nie potrzebują prawdziwej kamery.
+
+Same encje kamer pokrywa drugi zestaw testów, który uruchamia prawdziwy Home
+Assistant (w wersji przypiętej w CI) i sprawdza, że kamery opublikowane przez
+dodatek stają się encjami `camera`:
+
+```bash
+python -m venv .venv-ha
+.venv-ha/Scripts/python -m pip install pytest-homeassistant-custom-component av
+.venv-ha/Scripts/python -m pytest -c ha_tests/pytest.ini ha_tests
+```
 
 ## Jak to działa
 

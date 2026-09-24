@@ -51,21 +51,34 @@ class RtspCamerasCoordinator(DataUpdateCoordinator[dict[str, RtspCameraDefinitio
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialise the coordinator."""
-        self.entry = entry
         self.cameras_file = resolve_cameras_file(hass, entry)
         self.scan_interval = resolve_scan_interval(entry)
         self.missing_reported = False
+        self.reported_count: int | None = None
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN} ({self.cameras_file})",
+            config_entry=entry,
             update_interval=timedelta(seconds=self.scan_interval),
             update_method=self._async_update_data,
         )
 
     async def _async_update_data(self) -> dict[str, RtspCameraDefinition]:
-        """Read the camera file without blocking the event loop."""
-        return await self.hass.async_add_executor_job(self._read_cameras)
+        """Read the camera file and report changes of the camera count."""
+        cameras = await self.hass.async_add_executor_job(self._read_cameras)
+        if len(cameras) != self.reported_count:
+            self.reported_count = len(cameras)
+            if cameras:
+                _LOGGER.info(
+                    "Found %d camera(s) in %s: %s",
+                    len(cameras),
+                    self.cameras_file,
+                    ", ".join(sorted(cameras)),
+                )
+            else:
+                _LOGGER.info("No cameras in %s yet", self.cameras_file)
+        return cameras
 
     def _ensure_directory(self) -> None:
         """Create the folder of the camera file so the add-on can write into it."""
@@ -80,7 +93,8 @@ class RtspCamerasCoordinator(DataUpdateCoordinator[dict[str, RtspCameraDefinitio
             self._ensure_directory()
             if not self.missing_reported:
                 _LOGGER.info(
-                    "Camera file %s does not exist yet, waiting for the add-on",
+                    "Camera file %s does not exist yet, waiting for the add-on "
+                    "(add cameras in the RTSP Cameras panel)",
                     self.cameras_file,
                 )
                 self.missing_reported = True

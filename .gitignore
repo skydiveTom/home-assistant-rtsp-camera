@@ -1,5 +1,6 @@
 # Local dev
 .venv/
+.venv-ha/
 __pycache__/
 *.py[cod]
 .pytest_cache/

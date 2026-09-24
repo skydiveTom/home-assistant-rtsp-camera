@@ -4,6 +4,29 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-09-23
+
+### Fixed
+
+- **Cameras now really appear in Home Assistant.** The camera entity derived
+  from both `CoordinatorEntity` and `Camera`, but only the coordinator base
+  class was initialised. `CoordinatorEntity.__init__` does not call `super()`,
+  so the camera never got its access token, image cache and stream bookkeeping -
+  Home Assistant discarded every camera while setting up the platform. The
+  add-on panel showed streams and previews, but no `camera.*` entity existed.
+- The data update coordinator is created with an explicit `config_entry=entry`.
+  Relying on the implicit ContextVar is reported as an error by the 2026.9 core.
+
+### Added
+
+- `ha_tests/` runs the integration against a real Home Assistant core
+  (`pytest-homeassistant-custom-component`, the same version CI pins) and checks
+  that cameras published by the add-on become `camera` entities, that cameras
+  added later show up without a restart and that deleted cameras disappear.
+- Log messages now name the watched file, the number of cameras found and the
+  entities that were registered, so a missing camera can be diagnosed from the
+  Home Assistant log alone.
+
 ## [0.1.6] - 2026-09-23
 
 ### Fixed

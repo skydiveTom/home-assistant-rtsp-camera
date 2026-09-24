@@ -1,5 +1,5 @@
 name: RTSP Camera Manager
-version: "0.1.6"
+version: "0.1.7"
 slug: rtsp_cameras
 description: >-
   Add RTSP camera instances to Home Assistant using only the stream URL. Name
