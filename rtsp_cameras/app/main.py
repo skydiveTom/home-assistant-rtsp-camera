@@ -26,7 +26,11 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
-from .actions import ACTION_INSTALL_ADDON_UPDATE, request_action
+from .actions import (
+    ACTION_INSTALL_ADDON_UPDATE,
+    ACTION_REFRESH_ADDON_UPDATE,
+    request_action,
+)
 from .config import (
     PREVIEW_MODE_AUTO,
     PREVIEW_MODE_CHOICES,
@@ -730,7 +734,8 @@ async def addon_update_check(request: Request) -> JSONResponse:
     if context.ha.enabled:
         reloaded = await context.ha.async_store_reload()
     else:
-        reloaded = False
+        # No token: Home Assistant does the check for us (see the integration).
+        reloaded = request_action(context.settings, ACTION_REFRESH_ADDON_UPDATE)
 
     info = await context.ha.async_addon_update_info()
     if not info.get("error"):
@@ -840,17 +845,13 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     if report["token"]:
         _LOGGER.info("Supervisor API reachable via %s", report["api_url"])
     else:
-        local = context.ha.read_local_addon_info()
         _LOGGER.warning(
             "No Supervisor token in this container (variables: %s, socket: %s). "
-            "The manifest asks for hassio_api; Home Assistant has it on record as "
-            "%s (role %s, repository %s). Reload the add-on store and update the "
-            "add-on so Supervisor recreates the container with SUPERVISOR_TOKEN.",
+            "Supervisor injects SUPERVISOR_TOKEN when hassio_api is enabled - reload "
+            "the add-on store and update the add-on to recreate the container. Until "
+            "then the update check and the update itself go through Home Assistant.",
             report["variables"] or "none",
             report["socket"],
-            local.get("hassio_api") if local else "unknown",
-            local.get("hassio_role") if local else "unknown",
-            local.get("repository") if local else "unknown",
         )
 
     context.store.load()

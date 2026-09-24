@@ -139,43 +139,34 @@ class HomeAssistantClient:
 
         local: dict[str, Any] = {}
         if not info:
-            local = self.read_local_addon_info()
+            local = self.read_home_assistant_status()
             if local:
                 version = version or local.get("version")
                 latest = latest or local.get("version_latest")
                 update_available = update_available or bool(local.get("update_available"))
-                source = "hassio_storage"
+                source = "home_assistant"
 
         return {
-            "available": bool(info) or source == "hassio_storage",
+            "available": bool(info) or source == "home_assistant",
             "version": version,
             "version_latest": latest,
             "update_available": update_available,
-            "state": info.get("state"),
+            "state": info.get("state") or local.get("state"),
             "source": source,
             "can_install": self.enabled,
             "hint": None if self.enabled else "token_missing",
             "error": None if info else self.last_error,
-            "permissions": (
-                {
-                    "hassio_api": local.get("hassio_api"),
-                    "hassio_role": local.get("hassio_role"),
-                    "homeassistant_api": local.get("homeassistant_api"),
-                    "repository": local.get("repository"),
-                }
-                if local
-                else None
-            ),
+            "checked_at": local.get("checked_at"),
+            "entity_id": local.get("entity_id"),
         }
 
-    def read_local_addon_info(self) -> dict[str, Any]:
-        """Read the add-on entry Home Assistant stores in ``.storage/hassio``.
+    def read_home_assistant_status(self) -> dict[str, Any]:
+        """Read the add-on version the integration published for us.
 
-        Besides the versions this reports the permissions Home Assistant has on
-        record (``hassio_api``, ``hassio_role``, ``homeassistant_api``) - the
-        decisive information when Supervisor does not hand out a token.
+        Home Assistant asks the Supervisor itself and writes the answer into a
+        file both sides share, which needs no API access from this container.
         """
-        path = self.settings.config_dir / ".storage" / "hassio"
+        path = self.settings.addon_update_file
         if not path.is_file():
             return {}
         try:
@@ -183,35 +174,22 @@ class HomeAssistantClient:
         except (OSError, ValueError) as err:
             _LOGGER.debug("Cannot read %s: %s", path, err)
             return {}
-
-        addons = (data.get("data") or {}).get("addons") if isinstance(data, dict) else None
-        if not isinstance(addons, list):
+        if not isinstance(data, dict):
             return {}
 
-        slug = self.settings.addon_slug
-        for entry in addons:
-            if not isinstance(entry, dict) or entry.get("slug") != slug:
-                continue
-            return {
-                "version": entry.get("version"),
-                "version_latest": entry.get("version_latest"),
-                "update_available": bool(
-                    entry.get("update_available")
-                    or (
-                        entry.get("version")
-                        and entry.get("version_latest")
-                        and entry.get("version") != entry.get("version_latest")
-                    )
-                ),
-                "hassio_api": bool(entry.get("hassio_api")),
-                "hassio_role": entry.get("hassio_role"),
-                "homeassistant_api": bool(entry.get("homeassistant_api")),
-                "auth_api": bool(entry.get("auth_api")),
-                "state": entry.get("state"),
-                "installed": entry.get("installed"),
-                "repository": entry.get("repository"),
-            }
-        return {}
+        installed = data.get("installed_version")
+        latest = data.get("latest_version")
+        return {
+            "version": installed,
+            "version_latest": latest,
+            "update_available": bool(
+                data.get("update_available")
+                or (installed and latest and str(installed) != str(latest))
+            ),
+            "state": data.get("state"),
+            "checked_at": data.get("checked_at"),
+            "entity_id": data.get("entity_id"),
+        }
 
     def environment_report(self) -> dict[str, Any]:
         """Describe how (and whether) this container can reach the Supervisor.

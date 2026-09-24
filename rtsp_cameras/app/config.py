@@ -20,7 +20,7 @@ PREVIEW_MODE_AUTO = "auto"
 PREVIEW_MODE_CHOICES: tuple[str, ...] = (PREVIEW_MODE_AUTO, *SUPPORTED_PREVIEW_MODES)
 DEFAULT_PREVIEW_MODE = PREVIEW_MODE_AUTO
 
-ADDON_VERSION = "0.1.13"
+ADDON_VERSION = "0.1.14"
 ADDON_SLUG = "rtsp_cameras"
 ADDON_NAME = "RTSP Camera Manager"
 DEFAULT_DATA_DIR = "/data"
@@ -103,6 +103,11 @@ class Settings:
     def actions_file(self) -> Path:
         """Return the file used to ask the integration for an action."""
         return self.config_dir / "rtsp_cameras" / "actions.json"
+
+    @property
+    def addon_update_file(self) -> Path:
+        """Return the file the integration reports the add-on version into."""
+        return self.config_dir / "rtsp_cameras" / "addon_update.json"
 
     @property
     def integration_target(self) -> Path:

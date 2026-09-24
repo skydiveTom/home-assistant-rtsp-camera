@@ -574,15 +574,11 @@
           }),
         );
       }
-      if (info.permissions) {
+      if (info.checked_at) {
         children.push(
           el('p', {
             class: 'note note--tight',
-            text: t('addon_update.permissions', {
-              hassio_api: String(info.permissions.hassio_api),
-              role: info.permissions.hassio_role || '–',
-              repository: info.permissions.repository || '–',
-            }),
+            text: t('addon_update.checked_by_ha', { time: info.checked_at }),
           }),
         );
       }

@@ -88,8 +88,8 @@
     "short": "Add-on",
     "new_version": "→ {version}",
     "failed": "Check failed: {reason}",
-    "token_missing": "This container has no SUPERVISOR_TOKEN, so the add-on cannot ask Supervisor anything. Update or reinstall the add-on (Supervisor recreates the container and injects the token), or reload the add-on store first (Settings → Add-ons → ⋮ → Reload), then check again.",
-    "permissions": "Home Assistant has this add-on on record as: hassio_api={hassio_api}, role={role}, repository={repository}.",
+    "token_missing": "This container has no SUPERVISOR_TOKEN, so the add-on cannot ask Supervisor itself. That is fine: press Check for updates and Home Assistant does the check, and Update add-on lets Home Assistant install it. To give the container a token again, reload the add-on store (Settings → Add-ons → ⋮ → Reload) and update or reinstall the add-on.",
+    "checked_by_ha": "Last checked by Home Assistant: {time}",
     "update_in_ha": "Update in Settings → Add-ons → RTSP Camera Manager (the add-on cannot start it without supervisor access).",
     "no_supervisor": "The Supervisor API is not reachable, so updates can only be checked in Settings → Add-ons."
   },

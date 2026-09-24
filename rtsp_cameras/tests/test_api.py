@@ -448,31 +448,21 @@ def test_addon_update_status_without_supervisor(client: TestClient) -> None:
     assert payload["addon"]["hint"] == "token_missing"
 
 
-def test_addon_update_is_read_from_the_hassio_storage_file(
-    workspace: Path, settings: Settings, fake_tools: None, monkeypatch: pytest.MonkeyPatch
+def test_addon_update_is_read_from_the_home_assistant_report(
+    workspace: Path, settings: Settings, fake_tools: None
 ) -> None:
-    """Without a Supervisor token the version still comes from HA's own storage."""
-    storage = settings.config_dir / ".storage"
-    storage.mkdir(parents=True, exist_ok=True)
-    (storage / "hassio").write_text(
+    """Without a Supervisor token the version comes from the integration."""
+    report = settings.config_dir / "rtsp_cameras" / "addon_update.json"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(
         json.dumps(
             {
-                "version": 1,
-                "data": {
-                    "addons": [
-                        {"slug": "other_addon", "version": "1.0.0"},
-                        {
-                            "slug": "rtsp_cameras",
-                            "version": "0.1.11",
-                            "version_latest": "0.1.12",
-                            "update_available": True,
-                            "hassio_api": True,
-                            "hassio_role": "default",
-                            "homeassistant_api": True,
-                            "repository": "local",
-                        },
-                    ]
-                },
+                "entity_id": "update.rtsp_camera_manager",
+                "checked_at": "2026-09-24T18:00:00+00:00",
+                "installed_version": "0.1.13",
+                "latest_version": "0.1.14",
+                "update_available": True,
+                "state": "on",
             }
         ),
         encoding="utf-8",
@@ -481,15 +471,24 @@ def test_addon_update_is_read_from_the_hassio_storage_file(
     with TestClient(create_app(settings)) as test_client:
         payload = test_client.get("/api/addon/update").json()["addon"]
 
-    assert payload["version"] == "0.1.11"
-    assert payload["version_latest"] == "0.1.12"
+    assert payload["version"] == "0.1.13"
+    assert payload["version_latest"] == "0.1.14"
     assert payload["update_available"] is True
-    assert payload["source"] == "hassio_storage"
+    assert payload["source"] == "home_assistant"
+    assert payload["entity_id"] == "update.rtsp_camera_manager"
     assert payload["can_install"] is False
-    # The permissions on record are what explains a missing token.
-    assert payload["permissions"]["hassio_api"] is True
-    assert payload["permissions"]["hassio_role"] == "default"
-    assert payload["permissions"]["repository"] == "local"
+    assert payload["via_home_assistant"] is True
+
+
+def test_addon_update_check_asks_home_assistant(
+    client: TestClient, settings: Settings
+) -> None:
+    """The check asks the integration to refresh when the add-on has no token."""
+    check = client.post("/api/addon/update/check")
+    assert check.status_code == 200
+
+    request = json.loads(settings.actions_file.read_text(encoding="utf-8"))
+    assert request["action"] == "refresh_addon_update"
 
 
 def test_the_legacy_hassio_token_is_accepted(workspace: Path, integration_source: Path) -> None:
@@ -502,7 +501,7 @@ def test_the_legacy_hassio_token_is_accepted(workspace: Path, integration_source
     assert supervisor.enabled is True
 
 
-def test_addon_update_is_quiet_without_a_storage_file(client: TestClient) -> None:
+def test_addon_update_is_quiet_without_a_home_assistant_report(client: TestClient) -> None:
     payload = client.get("/api/addon/update").json()["addon"]
 
     assert payload["version"] is None
@@ -548,7 +547,8 @@ def test_addon_update_reports_the_missing_supervisor(client: TestClient) -> None
 
     assert check.status_code == 200
     payload = check.json()
-    assert payload["reloaded"] is False
+    # Without a token the request to Home Assistant counts as the refresh.
+    assert payload["reloaded"] is True
     assert payload["addon"]["hint"] == "token_missing"
     assert payload["addon"]["can_install"] is False
     assert payload["addon"]["via_home_assistant"] is True

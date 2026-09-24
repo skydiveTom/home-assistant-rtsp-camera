@@ -4,6 +4,20 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] - 2026-09-24
+
+### Fixed
+
+- **The update check now really works without a Supervisor token.** Home Assistant
+  keeps no add-on list on disk, so the previous fallback could not report anything.
+  The integration (which is running inside Home Assistant and therefore talks to
+  the Supervisor itself) now publishes the state of the add-on's `update` entity
+  into `rtsp_cameras/addon_update.json`; the panel reads that file for the
+  installed and newest version. "Check for updates" asks the integration to refresh
+  the entity (`homeassistant.update_entity`), and "Update add-on" still installs
+  through `update.install` - both without a single Supervisor call from the
+  add-on container.
+
 ## [0.1.13] - 2026-09-24
 
 ### Added

@@ -20,6 +20,7 @@ from .models import utcnow
 _LOGGER = logging.getLogger(__name__)
 
 ACTION_INSTALL_ADDON_UPDATE = "install_addon_update"
+ACTION_REFRESH_ADDON_UPDATE = "refresh_addon_update"
 
 
 def request_action(settings: Settings, action: str, **values: Any) -> bool:

@@ -233,6 +233,77 @@ async def test_stale_addon_update_requests_are_ignored(hass, entry):
     assert calls == []
 
 
+async def test_home_assistant_publishes_the_addon_update_state(hass, entry):
+    """The add-on learns about new versions from the update entity state."""
+    import json
+    from pathlib import Path
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "update", "hassio", "rtsp_cameras", suggested_object_id="rtsp_camera_manager"
+    )
+    hass.states.async_set(
+        "update.rtsp_camera_manager",
+        "on",
+        {"installed_version": "0.1.13", "latest_version": "0.1.14", "title": "RTSP Camera Manager"},
+    )
+
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    published = Path(hass.config.path("rtsp_cameras", "addon_update.json"))
+    assert published.is_file()
+    payload = json.loads(published.read_text(encoding="utf-8"))
+    assert payload["installed_version"] == "0.1.13"
+    assert payload["latest_version"] == "0.1.14"
+    assert payload["update_available"] is True
+    assert payload["entity_id"] == "update.rtsp_camera_manager"
+
+
+async def test_addon_refresh_request_asks_home_assistant(hass, entry):
+    """The check in the panel makes Home Assistant refresh the update entity."""
+    import json
+    from pathlib import Path
+
+    from homeassistant.util import dt as dt_util
+
+    write_cameras_file(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "update", "hassio", "rtsp_cameras", suggested_object_id="rtsp_camera_manager"
+    )
+    calls: list[dict] = []
+
+    async def _update_entity(call):
+        calls.append(dict(call.data))
+
+    hass.services.async_register("homeassistant", "update_entity", _update_entity)
+
+    actions = Path(hass.config.path("rtsp_cameras", "actions.json"))
+    actions.write_text(
+        json.dumps(
+            {
+                "action": "refresh_addon_update",
+                "requested_at": dt_util.utcnow().isoformat(),
+                "handled_at": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert calls == [{"entity_id": "update.rtsp_camera_manager"}]
+
+
 async def test_camera_file_is_resolved_inside_the_config_folder(hass, entry):
     """The default path matches exactly what the add-on publishes."""
     assert await hass.config_entries.async_setup(entry.entry_id)
