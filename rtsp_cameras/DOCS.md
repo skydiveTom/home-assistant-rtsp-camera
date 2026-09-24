@@ -144,7 +144,7 @@ If you manage the integration yourself, set the add-on option
 | `ha_restart_after_install` | `false` | Restart Home Assistant automatically after installing/updating the integration. |
 | `health_check_interval` | `60` | Seconds between automatic stream checks (`0` disables them). |
 | `test_timeout` | `15` | Seconds to wait for a camera when testing or previewing. |
-| `preview_mode` | `mjpeg` | `mjpeg` re-encodes every frame (universal), `hls` copies H.264 streams when possible (low CPU). |
+| `preview_mode` | `auto` | `auto` tests MJPEG first and HLS second and keeps the working mode per camera. `mjpeg` re-encodes every frame (universal), `hls` copies H.264 streams when possible (low CPU). |
 | `preview_max_height` | `1080` | Height limit for snapshots and previews. |
 | `preview_fps` | `5` | Frame rate of the MJPEG preview and of transcoded HLS. |
 | `redact_credentials_in_logs` | `true` | Mask user name and password inside stream URLs before logging. |
