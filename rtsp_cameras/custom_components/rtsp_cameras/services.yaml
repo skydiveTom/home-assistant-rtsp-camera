@@ -1,0 +1,82 @@
+ptz:
+  name: Move camera
+  description: >-
+    Move a PTZ camera managed by this integration. The fields match onvif.ptz, so
+    automations written for an ONVIF camera keep working - only the domain changes.
+    Direction fields (pan/tilt/zoom) start a movement, the camera is stopped
+    automatically after continuous_duration seconds (default 0.5). Use
+    move_mode: Stop to stop immediately, or action: left with no other field.
+  target:
+    entity:
+      integration: rtsp_cameras
+      domain: camera
+  fields:
+    tilt:
+      name: Tilt
+      description: Move up or down.
+      selector:
+        select:
+          options: ["UP", "DOWN"]
+    pan:
+      name: Pan
+      description: Move left or right.
+      selector:
+        select:
+          options: ["LEFT", "RIGHT"]
+    zoom:
+      name: Zoom
+      description: Zoom in or out.
+      selector:
+        select:
+          options: ["ZOOM_IN", "ZOOM_OUT"]
+    speed:
+      name: Speed
+      description: 0.01 - 1 like ONVIF, or 1 - 8 for the speed scale of the camera.
+      selector:
+        number:
+          min: 0
+          max: 8
+          step: 0.01
+    continuous_duration:
+      name: Duration
+      description: Seconds the movement runs before it is stopped automatically.
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 0.1
+    preset:
+      name: Preset
+      description: Number of the preset to go to (together with move_mode GotoPreset).
+      example: "1"
+      selector:
+        text:
+    move_mode:
+      name: Move mode
+      selector:
+        select:
+          options: ["ContinuousMove", "RelativeMove", "AbsoluteMove", "GotoPreset", "Stop"]
+    action:
+      name: Action
+      description: Shortcut for the plain action of the add-on instead of pan/tilt/zoom.
+      selector:
+        select:
+          options:
+            ["up", "down", "left", "right", "zoom_in", "zoom_out", "home", "stop", "preset"]
+
+ptz_home:
+  name: Go to home position
+  description: Move a PTZ camera managed by this integration to its home position.
+  target:
+    entity:
+      integration: rtsp_cameras
+      domain: camera
+  fields:
+    speed:
+      name: Speed
+      description: 0.01 - 1 like ONVIF, or 1 - 8 for the speed scale of the camera.
+      selector:
+        number:
+          min: 0
+          max: 8
+          step: 0.01

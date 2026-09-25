@@ -34,9 +34,32 @@ ATTR_RTSP_TRANSPORT = "rtsp_transport"
 ATTR_SOURCE_FILE = "source_file"
 ATTR_STREAM_URL = "stream_url"
 ATTR_CODEC = "codec"
+ATTR_PTZ = "ptz"
+ATTR_PTZ_PRESETS = "ptz_presets"
 
 SUPPORTED_SCHEMES = ("rtsp://", "rtsps://", "rtmp://", "http://", "https://")
 
+# PTZ: the add-on publishes ready to use HTTP commands per action; Home Assistant
+# only has to fill in the values of the moment.
+PTZ_ACTIONS = (
+    "up",
+    "down",
+    "left",
+    "right",
+    "zoom_in",
+    "zoom_out",
+    "home",
+    "stop",
+    "preset",
+)
+PTZ_DIRECTIONS = {"up": "up", "down": "down", "left": "left", "right": "right"}
+PTZ_DEFAULT_SPEED = 4
+PTZ_MAX_SPEED = 8
+PTZ_TIMEOUT_SECONDS = 8
+#: Seconds a continuous move runs when the caller does not say it (ONVIF uses 0.5).
+PTZ_DEFAULT_DURATION = 0.5
+SERVICE_PTZ = "ptz"
+SERVICE_PTZ_HOME = "ptz_home"
 # Stills: Home Assistant's stream needs a decoded keyframe before it can hand out
 # an image. The first call right after starting a stream has none yet, so the
 # entity waits this long for the next keyframe before it uses the last frame.

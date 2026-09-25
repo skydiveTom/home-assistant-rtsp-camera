@@ -13,6 +13,7 @@ from typing import Any
 
 from .config import Settings
 from .models import Camera, slugify, utcnow
+from .ptz import normalize_ptz
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -143,6 +144,7 @@ class CameraStore:
         rtsp_transport: str = "tcp",
         enabled: bool = True,
         ha_stream_url: str | None = None,
+        ptz: Any = None,
     ) -> Camera:
         """Create a new camera and persist the list."""
         with self._lock:
@@ -153,6 +155,7 @@ class CameraStore:
                 rtsp_transport=rtsp_transport,
                 enabled=enabled,
                 ha_stream_url=(ha_stream_url or "").strip() or None,
+                ptz=normalize_ptz(ptz, url),
             )
             self._cameras[camera.id] = camera
         self.save()
@@ -178,6 +181,10 @@ class CameraStore:
             if "preview_mode" in changes:
                 value = str(changes["preview_mode"] or "").strip().lower()
                 camera.preview_mode = value or None
+            if "ptz" in changes:
+                # Normalized against the (possibly just changed) stream URL, because
+                # the PTZ base URL defaults to its host.
+                camera.ptz = normalize_ptz(changes["ptz"], camera.url)
             if changes.get("touch", True):
                 camera.updated_at = utcnow()
         self.save()

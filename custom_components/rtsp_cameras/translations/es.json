@@ -1,4 +1,41 @@
 {
+  "services": {
+    "ptz": {
+      "name": "Mover cámara",
+      "description": "Mueve una cámara PTZ de esta integración (mismos campos que onvif.ptz).",
+      "fields": {
+        "pan": {"name": "Giro horizontal", "description": "Izquierda o derecha."},
+        "tilt": {"name": "Giro vertical", "description": "Arriba o abajo."},
+        "zoom": {"name": "Zoom", "description": "Acercar o alejar."},
+        "speed": {"name": "Velocidad", "description": "0,01-1 como ONVIF o 1-8 de la cámara."},
+        "continuous_duration": {
+          "name": "Duración",
+          "description": "Segundos que se mueve antes de detenerse."
+        },
+        "preset": {"name": "Preset", "description": "Número del preset de destino."},
+        "move_mode": {"name": "Modo de movimiento"},
+        "action": {"name": "Acción", "description": "Acción simple del complemento."}
+      }
+    },
+    "ptz_home": {
+      "name": "Ir a la posición inicial",
+      "description": "Lleva la cámara a su posición inicial.",
+      "fields": {"speed": {"name": "Velocidad", "description": "0,01-1 como ONVIF o 1-8."}}
+    }
+  },
+  "exceptions": {
+    "ptz_not_configured": {
+      "message": "Esta cámara no tiene PTZ configurado. Configúralo en el panel."
+    },
+    "ptz_action_unsupported": {"message": "La cámara no conoce la acción {action}."},
+    "ptz_failed": {"message": "La cámara no aceptó {action}: {error}"},
+    "ptz_action_missing": {
+      "message": "Indica una dirección (pan/tilt/zoom), un preset, move_mode: Stop o action."
+    },
+    "ptz_preset_missing": {"message": "Indica el número del preset."},
+    "ptz_unknown_camera": {"message": "{entity_id} no es una cámara de RTSP Camera Manager."},
+    "ptz_no_target": {"message": "Selecciona al menos una cámara."}
+  },
   "config": {
     "step": {
       "user": {

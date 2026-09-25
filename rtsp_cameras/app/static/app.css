@@ -1176,6 +1176,155 @@ select:focus {
   font-size: 12.5px;
 }
 
+/* ------------------------------------------------------------------- PTZ */
+.ptz {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.ptz__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 13.5px;
+}
+
+.ptz__summary svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.ptz__summary .spacer {
+  flex: 1;
+}
+
+.ptz__commands {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+
+.ptz__actions {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.ptz__commands label {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.ptz__commands span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ptz__commands input {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.ptz-pad {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.ptz-pad__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 46px);
+  grid-template-rows: repeat(3, 46px);
+  gap: 6px;
+}
+
+.ptz-key {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ptz-key:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ptz-key.is-active {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.ptz-key svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+}
+
+.ptz-key--up {
+  grid-area: 1 / 2;
+}
+
+.ptz-key--zoom-in {
+  grid-area: 1 / 3;
+}
+
+.ptz-key--left {
+  grid-area: 2 / 1;
+}
+
+.ptz-key--home {
+  grid-area: 2 / 2;
+}
+
+.ptz-key--right {
+  grid-area: 2 / 3;
+}
+
+.ptz-key--zoom-out {
+  grid-area: 3 / 1;
+}
+
+.ptz-key--down {
+  grid-area: 3 / 2;
+}
+
+.ptz-key--stop {
+  grid-area: 3 / 3;
+}
+
+.ptz-pad__side {
+  display: grid;
+  gap: 8px;
+  min-width: 170px;
+}
+
+.field--tight {
+  gap: 4px;
+}
+
 /* --------------------------------------------------------------- animations */
 @keyframes rise {
   from {

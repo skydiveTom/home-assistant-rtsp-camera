@@ -155,6 +155,49 @@ exceptions). Check the codec in the camera tile of the add-on:
   integration - it waits up to 8 seconds for a keyframe. If a camera offers an HTTP
   snapshot URL, enter it in the add-on: that snapshot is used first and is faster.
 
+**PTZ (pan, tilt, zoom)**
+
+A camera with PTZ is configured in the add-on panel: open the camera, expand *PTZ
+control*, tick *This camera supports PTZ*, pick the vendor preset and press *Fill
+commands from the profile*. The preset fills the HTTP commands of the camera - they
+stay editable, so unusual firmware can be handled too, and `{speed}`, `{preset}`,
+`{direction}` stay dynamic. Presets are entered one per line as `number=name`.
+
+| Preset | Commands used |
+| --- | --- |
+| Axis (VAPIX) | `/axis-cgi/com/ptz.cgi?move=…` |
+| Dahua / Amcrest | `/cgi-bin/ptz.cgi?action=start&code=…` |
+| Xiongmai / NETSurveillance | `/cgi-bin/ptz.cgi?…&code=DirectionLeft…` |
+| Hikvision (ISAPI) | `PUT /ISAPI/PTZCtrl/channels/1/continuous` with an XML body |
+| Foscam | `/cgi-bin/CGIProxy.fcgi?cmd=ptzMoveUp…` |
+| Custom | your own `GET/POST/PUT url [body]` commands |
+
+*Test PTZ* sends the **stop** command, so the test never moves the camera. Cameras
+without an HTTP interface (for example a device that only speaks the RTSP and a
+proprietary port) cannot be moved by the add-on - the test reports that clearly.
+
+Home Assistant gets:
+
+- `rtsp_cameras.ptz` - move with the **same fields as `onvif.ptz`** (`pan`, `tilt`,
+  `zoom`, `speed` 0.01-1, `continuous_duration`, `preset`, `move_mode`), plus
+  `action` for the plain actions (`left`, `zoom_in`, `home`, …). A direction moves
+  for `continuous_duration` seconds (default 0.5) and is stopped automatically.
+- `rtsp_cameras.ptz_home` - go to the home position.
+- A **button per preset** (and one *PTZ stop*) on the camera device, so a dashboard
+  can jump to a view with one tap.
+
+```yaml
+service: rtsp_cameras.ptz
+target:
+  entity_id: camera.front_door
+data:
+  tilt: UP
+  continuous_duration: 1
+```
+
+The preview window of the add-on shows a PTZ pad; hold an arrow to move, release to
+stop.
+
 **Testing against a real camera (developers)**
 
 The end-to-end tests can talk to a camera on your network instead of the fakes:

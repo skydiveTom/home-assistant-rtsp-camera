@@ -4,10 +4,27 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from .const import DEFAULT_MODEL, SUPPORTED_SCHEMES
+from .const import (
+    DEFAULT_MODEL,
+    PTZ_ACTIONS,
+    PTZ_DEFAULT_SPEED,
+    PTZ_MAX_SPEED,
+    SUPPORTED_SCHEMES,
+)
+
+
+def _positive_int(value: Any, fallback: int, maximum: int = PTZ_MAX_SPEED) -> int:
+    """Return a bounded positive integer."""
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+    if number < 1:
+        return fallback
+    return min(number, maximum)
 
 
 def redact_url(url: str) -> str:
@@ -17,6 +34,73 @@ def redact_url(url: str) -> str:
         return url or ""
     masked = "***:***" if ":" in match.group("userinfo") else "***"
     return f"{match.group('scheme')}{masked}@{url[match.end():]}"
+
+
+@dataclass(frozen=True, slots=True)
+class PtzConfig:
+    """PTZ commands published by the add-on for one camera."""
+
+    profile: str = "custom"
+    speed: int = 4
+    commands: Mapping[str, str] = field(default_factory=dict)
+    stop_codes: Mapping[str, str] = field(default_factory=dict)
+    presets: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def enabled(self) -> bool:
+        """Return True when the camera can be moved."""
+        return bool(self.commands)
+
+    @property
+    def actions(self) -> tuple[str, ...]:
+        """Return the actions this camera understands."""
+        return tuple(action for action in PTZ_ACTIONS if action in self.commands)
+
+    def uses(self, action: str) -> bool:
+        """Return True when the action is configured."""
+        return action in self.commands
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any] | None) -> PtzConfig | None:
+        """Build a PTZ configuration from the published block, or None."""
+        if not isinstance(data, Mapping) or not data.get("enabled", True):
+            return None
+
+        raw_commands = data.get("commands")
+        if not isinstance(raw_commands, Mapping):
+            return None
+        commands = {
+            str(action): str(command).strip()
+            for action, command in raw_commands.items()
+            if str(action) in PTZ_ACTIONS and str(command).strip()
+        }
+        if not commands:
+            return None
+
+        raw_stop_codes = data.get("stop_codes")
+        stop_codes = (
+            {str(key): str(value) for key, value in raw_stop_codes.items()}
+            if isinstance(raw_stop_codes, Mapping)
+            else {}
+        )
+
+        presets: list[tuple[str, str]] = []
+        raw_presets = data.get("presets")
+        if isinstance(raw_presets, Sequence) and not isinstance(raw_presets, (str, bytes)):
+            for item in raw_presets:
+                if not isinstance(item, Mapping):
+                    continue
+                preset_id = str(item.get("id") or "").strip()
+                if preset_id:
+                    presets.append((preset_id, str(item.get("name") or preset_id).strip()))
+
+        return cls(
+            profile=str(data.get("profile") or "custom").strip() or "custom",
+            speed=_positive_int(data.get("speed"), PTZ_DEFAULT_SPEED),
+            commands=commands,
+            stop_codes=stop_codes,
+            presets=tuple(presets),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +115,7 @@ class RtspCameraDefinition:
     stream_url: str | None = None
     codec: str | None = None
     model: str = DEFAULT_MODEL
+    ptz: PtzConfig | None = None
 
     @property
     def slug(self) -> str:
@@ -84,6 +169,7 @@ class RtspCameraDefinition:
             stream_url=stream_url,
             codec=str(data.get("codec") or "").strip() or None,
             model=str(data.get("model") or "").strip() or DEFAULT_MODEL,
+            ptz=PtzConfig.from_dict(data.get("ptz")),
         )
 
 

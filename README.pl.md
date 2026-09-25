@@ -52,6 +52,11 @@ w panelu dodatku.
   jest przekazywany także do Home Assistant (`stream_options`), więc karta kamery
   nie gubi pakietów UDP. Możesz też podać drugi adres strumienia (np. podstrumień
   H.264 kamery H.265), gdy karta kamery w Home Assistant pozostaje czarna.
+- **Sterowanie PTZ** – kamera z obrotem i zoomem dostaje w panelu sekcję PTZ z
+  gotowymi zestawami komend (Axis, Dahua/Amcrest, Xiongmai, Hikvision, Foscam lub
+  własne), padem w podglądzie i presetami. Home Assistant dostaje usługę
+  `rtsp_cameras.ptz` (te same pola co `onvif.ptz`), `rtsp_cameras.ptz_home` oraz
+  przycisk dla każdego presetu.
 - **Działa od razu** – dodanie, zmiana nazwy, wyłączenie lub usunięcie kamery jest
   widoczne w Home Assistant w kilka sekund, bez restartu i bez YAML.
 - **Aktualizuje się sam** – zakładka Ustawienia sprawdza na żądanie nową wersję

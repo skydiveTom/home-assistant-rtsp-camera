@@ -53,6 +53,8 @@ from .models import (
     validate_optional_stream_url,
     validate_stream_url,
 )
+from .ptz import async_run as ptz_run
+from .ptz import normalize_action, profile_list
 from .storage import CameraStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -310,6 +312,7 @@ async def cameras(request: Request) -> JSONResponse:
         rtsp_transport=transport,
         enabled=enabled,
         ha_stream_url=ha_stream_url,
+        ptz=body.get("ptz"),
     )
     if context.store.publish_error:
         _LOGGER.error("Camera file could not be published")
@@ -363,6 +366,9 @@ async def camera_item(request: Request) -> JSONResponse:
         if ha_url_error:
             return await _error(request, ha_url_error, 400)
         changes["ha_stream_url"] = ha_stream_url
+    if "ptz" in body:
+        # An empty value or enabled=false removes the PTZ configuration.
+        changes["ptz"] = body.get("ptz")
 
     if "url" in changes or "rtsp_transport" in changes:
         # The learned preview mode belongs to the previous stream.
@@ -372,6 +378,46 @@ async def camera_item(request: Request) -> JSONResponse:
     if updated is None:
         return await _error(request, "not_found", 404)
     return _ok(camera=updated.to_api_dict(), cameras=_cameras_payload(context))
+
+
+async def camera_ptz(request: Request) -> JSONResponse:
+    """Move a PTZ capable camera.
+
+    The panel sends the action it wants ("left", "zoom_in", "preset", ...) together
+    with an optional speed, direction (for "stop"), preset and seconds.
+    """
+    context = _ctx(request)
+    camera = context.store.get(request.path_params["camera_id"])
+    if camera is None:
+        return await _error(request, "not_found", 404)
+    if not camera.ptz:
+        return await _error(request, "ptz_not_configured", 400)
+
+    body = await _json_body(request)
+    action = normalize_action(body.get("action"))
+    if action is None:
+        return await _error(request, "ptz_action_required", 400)
+
+    result = await ptz_run(
+        camera.ptz,
+        action,
+        speed=_optional_int(body.get("speed")),
+        preset=body.get("preset"),
+        direction=str(body.get("direction") or "").strip() or None,
+        seconds=_optional_float(body.get("seconds")),
+    )
+    if not result.ok:
+        _LOGGER.info("PTZ %s of %s failed: %s", action, camera.id, result.detail)
+        return JSONResponse(
+            {"ok": False, "error": "ptz_failed", "detail": result.detail, "ptz": result.to_dict()},
+            status_code=502,
+        )
+    return _ok(ptz=result.to_dict(), camera=camera.to_api_dict())
+
+
+async def ptz_profiles(request: Request) -> JSONResponse:
+    """Return the vendor presets for the camera editor."""
+    return _ok(profiles=profile_list())
 
 
 async def camera_test(request: Request) -> JSONResponse:
@@ -428,6 +474,14 @@ def _optional_int(value: Any) -> int | None:
     """Parse an optional integer query parameter."""
     try:
         return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    """Parse an optional float value."""
+    try:
+        return float(str(value).strip())
     except (TypeError, ValueError):
         return None
 
@@ -1010,6 +1064,8 @@ def create_app(settings: Settings | None = None) -> Starlette:
             methods=["GET", "PUT", "DELETE"],
         ),
         Route("/api/cameras/{camera_id}/test", camera_test, methods=["POST"]),
+        Route("/api/cameras/{camera_id}/ptz", camera_ptz, methods=["POST"]),
+        Route("/api/ptz/profiles", ptz_profiles),
         Route("/api/cameras/{camera_id}/snapshot.jpg", camera_snapshot),
         Route("/api/cameras/{camera_id}/mjpeg", camera_mjpeg),
         Route("/api/cameras/{camera_id}/preview/detect", camera_preview_detect, methods=["POST"]),

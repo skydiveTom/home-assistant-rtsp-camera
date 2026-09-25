@@ -13,6 +13,7 @@ from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.components.stream.const import CONF_RTSP_TRANSPORT, RTSP_TRANSPORTS
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -22,16 +23,22 @@ from .const import (
     ADD_CAMERA_URL,
     ATTR_CAMERA_ID,
     ATTR_CODEC,
+    ATTR_PTZ,
+    ATTR_PTZ_PRESETS,
     ATTR_RTSP_TRANSPORT,
     ATTR_SOURCE_FILE,
     ATTR_STREAM_URL,
     DOMAIN,
     KEYFRAME_WAIT_SECONDS,
     MANUFACTURER,
+    PTZ_DIRECTIONS,
     SNAPSHOT_TIMEOUT_SECONDS,
 )
 from .coordinator import RtspCamerasCoordinator
-from .models import RtspCameraDefinition, redact_url
+from .models import PtzConfig, RtspCameraDefinition, redact_url
+from .ptz import async_execute as ptz_async_execute
+from .ptz import async_move as ptz_async_move
+from .services import default_duration, resolve_action, resolve_duration, resolve_speed
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -204,6 +211,10 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
             attributes[ATTR_CODEC] = self._definition.codec
         if self._definition.stream_url:
             attributes[ATTR_STREAM_URL] = redact_url(self._definition.stream_url)
+        ptz = self._definition.ptz
+        if ptz is not None:
+            attributes[ATTR_PTZ] = True
+            attributes[ATTR_PTZ_PRESETS] = [name for _, name in ptz.presets]
         return attributes
 
     @property
@@ -272,3 +283,48 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         except (TimeoutError, aiohttp.ClientError) as err:
             _LOGGER.warning("Snapshot of %s failed: %s", self.entity_id, err)
             return None
+
+    # ------------------------------------------------------------------- PTZ
+    @property
+    def ptz(self) -> PtzConfig | None:
+        """Return the PTZ configuration of this camera."""
+        return self._definition.ptz
+
+    async def async_ptz(self, **kwargs: Any) -> None:
+        """Handle the ``rtsp_cameras.ptz`` service (ONVIF compatible fields).
+
+        Home Assistant sends ``pan``/``tilt``/``zoom``/``speed`` (0..1),
+        ``continuous_duration`` (seconds), ``preset`` and ``move_mode``; the plain
+        ``action`` of the add-on is accepted as a shortcut.
+        """
+        config = self._definition.ptz
+        action = resolve_action(kwargs)
+        speed = resolve_speed(kwargs)
+        duration = resolve_duration(kwargs)
+
+        if action == "preset":
+            preset = str(kwargs.get("preset") or "").strip()
+            if not preset:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN, translation_key="ptz_preset_missing"
+                )
+            await ptz_async_execute(self.hass, config, "preset", speed=speed, preset=preset)
+            return
+
+        if action in PTZ_DIRECTIONS:
+            await ptz_async_move(
+                self.hass,
+                config,  # type: ignore[arg-type]
+                action,
+                speed=speed,
+                duration=duration if duration is not None else default_duration(),
+            )
+            return
+
+        await ptz_async_execute(self.hass, config, action, speed=speed)
+
+    async def async_ptz_home(self, **kwargs: Any) -> None:
+        """Handle the ``rtsp_cameras.ptz_home`` service."""
+        await ptz_async_execute(
+            self.hass, self._definition.ptz, "home", speed=resolve_speed(kwargs)
+        )

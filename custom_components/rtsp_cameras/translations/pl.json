@@ -1,4 +1,51 @@
 {
+  "services": {
+    "ptz": {
+      "name": "Sterowanie kamerą PTZ",
+      "description": "Ruch kamery PTZ tej integracji (te same pola co onvif.ptz).",
+      "fields": {
+        "pan": {"name": "Obrót w poziomie", "description": "Lewo lub prawo."},
+        "tilt": {"name": "Obrót w pionie", "description": "Góra lub dół."},
+        "zoom": {"name": "Zoom", "description": "Przybliż lub oddal."},
+        "speed": {"name": "Prędkość", "description": "0,01-1 jak w ONVIF albo 1-8 w skali kamery."},
+        "continuous_duration": {
+          "name": "Czas ruchu",
+          "description": "Ile sekund kamera jedzie, zanim zostanie zatrzymana."
+        },
+        "preset": {"name": "Preset", "description": "Numer presetu docelowego."},
+        "move_mode": {"name": "Tryb ruchu"},
+        "action": {"name": "Akcja", "description": "Zwykła akcja dodatku."}
+      }
+    },
+    "ptz_home": {
+      "name": "Jedź do pozycji domowej",
+      "description": "Ustawia kamerę w pozycji domowej.",
+      "fields": {"speed": {"name": "Prędkość", "description": "0,01-1 jak w ONVIF albo 1-8."}}
+    }
+  },
+  "exceptions": {
+    "ptz_not_configured": {
+      "message": "Ta kamera nie ma skonfigurowanego PTZ. Dodaj go w panelu RTSP Camera Manager."
+    },
+    "ptz_action_unsupported": {
+      "message": "Kamera nie zna akcji {action}."
+    },
+    "ptz_failed": {
+      "message": "Kamera nie przyjęła akcji {action}: {error}"
+    },
+    "ptz_action_missing": {
+      "message": "Podaj kierunek (pan/tilt/zoom), preset, move_mode: Stop albo action."
+    },
+    "ptz_preset_missing": {
+      "message": "Podaj numer presetu."
+    },
+    "ptz_unknown_camera": {
+      "message": "{entity_id} nie jest kamerą RTSP Camera Manager."
+    },
+    "ptz_no_target": {
+      "message": "Wybierz co najmniej jedną kamerę."
+    }
+  },
   "config": {
     "step": {
       "user": {

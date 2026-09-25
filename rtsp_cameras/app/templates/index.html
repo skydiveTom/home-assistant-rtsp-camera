@@ -167,6 +167,72 @@
         </div>
         <p class="note note--tight" data-i18n="camera.enabled_hint"></p>
 
+        <details class="ptz" id="ptz-config">
+          <summary class="ptz__summary">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l3 3-3-3-3 3"></path></svg>
+            <span data-i18n="ptz.title"></span>
+            <span class="chip chip--mono" id="ptz-state"></span>
+          </summary>
+
+          <label class="switch">
+            <input type="checkbox" id="field-ptz-enabled" name="ptz_enabled">
+            <span class="switch__track" aria-hidden="true"><span class="switch__knob"></span></span>
+            <span class="switch__label" data-i18n="ptz.enabled"></span>
+          </label>
+          <p class="note note--tight" data-i18n="ptz.enabled_hint"></p>
+
+          <div class="form__grid" id="ptz-basics">
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.profile"></span>
+              <select id="field-ptz-profile"></select>
+            </label>
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.channel"></span>
+              <input type="number" id="field-ptz-channel" min="1" max="16" step="1" value="1">
+            </label>
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.speed"></span>
+              <input type="number" id="field-ptz-speed" min="1" max="8" step="1" value="4">
+            </label>
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.base_url"></span>
+              <input type="text" id="field-ptz-base" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.username"></span>
+              <input type="text" id="field-ptz-username" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.password"></span>
+              <input type="password" id="field-ptz-password" autocomplete="new-password">
+            </label>
+          </div>
+          <p class="note note--tight" data-i18n="ptz.base_hint"></p>
+          <p class="field__hint" id="ptz-profile-hint"></p>
+          <div class="ptz__actions">
+            <button type="button" class="btn btn--ghost" id="btn-ptz-fill">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"></path></svg>
+              <span data-i18n="ptz.fill"></span>
+            </button>
+            <button type="button" class="btn btn--ghost" id="btn-ptz-test" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2-5 4 10 2-5h4"></path></svg>
+              <span data-i18n="ptz.test"></span>
+            </button>
+          </div>
+
+          <div class="ptz__commands" id="ptz-commands"></div>
+
+          <label class="field">
+            <span class="field__label" data-i18n="ptz.presets"></span>
+            <textarea id="field-ptz-presets" rows="3" spellcheck="false"
+              placeholder="1=Front door&#10;2=Gate"></textarea>
+            <span class="field__hint" data-i18n="ptz.presets_hint"></span>
+          </label>
+
+          <div class="probe" id="ptz-result" hidden></div>
+          <p class="note note--tight" data-i18n="ptz.hold_hint"></p>
+        </details>
+
         <div class="probe" id="probe-result" hidden></div>
 
         <footer class="modal__foot">
@@ -212,6 +278,49 @@
         <div class="preview__scan" aria-hidden="true"></div>
       </div>
       <p class="preview__error" id="preview-error" hidden></p>
+      <div class="ptz-pad" id="ptz-pad" hidden>
+        <div class="ptz-pad__grid">
+          <button type="button" class="ptz-key ptz-key--up" data-ptz="up" data-ptz-hold="1" aria-label="up">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V6M6 12l6-6 6 6"></path></svg>
+          </button>
+          <button type="button" class="ptz-key ptz-key--left" data-ptz="left" data-ptz-hold="1" aria-label="left">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H6M12 6l-6 6 6 6"></path></svg>
+          </button>
+          <button type="button" class="ptz-key ptz-key--home" data-ptz="home" aria-label="home">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v9H4z"></path></svg>
+          </button>
+          <button type="button" class="ptz-key ptz-key--right" data-ptz="right" data-ptz-hold="1" aria-label="right">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 6l6 6-6 6"></path></svg>
+          </button>
+          <button type="button" class="ptz-key ptz-key--down" data-ptz="down" data-ptz-hold="1" aria-label="down">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v13M6 12l6 6 6-6"></path></svg>
+          </button>
+          <button type="button" class="ptz-key ptz-key--zoom-in" data-ptz="zoom_in" data-ptz-hold="1" aria-label="zoom in">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          </button>
+          <button type="button" class="ptz-key ptz-key--stop" data-ptz="stop" aria-label="stop">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h8v8H8z"></path></svg>
+          </button>
+          <button type="button" class="ptz-key ptz-key--zoom-out" data-ptz="zoom_out" data-ptz-hold="1" aria-label="zoom out">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"></path></svg>
+          </button>
+        </div>
+        <div class="ptz-pad__side">
+          <label class="field field--tight">
+            <span class="field__label" data-i18n="ptz.preset"></span>
+            <select id="ptz-preset-select"></select>
+          </label>
+          <button type="button" class="btn btn--ghost" id="btn-ptz-preset">
+            <span data-i18n="ptz.go_preset"></span>
+          </button>
+          <label class="field field--tight">
+            <span class="field__label" data-i18n="ptz.speed"></span>
+            <input type="number" id="ptz-speed-input" min="1" max="8" step="1" value="4">
+          </label>
+          <p class="note note--tight" data-i18n="preview.ptz_hint"></p>
+        </div>
+      </div>
+      <p class="preview__error" id="ptz-error" hidden></p>
       <footer class="modal__foot">
         <p class="note note--tight" data-i18n="preview.hint"></p>
         <span class="spacer"></span>

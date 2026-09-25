@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .config import SUPPORTED_PREVIEW_MODES
+from .ptz import normalize_ptz, public_config
 
 SUPPORTED_SCHEMES: tuple[str, ...] = (
     "rtsp://",
@@ -131,6 +132,9 @@ class Camera:
     # stream H.265 (or a very large picture) are best exposed to Home Assistant
     # through their H.264 sub stream.
     ha_stream_url: str | None = None
+    # PTZ: normalized command templates (see app/ptz.py). None means the camera has
+    # no pan/tilt/zoom support configured.
+    ptz: dict[str, Any] | None = None
     # Preview implementation that was found to work for this camera (mjpeg/hls),
     # learned automatically when the add-on option is set to "auto".
     preview_mode: str | None = None
@@ -161,6 +165,10 @@ class Camera:
         if self.ha_stream_url:
             # Home Assistant uses this URL instead of the main one when present.
             payload["stream_url"] = self.ha_stream_url
+        if self.ptz:
+            # The integration moves the camera on its own, so it needs the command
+            # templates (with the credentials already filled in).
+            payload["ptz"] = self.ptz
         if details.get("codec"):
             payload["codec"] = str(details["codec"])
         if self.preview_mode:
@@ -187,6 +195,7 @@ class Camera:
             "last_error": self.last_error,
             "last_probe": self.last_probe,
             "entity_id": self.entity_id,
+            "ptz": public_config(self.ptz),
         }
 
     @classmethod
@@ -212,6 +221,7 @@ class Camera:
             rtsp_transport=str(data.get("rtsp_transport") or "tcp").strip().lower(),
             enabled=bool(data.get("enabled", True)),
             ha_stream_url=ha_stream_url,
+            ptz=normalize_ptz(data.get("ptz"), url),
             preview_mode=preview_mode,
             created_at=str(data.get("created_at") or utcnow()),
             updated_at=str(data.get("updated_at") or utcnow()),

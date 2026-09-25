@@ -4,6 +4,46 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-25
+
+### Added
+
+- **PTZ support (pan, tilt, zoom).** A camera with PTZ is configured in the add-on
+  panel: expand *PTZ control*, tick the switch, pick a vendor preset and press *Fill
+  commands from the profile*. The presets cover Axis (VAPIX), Dahua/Amcrest,
+  Xiongmai/NETSurveillance (the family with
+  `rtsp://host:554/user=admin&password=&channel=1&stream=0.sdp` URLs), Hikvision
+  (ISAPI, `PUT` with an XML body) and Foscam; every command stays editable so unusual
+  firmware works too (`GET`/`POST`/`PUT url [body]`, placeholders `{base}`,
+  `{username}`, `{password}`, `{channel}`, `{speed}`, `{preset}`, `{direction}`,
+  `{seconds}`). Presets are entered as `number=name`.
+- **PTZ pad in the add-on preview.** Hold an arrow to move, release to stop (the
+  direction is remembered for the stop command), plus zoom, home, stop and a preset
+  chooser with the camera speed. *Test PTZ* sends only the stop command, so the test
+  never moves the camera, and a camera without an HTTP interface is reported clearly.
+- **Home Assistant services** `rtsp_cameras.ptz` and `rtsp_cameras.ptz_home`. The
+  fields match `onvif.ptz` (`pan`, `tilt`, `zoom`, `speed` 0.01-1,
+  `continuous_duration`, `preset`, `move_mode`), so an automation written for ONVIF
+  keeps working after changing the domain; `action` accepts the plain add-on actions
+  as well. `move_mode: GotoPreset` needs a preset, `move_mode: Stop` stops, and a
+  direction moves for `continuous_duration` seconds (default 0.5) before it stops
+  itself. Everything has real translations (English, Polish, German, Spanish) and a
+  `services.yaml` for the UI.
+- **One button per PTZ preset** (plus *PTZ stop*) on the camera device, so a
+  dashboard can jump to a view with a single tap.
+
+### Tests
+
+- 18 add-on tests for the PTZ core and the API, including a fake camera HTTP server
+  that records what the camera receives (start/stop with the direction, presets,
+  `PUT` with body, error paths, credential encoding, masking).
+- 11 real Home Assistant tests for the services, the ONVIF-style field mapping, the
+  speed scale, the preset buttons, missing PTZ configuration and camera failures.
+- End-to-end check in the container: a Xiongmai profile against a fake camera
+  interface sends `action=start&code=DirectionLeft&arg2=6`, the stop carries
+  `code=DirectionLeft`, the preset ends in `code=GotoPreset&arg2=2` and the
+  published `cameras.json` contains the commands and the stop codes.
+
 ## [0.1.22] - 2026-09-24
 
 ### Added

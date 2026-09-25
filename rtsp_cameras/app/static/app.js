@@ -20,6 +20,9 @@
     editing: null,
     addonUpdate: { available: false, update_available: false, busy: false },
     preview: { cameraId: null, mode: 'auto', hls: null, loaded: {}, resolved: {}, timer: null },
+    ptzProfiles: [],
+    ptzActions: ['up', 'down', 'left', 'right', 'zoom_in', 'zoom_out', 'home', 'stop', 'preset'],
+    ptzDirection: null,
   };
 
   /* ------------------------------------------------------------------ i18n */
@@ -702,6 +705,7 @@
     document.getElementById('field-enabled').checked = camera ? camera.enabled : true;
     document.getElementById('btn-save').textContent = camera ? t('camera.save_changes') : t('camera.save');
     document.getElementById('btn-preview-form').hidden = !camera;
+    renderPtzForm(camera);
     const probeBox = document.getElementById('probe-result');
     probeBox.hidden = true;
     probeBox.replaceChildren();
@@ -729,7 +733,7 @@
     const saveButton = document.getElementById('btn-save');
     saveButton.disabled = true;
     try {
-      const body = { name, url, rtsp_transport, enabled, ha_stream_url };
+      const body = { name, url, rtsp_transport, enabled, ha_stream_url, ptz: collectPtz() };
       const data = state.editing
         ? await api('api/cameras/' + state.editing, { method: 'PUT', body })
         : await api('api/cameras', { method: 'POST', body });
@@ -837,6 +841,222 @@
     }
   }
 
+  /* -------------------------------------------------------------------- PTZ */
+  async function loadPtzProfiles() {
+    if (state.ptzProfiles.length) return state.ptzProfiles;
+    try {
+      const data = await api('api/ptz/profiles');
+      state.ptzProfiles = data.profiles || [];
+    } catch (err) {
+      state.ptzProfiles = [];
+    }
+    return state.ptzProfiles;
+  }
+
+  function ptzProfile() {
+    const id = document.getElementById('field-ptz-profile').value;
+    return state.ptzProfiles.find((profile) => profile.id === id) || null;
+  }
+
+  function ptzCommandNodes() {
+    return Array.from(document.querySelectorAll('#ptz-commands input'));
+  }
+
+  function renderPtzCommands(commands) {
+    const box = document.getElementById('ptz-commands');
+    const rows = state.ptzActions.map((action) => {
+      const input = el('input', {
+        type: 'text',
+        id: 'field-ptz-' + action,
+        autocomplete: 'off',
+        spellcheck: 'false',
+        placeholder: t('ptz.command_hint'),
+      });
+      input.dataset.ptzAction = action;
+      input.value = (commands && commands[action]) || '';
+      return el('label', {}, [el('span', { text: t('ptz.action_' + action) }), input]);
+    });
+    box.replaceChildren(el('p', { class: 'field__label', text: t('ptz.commands') }), ...rows);
+  }
+
+  function fillPtzFromProfile() {
+    const profile = ptzProfile();
+    if (!profile) return;
+    const base = document.getElementById('field-ptz-base').value.trim();
+    const values = {
+      base: base || 'http://' + t('ptz.your_camera'),
+      username: encodeURIComponent(document.getElementById('field-ptz-username').value.trim()),
+      password: encodeURIComponent(document.getElementById('field-ptz-password').value),
+      channel: document.getElementById('field-ptz-channel').value || '1',
+    };
+    ptzCommandNodes().forEach((input) => {
+      const template = (profile.commands || {})[input.dataset.ptzAction];
+      if (!template) {
+        input.value = '';
+        return;
+      }
+      input.value = template.replace(/\{(\w+)\}/g, (match, name) =>
+        Object.prototype.hasOwnProperty.call(values, name) ? values[name] : match,
+      );
+    });
+    document.getElementById('ptz-profile-hint').textContent = profile.description || '';
+    toast(t('ptz.filled'), 'ok');
+  }
+
+  function presetLines(presets) {
+    return (presets || []).map((preset) => preset.id + '=' + preset.name).join('\n');
+  }
+
+  function parsePresets(text) {
+    return String(text || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const index = line.indexOf('=');
+        return index < 0
+          ? { id: line, name: line }
+          : { id: line.slice(0, index).trim(), name: line.slice(index + 1).trim() };
+      })
+      .filter((preset) => preset.id);
+  }
+  async function renderPtzForm(camera) {
+    await loadPtzProfiles();
+    const ptz = (camera && camera.ptz) || null;
+    const select = document.getElementById('field-ptz-profile');
+    select.replaceChildren(
+      ...state.ptzProfiles.map((profile) => el('option', { value: profile.id, text: profile.label })),
+    );
+    select.value = (ptz && ptz.profile) || 'custom';
+    document.getElementById('field-ptz-enabled').checked = Boolean(ptz && ptz.enabled);
+    document.getElementById('field-ptz-base').value = (ptz && ptz.base_url) || '';
+    document.getElementById('field-ptz-channel').value = (ptz && ptz.channel) || 1;
+    document.getElementById('field-ptz-speed').value = (ptz && ptz.speed) || 4;
+    document.getElementById('field-ptz-username').value = '';
+    document.getElementById('field-ptz-password').value = '';
+    document.getElementById('field-ptz-presets').value = presetLines(ptz && ptz.presets);
+    renderPtzCommands(ptz && ptz.commands);
+    document.getElementById('ptz-profile-hint').textContent = (ptzProfile() || {}).description || '';
+    document.getElementById('ptz-state').textContent = ptz && ptz.enabled ? t('ptz.on') : t('ptz.off');
+    document.getElementById('btn-ptz-test').hidden = !camera;
+    const result = document.getElementById('ptz-result');
+    result.hidden = true;
+    result.replaceChildren();
+  }
+
+  function collectPtz() {
+    if (!document.getElementById('field-ptz-enabled').checked) return { enabled: false };
+    const commands = {};
+    ptzCommandNodes().forEach((input) => {
+      const value = input.value.trim();
+      if (value) commands[input.dataset.ptzAction] = value;
+    });
+    return {
+      enabled: true,
+      profile: document.getElementById('field-ptz-profile').value,
+      base_url: document.getElementById('field-ptz-base').value.trim(),
+      channel: Number(document.getElementById('field-ptz-channel').value) || 1,
+      speed: Number(document.getElementById('field-ptz-speed').value) || 4,
+      username: document.getElementById('field-ptz-username').value.trim(),
+      password: document.getElementById('field-ptz-password').value,
+      commands,
+      presets: parsePresets(document.getElementById('field-ptz-presets').value),
+    };
+  }
+
+  function errorDetail(err) {
+    const detail = err instanceof ApiError && err.data ? err.data.detail : null;
+    return detail ? ' — ' + detail : '';
+  }
+
+  async function testPtz() {
+    const camera = state.editing ? cameraById(state.editing) : null;
+    const box = document.getElementById('ptz-result');
+    const button = document.getElementById('btn-ptz-test');
+    if (!camera) {
+      toast(t('camera.preview_save_first'), 'err');
+      return;
+    }
+    button.disabled = true;
+    box.hidden = false;
+    box.className = 'probe';
+    box.replaceChildren(el('p', { class: 'probe__head', text: t('ptz.testing') }));
+    try {
+      await api('api/cameras/' + camera.id + '/ptz', {
+        method: 'POST',
+        body: { action: 'stop', speed: collectPtz().speed },
+      });
+      box.className = 'probe probe--ok';
+      box.replaceChildren(
+        el('p', { class: 'probe__head', text: t('ptz.test_ok') }),
+        el('p', { class: 'probe__hint', text: t('ptz.test_hint') }),
+      );
+    } catch (err) {
+      box.className = 'probe probe--err';
+      const code = err instanceof ApiError ? err.code : 'ptz_failed';
+      box.replaceChildren(
+        el('p', { class: 'probe__error', text: errorText(code) + errorDetail(err) }),
+      );
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  /* The pad: directions are held (start on pointer down, stop on release), the
+     other keys are single clicks - exactly how ONVIF PTZ works in Home Assistant. */
+  function renderPtzPad(camera) {
+    const pad = document.getElementById('ptz-pad');
+    const ptz = (camera && camera.ptz) || null;
+    if (!ptz || !ptz.enabled) {
+      pad.hidden = true;
+      return;
+    }
+    pad.hidden = false;
+    document.getElementById('ptz-speed-input').value = ptz.speed || 4;
+    document.getElementById('ptz-error').hidden = true;
+    const enabled = ptz.actions || [];
+    document.querySelectorAll('#ptz-pad [data-ptz]').forEach((button) => {
+      const action = button.dataset.ptz;
+      button.disabled = action !== 'stop' && enabled.indexOf(action) < 0;
+    });
+    const select = document.getElementById('ptz-preset-select');
+    const presets = ptz.presets || [];
+    select.replaceChildren(
+      ...(presets.length
+        ? presets.map((preset) => el('option', { value: preset.id, text: preset.name }))
+        : [el('option', { value: '', text: t('ptz.no_presets') })]),
+    );
+    select.disabled = presets.length === 0;
+    document.getElementById('btn-ptz-preset').disabled = presets.length === 0;
+  }
+
+  async function sendPtz(action, extra) {
+    const cameraId = state.preview.cameraId;
+    if (!cameraId) return false;
+    const speed = Number(document.getElementById('ptz-speed-input').value) || undefined;
+    const body = Object.assign({ action, speed }, extra || {});
+    try {
+      await api('api/cameras/' + cameraId + '/ptz', { method: 'POST', body });
+      state.ptzDirection = action === 'stop' ? null : action;
+      document.getElementById('ptz-error').hidden = true;
+      return true;
+    } catch (err) {
+      const box = document.getElementById('ptz-error');
+      box.hidden = false;
+      const code = err instanceof ApiError ? err.code : 'ptz_failed';
+      box.textContent = errorText(code) + errorDetail(err);
+      return false;
+    }
+  }
+
+  function stopPtz() {
+    const direction = state.ptzDirection;
+    state.ptzDirection = null;
+    sendPtz('stop', direction ? { direction } : null);
+  }
+
+
+
   /* ---------------------------------------------------------------- preview */
   function openPreview(cameraId) {
     const camera = cameraById(cameraId);
@@ -845,6 +1065,7 @@
     document.getElementById('preview-title').textContent = t('preview.title', { name: camera.name });
     document.getElementById('preview-mode-select').value =
       state.preview.mode || state.settings.preview_mode || 'auto';
+    renderPtzPad(camera);
     showModal('preview-modal');
     startPreview();
   }
@@ -903,6 +1124,8 @@
 
   function stopPreview() {
     state.preview.cameraId = null;
+    state.ptzDirection = null;
+    document.getElementById('ptz-pad').hidden = true;
     resetStage();
   }
 
@@ -1317,6 +1540,34 @@
     });
     document.getElementById('camera-form').addEventListener('submit', submitCamera);
     document.getElementById('btn-test-form').addEventListener('click', () => testForm(false));
+    document.getElementById('btn-ptz-fill').addEventListener('click', fillPtzFromProfile);
+    document.getElementById('btn-ptz-test').addEventListener('click', testPtz);
+    document.getElementById('field-ptz-profile').addEventListener('change', () => {
+      const profile = ptzProfile();
+      document.getElementById('ptz-profile-hint').textContent = (profile && profile.description) || '';
+    });
+    document.querySelectorAll('#ptz-pad [data-ptz]').forEach((button) => {
+      const action = button.dataset.ptz;
+      if (button.dataset.ptzHold) {
+        button.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          button.classList.add('is-active');
+          sendPtz(action);
+        });
+        ['pointerup', 'pointerleave', 'pointercancel'].forEach((name) =>
+          button.addEventListener(name, () => {
+            button.classList.remove('is-active');
+            stopPtz();
+          }),
+        );
+      } else {
+        button.addEventListener('click', () => sendPtz(action));
+      }
+    });
+    document.getElementById('btn-ptz-preset').addEventListener('click', () => {
+      const preset = document.getElementById('ptz-preset-select').value;
+      if (preset) sendPtz('preset', { preset });
+    });
     document.getElementById('btn-preview-form').addEventListener('click', () => {
       const camera = state.editing ? cameraById(state.editing) : null;
       if (!camera) {

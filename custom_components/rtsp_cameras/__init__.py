@@ -10,10 +10,17 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 from .coordinator import RtspCamerasCoordinator
+from .services import async_register_services
 
-PLATFORMS: list[Platform] = [Platform.CAMERA]
+PLATFORMS: list[Platform] = [Platform.BUTTON, Platform.CAMERA]
 
 RtspCamerasConfigEntry: TypeAlias = ConfigEntry[RtspCamerasCoordinator]
+
+
+async def async_setup(hass: HomeAssistant, config: dict | None = None) -> bool:
+    """Register the PTZ services of the integration."""
+    async_register_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: RtspCamerasConfigEntry) -> bool:
