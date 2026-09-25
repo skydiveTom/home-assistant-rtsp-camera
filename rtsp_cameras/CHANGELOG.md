@@ -4,6 +4,21 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-09-25
+
+### Changed
+
+- **The brand icon now is the camera mark the add-on panel uses** (`.brand__mark` in
+  `app/templates/index.html`): the stroked rounded rectangle body, the camera cone on
+  the right, the filled lens and the two signal arcs, drawn in the accent cyan
+  `#22d3ee`. The generator reproduces that SVG geometry on the 32x32 view box of the
+  panel (including the arc centres, which follow from the chord and the radius), so
+  the integrations dashboard and the add-on look like the same product.
+- Both theme variants (`icon*.png` and `dark_icon*.png`) carry the same accent glyph:
+  cyan is readable on light and dark backgrounds, so no separate dark artwork is
+  needed and the icon never changes its look with the theme.
+- The artwork was verified visually at 512 px before it was committed.
+
 ## [0.2.3] - 2026-09-25
 
 ### Added

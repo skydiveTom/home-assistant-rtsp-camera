@@ -2,8 +2,10 @@
 
 Home Assistant serves local brand images from ``custom_components/<domain>/brand``
 (``Integration.has_branding`` is true when that folder exists) and the integrations
-dashboard shows them next to the entry. A missing or wrongly sized file would only
-show up in the browser, so it is guarded here.
+dashboard shows them next to the entry. The artwork is the same camera mark the
+add-on panel draws (``.brand__mark`` in ``app/templates/index.html``) in the accent
+colour, so the integration and the panel look alike. A missing or wrongly sized file
+would only show up in the browser, so it is guarded here.
 """
 
 from __future__ import annotations
@@ -66,6 +68,13 @@ def test_brand_images_are_shipped_with_the_addon() -> None:
         assert source.read_bytes() == mirror.read_bytes(), f"{name} differs between the copies"
 
 
-def test_dark_icon_differs_from_the_light_one() -> None:
-    """A dark theme needs its own artwork, not a fallback to the light icon."""
-    assert (BRAND_DIR / "icon.png").read_bytes() != (BRAND_DIR / "dark_icon.png").read_bytes()
+def test_dark_icon_is_the_same_glyph() -> None:
+    """Both themes get the accent glyph of the panel, so they are identical files.
+
+    The panel draws the mark with ``--accent`` (#22d3ee), which is readable on light
+    and dark backgrounds - a deliberately themed pair is not needed.
+    """
+    assert (BRAND_DIR / "icon.png").read_bytes() == (BRAND_DIR / "dark_icon.png").read_bytes()
+    assert (BRAND_DIR / "icon@2x.png").read_bytes() == (
+        BRAND_DIR / "dark_icon@2x.png"
+    ).read_bytes()

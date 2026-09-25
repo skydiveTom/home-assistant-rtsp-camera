@@ -17,6 +17,7 @@ changes.
 from __future__ import annotations
 
 import io
+import math
 import sys
 from pathlib import Path
 
@@ -28,11 +29,8 @@ INTEGRATION_BRAND = ROOT / "custom_components" / "rtsp_cameras" / "brand"
 ADDON_DIR = ROOT / "rtsp_cameras"
 
 SUPERSAMPLE = 4
-GRID = 256  # the artwork is designed on a 256x256 grid
-CYAN = (0x22, 0xD3, 0xEE)
-DARK_BODY = (0x10, 0x1C, 0x26)
-LIGHT_BODY = (0xE7, 0xEE, 0xF6)
-INK = (0x0B, 0x14, 0x1C)
+#: The panel paints the glyph with ``--accent`` (index.html: .brand__mark).
+ACCENT = (0x22, 0xD3, 0xEE)
 
 
 def canvas(size: int) -> np.ndarray:
@@ -45,47 +43,58 @@ def _grid(size: int) -> tuple[np.ndarray, np.ndarray]:
     return np.mgrid[0:size, 0:size]
 
 
-def rounded_rect(
+def stroke(outer: np.ndarray, inner: np.ndarray) -> np.ndarray:
+    """Return the outline between two masks (outer minus inner)."""
+    return outer & ~inner
+
+
+def rounded_rect_mask(
     size: int, x0: float, y0: float, x1: float, y1: float, radius: float
 ) -> np.ndarray:
-    """Return a mask of a rounded rectangle (coordinates on the 256 grid)."""
+    """Return a mask of a rounded rectangle in supersampled pixels."""
     yy, xx = _grid(size)
     x0, y0, x1, y1, radius = (v * SUPERSAMPLE for v in (x0, y0, x1, y1, radius))
     inner_x = np.clip(xx, x0 + radius, x1 - radius)
     inner_y = np.clip(yy, y0 + radius, y1 - radius)
-    return (np.hypot(xx - inner_x, yy - inner_y) <= radius) & (xx >= x0) & (xx <= x1) & (yy >= y0) & (
-        yy <= y1
-    )
+    inside = (np.hypot(xx - inner_x, yy - inner_y) <= radius) & (xx >= x0) & (xx <= x1)
+    return inside & (yy >= y0) & (yy <= y1)
 
 
-def disc(size: int, cx: float, cy: float, radius: float) -> np.ndarray:
-    """Return a mask of a filled circle."""
+def disc_mask(size: int, cx: float, cy: float, radius: float) -> np.ndarray:
+    """Return a mask of a filled circle in supersampled pixels."""
     yy, xx = _grid(size)
     return np.hypot(xx - cx * SUPERSAMPLE, yy - cy * SUPERSAMPLE) <= radius * SUPERSAMPLE
 
 
-def arc(
-    size: int, cx: float, cy: float, r_out: float, r_in: float, start: float, end: float
+def arc_mask(
+    size: int, cx: float, cy: float, radius: float, start: float, end: float, width: float
 ) -> np.ndarray:
-    """Return a mask of a ring segment (degrees, counter clockwise from 3 o'clock)."""
+    """Return the outline of a circular arc (degrees, counter clockwise from 3 o'clock)."""
     yy, xx = _grid(size)
     dx = xx - cx * SUPERSAMPLE
     dy = yy - cy * SUPERSAMPLE
     distance = np.hypot(dx, dy)
-    angle = np.degrees(np.arctan2(-dy, dx)) % 360
-    inside = (distance <= r_out * SUPERSAMPLE) & (distance >= r_in * SUPERSAMPLE)
+    angle = np.degrees(np.arctan2(-dy, dx))
+    inside = (distance <= (radius + width / 2) * SUPERSAMPLE) & (
+        distance >= (radius - width / 2) * SUPERSAMPLE
+    )
     return inside & (angle >= start) & (angle <= end)
 
 
-def triangle(size: int, points: list[tuple[float, float]]) -> np.ndarray:
-    """Return a mask of a convex polygon (cross product test)."""
-    yy, xx = _grid(size)
-    mask = np.ones((size, size), dtype=bool)
-    scaled = [(x * SUPERSAMPLE, y * SUPERSAMPLE) for x, y in points]
-    for index, (x0, y0) in enumerate(scaled):
-        x1, y1 = scaled[(index + 1) % len(scaled)]
-        mask &= (x1 - x0) * (yy - y0) - (y1 - y0) * (xx - x0) >= 0
-    return mask
+def segment_mask(
+    size: int, x0: float, y0: float, x1: float, y1: float, width: float
+) -> np.ndarray:
+    """Return a mask of a thick line segment."""
+    yy, xx = np.mgrid[0:size, 0:size]
+    ax, ay = x0 * SUPERSAMPLE, y0 * SUPERSAMPLE
+    bx, by = x1 * SUPERSAMPLE, y1 * SUPERSAMPLE
+    px, py = xx - ax, yy - ay
+    ex, ey = bx - ax, by - ay
+    length_squared = ex * ex + ey * ey
+    t = np.clip((px * ex + py * ey) / (length_squared or 1), 0.0, 1.0)
+    distance = np.hypot(px - t * ex, py - t * ey)
+    return distance <= (width / 2) * SUPERSAMPLE
+
 
 
 def box(size: int, x0: float, y0: float, x1: float, y1: float) -> np.ndarray:
@@ -105,31 +114,61 @@ def paint(layer: np.ndarray, mask: np.ndarray, color: tuple[int, int, int]) -> N
 
 
 
-def draw_glyph(body: tuple[int, int, int], canvas_size: int) -> np.ndarray:
-    """Draw the camera with the rotation arc on a transparent canvas.
+def draw_glyph(color: tuple[int, int, int], canvas_size: int) -> np.ndarray:
+    """Draw the brand mark of the add-on panel.
 
-    ``canvas_size`` is the supersampled canvas; the design lives on the 256 grid, so
-    the glyph fills a canvas of ``side * SUPERSAMPLE`` pixels.
+    This is the same artwork as ``.brand__mark`` in ``app/templates/index.html``: a
+    stroked rounded rectangle as the body, the camera cone on the right, a filled lens
+    and two signal arcs - scaled from the 32x32 view box of that SVG into the canvas.
     """
-    scale = canvas_size / (GRID * SUPERSAMPLE)
+    final = canvas_size // SUPERSAMPLE
+    scale = final * 0.92 / 32.0
+    offset = final * 0.04
+    stroke_width = 1.6 * scale  # stroke-width of .brand__mark
 
     def s(value: float) -> float:
-        return value * scale
+        return offset + value * scale
 
     layer = canvas(canvas_size)
-    # Body with the viewfinder bump on top, then lens, ring and pupil.
-    paint(layer, rounded_rect(canvas_size, s(30), s(74), s(226), s(214), s(26)), body)
-    paint(layer, rounded_rect(canvas_size, s(92), s(52), s(164), s(84), s(10)), body)
-    paint(layer, disc(canvas_size, s(128), s(146), s(44)), CYAN)
-    paint(layer, disc(canvas_size, s(128), s(146), s(30)), INK)
-    paint(layer, disc(canvas_size, s(128), s(146), s(13)), CYAN)
-    # A rotation arc with an arrow head in the upper right corner (PTZ).
-    paint(layer, arc(canvas_size, s(128), s(146), s(118), s(98), -60, 45), CYAN)
-    paint(
-        layer,
-        triangle(canvas_size, [(s(168), s(24)), (s(200), s(28)), (s(176), s(62))]),
-        CYAN,
+
+    def paint_mask(mask: np.ndarray, alpha: int = 255) -> None:
+        layer[mask] = (color[0], color[1], color[2], alpha)
+
+    # Body: rounded rectangle (x 2.5..22.5, y 9..23, corner radius 3), outline only.
+    paint_mask(
+        stroke(
+            rounded_rect_mask(canvas_size, s(2.5), s(9), s(22.5), s(23), s(3)),
+            rounded_rect_mask(
+                canvas_size,
+                s(2.5) + stroke_width,
+                s(9) + stroke_width,
+                s(22.5) - stroke_width,
+                s(23) - stroke_width,
+                max(0.5, s(3) - stroke_width),
+            ),
+        )
     )
+
+    # Camera cone: the quad (22.5 14.5) (29 11) (29 21) (22.5 17.5), outline only.
+    corners = [(s(22.5), s(14.5)), (s(29), s(11)), (s(29), s(21)), (s(22.5), s(17.5))]
+    for index, (x0, y0) in enumerate(corners):
+        x1, y1 = corners[(index + 1) % len(corners)]
+        paint_mask(segment_mask(canvas_size, x0, y0, x1, y1, stroke_width))
+
+    # Lens: filled circle, 85% opacity in the panel.
+    paint_mask(disc_mask(canvas_size, s(8.5), s(16), s(2.6)), 217)
+
+    # Two signal arcs, 55% opacity in the panel. The SVG chords ("M12.4 12.4 a5 5 0
+    # 0 1 0 7.2" and "M15 10.4 a8 8 0 0 1 0 11.2") are vertical, so each arc centre
+    # sits left of its chord and the arc bulges to the right.
+    for chord_x, radius, chord in ((12.4, 5.0, 7.2), (15.0, 8.0, 11.2)):
+        half_chord = chord / 2
+        centre = chord_x - math.sqrt(radius**2 - half_chord**2)
+        span = math.degrees(math.asin(half_chord / radius))
+        paint_mask(
+            arc_mask(canvas_size, s(centre), s(16), s(radius), -span, span, stroke_width),
+            140,
+        )
     return layer
 
 
@@ -158,13 +197,17 @@ def write_png(path: Path, image: np.ndarray) -> None:
 
 
 def main() -> int:
-    """Write every brand image of the integration."""
+    """Write every brand image of the integration.
+
+    The panel glyph is drawn in both theme variants: the accent cyan of the add-on is
+    readable on the light and on the dark theme, so the icon looks the same as inside
+    the add-on.
+    """
     for factor, suffix in ((1, ""), (2, "@2x")):
-        target_size = GRID * factor
-        for variant, body in (("icon", DARK_BODY), ("dark_icon", LIGHT_BODY)):
+        target_size = 256 * factor
+        for variant in ("icon", "dark_icon"):
             target = INTEGRATION_BRAND / f"{variant}{suffix}.png"
-            layer = draw_glyph(body, target_size * SUPERSAMPLE)
-            write_png(target, downsample(layer))
+            write_png(target, downsample(draw_glyph(ACCENT, target_size * SUPERSAMPLE)))
             print("wrote", target.relative_to(ROOT))
     return 0
 
