@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ha_tests/test_branding.py`: uses Home Assistant's own loader and asserts that
   `has_branding` is true and that all four images sit where the brands view looks for
   them - so a renamed or missing folder fails in CI instead of in the browser.
+  (The attribute is checked with `hasattr`, because not every Home Assistant release
+  exposes it; the file check always runs.)
+- `ruff` is now pinned in `requirements-dev.txt`: the unpinned version resolved to a
+  newer release on CI than locally, which made the lint step disagree about import
+  order in the new test file.
+
+### Notes
+
+- Existing installations show the icon on the integrations dashboard right away;
+  browsers cache brand images, so a hard refresh (Ctrl+F5) may be needed after the
+  update.
 
 ## [0.2.1] - 2026-09-25
 

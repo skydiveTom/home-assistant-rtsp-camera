@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import custom_components.rtsp_cameras as integration_module
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_custom_components
+
+import custom_components.rtsp_cameras as integration_module
 
 IMAGES = ("icon.png", "icon@2x.png", "dark_icon.png", "dark_icon@2x.png")
 
