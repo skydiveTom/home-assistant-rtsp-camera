@@ -111,7 +111,11 @@
     "restarted": "Home Assistant otrzymał żądanie restartu",
     "disabled": "Automatyczna instalacja jest wyłączona w opcjach dodatku",
     "target": "Zainstalowano w {path}",
-    "file_note": "Integracja odczytuje kamery z {path}"
+    "file_note": "Integracja odczytuje kamery z {path}",
+    "short": "integracja",
+    "version": "Wersja integracji w Home Assistant (kliknij, aby otworzyć Ustawienia)",
+    "missing": "brak",
+    "restart_short": "{version} (restart HA)"
   },
   "settings": {
     "title": "Ustawienia dodatku",

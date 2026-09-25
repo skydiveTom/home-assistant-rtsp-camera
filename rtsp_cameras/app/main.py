@@ -1038,8 +1038,24 @@ async def lifespan(app: Starlette) -> AsyncIterator[None]:
     if context.settings.install_integration:
         status = context.installer.status()
         if not status.installed or status.update_available:
-            _LOGGER.info("Installing the Home Assistant integration")
-            context.installer.install()
+            _LOGGER.info(
+                "Installing the Home Assistant integration %s into %s",
+                status.source_version or "?",
+                context.settings.integration_target,
+            )
+            status = context.installer.install()
+        if status.error:
+            _LOGGER.error(
+                "The Home Assistant integration could not be installed: %s", status.error
+            )
+        elif status.needs_restart:
+            # Without this line an outdated integration stays invisible until the
+            # user notices that the icon or a new entity is missing.
+            _LOGGER.warning(
+                "Integration %s is in %s - restart Home Assistant to load it",
+                status.version or status.source_version or "?",
+                status.target,
+            )
 
     if context.settings.health_check_interval > 0:
         context.tasks.append(asyncio.create_task(_health_loop(context)))

@@ -111,7 +111,11 @@
     "restarted": "Home Assistant received the restart request",
     "disabled": "Automatic installation is disabled in the add-on options",
     "target": "Installed to {path}",
-    "file_note": "The integration reads every camera from {path}"
+    "file_note": "The integration reads every camera from {path}",
+    "short": "integration",
+    "version": "Version of the integration inside Home Assistant (click to open Settings)",
+    "missing": "not installed",
+    "restart_short": "{version} (restart HA)"
   },
   "settings": {
     "title": "Add-on settings",

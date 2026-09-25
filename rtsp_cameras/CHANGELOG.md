@@ -4,6 +4,22 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-09-25
+
+### Added
+
+- **The status strip of the panel now shows the version of the integration inside
+  Home Assistant**, next to the add-on version. An outdated copy is impossible to miss:
+  the chip turns amber and reads e.g. `0.1.22 → 0.2.3` (or *restart HA* after an
+  install), and clicking it opens the Settings tab. Reason: the integration is what
+  Home Assistant loads, so the brand icon, the PTZ services and the preset buttons
+  only appear after the add-on has copied the new integration **and** Home Assistant
+  was restarted.
+- The add-on logs the comparison at startup: the version it installs *and* a warning
+  `Integration 0.2.3 is in /config/custom_components/rtsp_cameras - restart Home
+  Assistant to load it`, plus an error when the copy failed. Previously this was only
+  visible in the panel.
+
 ## [0.2.2] - 2026-09-25
 
 ### Added

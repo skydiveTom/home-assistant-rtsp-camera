@@ -111,7 +111,11 @@
     "restarted": "Home Assistant ha recibido la solicitud de reinicio",
     "disabled": "La instalación automática está desactivada en las opciones del complemento",
     "target": "Instalada en {path}",
-    "file_note": "La integración lee todas las cámaras desde {path}"
+    "file_note": "La integración lee todas las cámaras desde {path}",
+    "short": "integración",
+    "version": "Versión de la integración en Home Assistant (clic para abrir Ajustes)",
+    "missing": "no instalada",
+    "restart_short": "{version} (reiniciar HA)"
   },
   "settings": {
     "title": "Ajustes del complemento",

@@ -200,6 +200,27 @@
     ]);
   }
 
+  /* The integration Home Assistant loads has its own version - showing it next to
+     the add-on version makes an outdated copy visible at a glance. */
+  function integrationOutdated() {
+    const integration = state.integration || {};
+    if (!state.settings.install_integration) return false;
+    if (!integration.installed) return true;
+    return Boolean(integration.update_available || integration.needs_restart);
+  }
+
+  function integrationVersionLabel() {
+    const integration = state.integration || {};
+    if (!state.settings.install_integration) return String(integration.version || '—');
+    if (!integration.installed) return t('integration.missing');
+    const installed = integration.version || '—';
+    if (integration.update_available && integration.source_version) {
+      return installed + ' → ' + integration.source_version;
+    }
+    if (integration.needs_restart) return t('integration.restart_short', { version: installed });
+    return installed;
+  }
+
   function renderStatus() {
     const strip = document.getElementById('status-strip');
     const cameras = state.cameras;
@@ -241,6 +262,17 @@
             ? t('addon_update.new_version', { version: state.addonUpdate.version_latest || '?' })
             : String(settings.version || '?'),
         }),
+      ]),
+      /* The integration inside Home Assistant has its own version: showing both next
+         to each other makes an outdated copy visible without opening the settings. */
+      el('li', {
+        title: t('integration.version'),
+        class: 'statusstrip__action' + (integrationOutdated() ? ' is-alert' : ''),
+        onclick: () => selectPanel('settings'),
+      }, [
+        led(integrationOutdated() ? 'warn' : 'ok'),
+        el('span', { text: t('integration.short') }),
+        el('b', { text: integrationVersionLabel() }),
       ]),
     );
   }

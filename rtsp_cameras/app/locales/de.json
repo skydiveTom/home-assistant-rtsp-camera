@@ -111,7 +111,11 @@
     "restarted": "Home Assistant hat die Neustart-Anfrage erhalten",
     "disabled": "Die automatische Installation ist in den Add-on-Optionen deaktiviert",
     "target": "Installiert nach {path}",
-    "file_note": "Die Integration liest alle Kameras aus {path}"
+    "file_note": "Die Integration liest alle Kameras aus {path}",
+    "short": "Integration",
+    "version": "Version der Integration in Home Assistant (Klick öffnet die Einstellungen)",
+    "missing": "nicht installiert",
+    "restart_short": "{version} (HA neu starten)"
   },
   "settings": {
     "title": "Add-on-Einstellungen",
