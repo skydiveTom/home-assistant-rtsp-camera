@@ -4,6 +4,31 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-09-25
+
+### Added
+
+- **The integration now has its own icon** on the Home Assistant integrations
+  dashboard (`/config/integrations/dashboard`) and on its integration page. Home
+  Assistant serves local brand assets from a `brand` folder inside the integration
+  (`Integration.has_branding`); the icon is drawn for both themes: `icon.png` /
+  `icon@2x.png` (dark camera for light themes) and `dark_icon.png` /
+  `dark_icon@2x.png` (light camera for dark themes), each 256x256 and 512x512 RGBA
+  PNG. A camera body with a cyan lens ring and a rotation arc stands for the RTSP
+  stream and for PTZ.
+- The artwork is drawn by `scripts/make_brand_icons.py` (numpy + PyAV, deliberately
+  no image library) and travels with the add-on image, because the add-on installs
+  the integration into `/config`.
+
+### Tests
+
+- `rtsp_cameras/tests/test_branding.py` (7 tests): the folder exists, every image is
+  a square 8 bit RGBA PNG of the expected size, the dark variant differs from the
+  light one and both copies (repository and add-on) are byte identical.
+- `ha_tests/test_branding.py`: uses Home Assistant's own loader and asserts that
+  `has_branding` is true and that all four images sit where the brands view looks for
+  them - so a renamed or missing folder fails in CI instead of in the browser.
+
 ## [0.2.1] - 2026-09-25
 
 ### Added
