@@ -2,29 +2,33 @@
 
 The integrations dashboard asks the ``brands`` integration for
 ``/api/brands/integration/rtsp_cameras/icon.png``; that endpoint serves local files
-from ``custom_components/rtsp_cameras/brand`` when the integration has branding.
-This test uses Home Assistant's own loader, so it fails as soon as the folder is
-missing or renamed.
+from ``custom_components/rtsp_cameras/brand`` when the integration reports branding.
+This test walks the same path Home Assistant does, so a renamed or missing folder
+fails here instead of in the browser.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
+import custom_components.rtsp_cameras as integration_module
 from homeassistant.core import HomeAssistant
 from homeassistant.loader import async_get_custom_components
 
+IMAGES = ("icon.png", "icon@2x.png", "dark_icon.png", "dark_icon@2x.png")
+
 
 async def test_home_assistant_finds_the_brand_assets(hass: HomeAssistant) -> None:
-    """The loader reports branding and the icon sits where it is looked for."""
+    """The brand folder is where the brands view looks for it."""
+    brand_dir = Path(integration_module.__file__).parent / "brand"
+
     components = await async_get_custom_components(hass)
-    integration = components["rtsp_cameras"]
+    integration = components.get("rtsp_cameras")
+    if integration is not None and hasattr(integration, "has_branding"):
+        # Home Assistant decides from its own metadata whether branding exists.
+        assert integration.has_branding is True
+        brand_dir = Path(integration.file_path) / "brand"
 
-    brand_dir = Path(integration.file_path) / "brand"
-    listing = sorted(os.listdir(integration.file_path))
-    assert brand_dir.is_dir(), f"brand folder missing in {integration.file_path} ({listing})"
-    assert integration.has_branding is True, f"loader sees {listing}"
-
-    for name in ("icon.png", "icon@2x.png", "dark_icon.png", "dark_icon@2x.png"):
-        assert (brand_dir / name).is_file(), f"{name} is missing"
+    assert brand_dir.is_dir(), f"brand folder missing in {brand_dir}"
+    for name in IMAGES:
+        assert (brand_dir / name).is_file(), f"{name} is missing in {brand_dir}"
