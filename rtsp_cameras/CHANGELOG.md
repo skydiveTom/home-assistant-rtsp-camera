@@ -4,6 +4,41 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-09-25
+
+### Added
+
+- **DVRIP (Xiongmai "Sofia") PTZ on TCP 34567.** The Xiongmai DVRIP profile talks the
+  binary protocol of DVRs and NVRs that have no web interface at all: a 20 byte
+  header with a JSON payload, a login with the double MD5 hash of the password and
+  `OPPTZControl` commands (`DirectionLeft`, `ZoomTile`, `GotoPreset`, … with a `Step`
+  of 0 to stop). Every command logs in, sends and disconnects, so the add-on stays
+  stateless. Verified end-to-end against a fake DVR: login `admin` with the hash of
+  the stream URL password, `DirectionLeft` with `Step 5`, stop with `Step 0`.
+- **ONVIF (SOAP) PTZ.** The ONVIF profile posts `ContinuousMove`, `Stop`,
+  `GotoPreset` and `GotoHomePosition` envelopes to the PTZ service. A new *Discover
+  the ONVIF token* button sends `GetProfiles` (with basic auth when needed) to the
+  media service, takes the first profile token and fills the commands with it. SOAP
+  requests are sent with `application/soap+xml`, vendor XML keeps `application/xml`.
+- **Credentials and channel are inherited from the RTSP URL.** Both
+  `rtsp://user:pass@host/…` and the query style of many DVRs
+  (`…/user=admin&password=secret&channel=1&stream=0.sdp`) are parsed, so the login is
+  never typed twice; explicit PTZ credentials still win. The REST API only reports
+  whether credentials exist, never the password itself.
+- A stop command without a direction (a plain `stop` from an automation) is filled
+  with the first direction code of the profile, which keeps Dahua/Xiongmai and DVRIP
+  stops valid.
+
+### Tests
+
+- 11 more add-on tests: DVRIP login/PTZ/refused login against a **fake DVRIP device**
+  (real TCP handshake), ONVIF token discovery against a SOAP answering server, the
+  SOAP content type, credential inheritance for both URL styles, DVRIP payload
+  rendering and the stop fallback - 189 add-on tests in total.
+- 4 more Home Assistant tests: DVRIP commands go through the TCP client (never
+  HTTP), the automatic stop carries the direction with the scaled speed, a refused
+  login raises a readable error and ONVIF commands are POSTed as SOAP.
+
 ## [0.2.0] - 2026-09-25
 
 ### Added

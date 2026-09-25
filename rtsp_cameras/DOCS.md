@@ -170,11 +170,25 @@ stay editable, so unusual firmware can be handled too, and `{speed}`, `{preset}`
 | Xiongmai / NETSurveillance | `/cgi-bin/ptz.cgi?…&code=DirectionLeft…` |
 | Hikvision (ISAPI) | `PUT /ISAPI/PTZCtrl/channels/1/continuous` with an XML body |
 | Foscam | `/cgi-bin/CGIProxy.fcgi?cmd=ptzMoveUp…` |
+| ONVIF (SOAP) | `POST …/onvif/ptz_service` with a `ContinuousMove`, `Stop`, `GotoPreset` or `GotoHomePosition` envelope |
+| Xiongmai DVRIP | `DVRIP {"Command":"DirectionLeft","Step":…}` over **TCP 34567**, for DVRs without a web interface |
 | Custom | your own `GET/POST/PUT url [body]` commands |
 
+**Credentials are taken from the stream URL** when the PTZ block does not define its
+own - both `rtsp://user:pass@host/…` and the query style of many DVRs
+(`…/user=admin&password=secret&channel=1&stream=0.sdp`) are understood, including the
+channel. Only cameras with a different PTZ login need the fields filled in.
+
+For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
+`GetProfiles` to the media service, takes the first profile token and fills the
+commands with it. For **DVRIP** the port field (default 34567) is used; the add-on
+logs in with the credentials of the stream URL, which the devices expect as a double
+MD5 hash.
+
 *Test PTZ* sends the **stop** command, so the test never moves the camera. Cameras
-without an HTTP interface (for example a device that only speaks the RTSP and a
-proprietary port) cannot be moved by the add-on - the test reports that clearly.
+without any control interface (for example a device that only speaks RTSP and a
+proprietary port that does not answer DVRIP) cannot be moved - the test reports that
+clearly.
 
 Home Assistant gets:
 

@@ -18,13 +18,18 @@ is currently moving, because most vendor APIs need the direction on stop as well
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 from urllib.request import Request, urlopen
+
+from . import dvrip
+from .dvrip import LOGIN_OK
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,14 +46,84 @@ PTZ_ACTIONS = (
     "preset",
 )
 DIRECTION_ACTIONS = ("up", "down", "left", "right", "zoom_in", "zoom_out")
+#: ``DVRIP`` commands are not HTTP: they carry a JSON payload for the Xiongmai
+#: protocol on TCP 34567.
+COMMAND_METHODS = ("GET", "POST", "PUT", "DVRIP")
 HTTP_METHODS = ("GET", "POST", "PUT")
 MAX_COMMAND_LENGTH = 600
 MAX_PRESETS = 16
 MAX_SPEED = 8
 DEFAULT_SPEED = 4
 DEFAULT_CHANNEL = 1
+DEFAULT_DVRIP_PORT = 34567
 COMMAND_TIMEOUT = 6.0
+ONVIF_DISCOVERY_TIMEOUT = 8.0
 MAX_RESPONSE_SNIPPET = 200
+
+#: Minimal SOAP documents. Most ONVIF devices accept them without the full
+#: namespaces; the profile token is discovered once and stays in the camera.
+ONVIF_NS = "http://www.onvif.org/ver20/ptz/wsdl"
+
+
+def onvif_envelope(body: str) -> str:
+    """Wrap a PTZ body into a SOAP envelope."""
+    return (
+        '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" '
+        f'xmlns:tptz="{ONVIF_NS}">{body}</s:Envelope>'
+    )
+
+
+def _onvif_command(inner: str) -> str:
+    """Return an ONVIF SOAP command for the PTZ service of a camera."""
+    return f"POST {{base}}/onvif/ptz_service {onvif_envelope(inner)}"
+
+
+def onvif_move(pan: str, tilt: str, zoom: str) -> str:
+    """Return an ONVIF ContinuousMove command with the given velocity."""
+    velocity = ""
+    if pan or tilt:
+        velocity += f'<tptz:PanTilt x="{pan}" y="{tilt}"/>'
+    if zoom:
+        velocity += f'<tptz:Zoom x="{zoom}"/>'
+    return _onvif_command(
+        "<tptz:ContinuousMove><tptz:ProfileToken>{token}</tptz:ProfileToken>"
+        f"<tptz:Velocity>{velocity}</tptz:Velocity></tptz:ContinuousMove>"
+    )
+
+
+def onvif_stop() -> str:
+    """Return an ONVIF Stop command for pan/tilt and zoom."""
+    return _onvif_command(
+        "<tptz:Stop><tptz:ProfileToken>{token}</tptz:ProfileToken>"
+        "<tptz:PanTilt>true</tptz:PanTilt><tptz:Zoom>true</tptz:Zoom></tptz:Stop>"
+    )
+
+
+def onvif_preset() -> str:
+    """Return an ONVIF GotoPreset command."""
+    return _onvif_command(
+        "<tptz:GotoPreset><tptz:ProfileToken>{token}</tptz:ProfileToken>"
+        "<tptz:PresetToken>{preset}</tptz:PresetToken></tptz:GotoPreset>"
+    )
+
+
+def onvif_home() -> str:
+    """Return an ONVIF GotoHomePosition command."""
+    return _onvif_command(
+        "<tptz:GotoHomePosition><tptz:ProfileToken>{token}</tptz:ProfileToken>"
+        "</tptz:GotoHomePosition>"
+    )
+
+
+def dvrip_command(**payload: Any) -> str:
+    """Return a DVRIP command with a compact JSON payload."""
+    return "DVRIP " + json.dumps(payload, separators=(",", ":"))
+
+
+def _dvrip_direction(command: str) -> str:
+    """Return a DVRIP move command that runs until it is stopped."""
+    return f'DVRIP {{"Command":"{command}","Step":{{speed}},"Channel":{{channel}}}}'
+
 
 #: Vendor presets. ``direction_codes`` translate our actions into the vendor codes
 #: used by the stop command and by the axis ``move=`` values.
@@ -191,6 +266,46 @@ PTZ_PROFILES: dict[str, dict[str, Any]] = {
         },
         "direction_codes": {},
     },
+    "onvif": {
+        "label": "ONVIF (SOAP)",
+        "description": "Devices with an ONVIF PTZ service (discover the profile token in "
+        "the field next to the commands).",
+        "commands": {
+            "up": onvif_move("0", "0.5", ""),
+            "down": onvif_move("0", "-0.5", ""),
+            "left": onvif_move("-0.5", "0", ""),
+            "right": onvif_move("0.5", "0", ""),
+            "zoom_in": onvif_move("", "", "0.5"),
+            "zoom_out": onvif_move("", "", "-0.5"),
+            "home": onvif_home(),
+            "stop": onvif_stop(),
+            "preset": onvif_preset(),
+        },
+        "direction_codes": {},
+    },
+    "xiongmai_dvrip": {
+        "label": "Xiongmai DVRIP (TCP 34567)",
+        "description": "DVRs and NVRs without a web interface; speaks the binary DVRIP "
+        "protocol on port 34567 (the login of the RTSP URL is reused).",
+        "commands": {
+            "up": _dvrip_direction("DirectionUp"),
+            "down": _dvrip_direction("DirectionDown"),
+            "left": _dvrip_direction("DirectionLeft"),
+            "right": _dvrip_direction("DirectionRight"),
+            "zoom_in": _dvrip_direction("ZoomTile"),
+            "zoom_out": _dvrip_direction("ZoomWide"),
+            "stop": 'DVRIP {"Command":"{direction}","Step":0,"Channel":{channel}}',
+            "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
+        },
+        "direction_codes": {
+            "up": "DirectionUp",
+            "down": "DirectionDown",
+            "left": "DirectionLeft",
+            "right": "DirectionRight",
+            "zoom_in": "ZoomTile",
+            "zoom_out": "ZoomWide",
+        },
+    },
 }
 
 _ACTION_ALIASES = {
@@ -280,9 +395,18 @@ def _clean_command(value: Any) -> str:
     if not command or len(command) > MAX_COMMAND_LENGTH:
         return ""
     method, _, rest = command.partition(" ")
-    if method.upper() not in HTTP_METHODS or not rest.strip():
+    rest = rest.strip()
+    if method.upper() not in COMMAND_METHODS or not rest:
         return ""
-    return f"{method.upper()} {rest.strip()}"
+    if method.upper() == "DVRIP":
+        # The payload is JSON; the placeholders are replaced by numbers first so it
+        # can be validated before it is filled in.
+        probe = re.sub(r"\{[a-z_]+\}", "1", rest)
+        try:
+            json.loads(probe)
+        except ValueError:
+            return ""
+    return f"{method.upper()} {rest}"
 
 
 def _presets(value: Any) -> list[dict[str, str]]:
@@ -305,10 +429,45 @@ def _presets(value: Any) -> list[dict[str, str]]:
     return presets
 
 
+def credentials_from_url(url: str) -> tuple[str, str, int | None]:
+    """Return username, password and channel taken from a stream URL.
+
+    Both the classic form (``rtsp://user:pass@host/stream``) and the query style of
+    many DVRs (``rtsp://host:554/user=admin&password=secret&channel=1&stream=0.sdp``)
+    are understood, so a camera does not have to be typed twice.
+    """
+    parts = urlsplit(str(url or ""))
+    username = unquote(parts.username or "")
+    password = unquote(parts.password or "")
+    channel: int | None = None
+
+    for source in (
+        parse_qs(parts.query, keep_blank_values=True),
+        parse_qs(parts.path.lstrip("/"), keep_blank_values=True),
+    ):
+        if not username and source.get("user"):
+            username = unquote(source["user"][0])
+        if not password and source.get("password"):
+            password = unquote(source["password"][0])
+        if source.get("channel"):
+            channel = _channels(source["channel"][0])
+    return username, password, channel
+
+
+def _positive_port(value: Any, fallback: int) -> int:
+    """Return a sane TCP port."""
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+    return port if 1 <= port <= 65535 else fallback
+
+
 def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
     """Validate the PTZ block of a camera and fill in its defaults.
 
-    Returns None when PTZ is switched off or nothing usable is configured.
+    Credentials and the channel come from the stream URL when the PTZ block does not
+    define them. Returns None when PTZ is switched off or nothing usable is set up.
     """
     if not isinstance(raw, Mapping) or not raw.get("enabled", True):
         return None
@@ -317,11 +476,18 @@ def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
     if profile not in PTZ_PROFILES:
         profile = "custom"
 
+    url_username, url_password, url_channel = credentials_from_url(stream_url)
     base = str(raw.get("base_url") or "").strip() or base_url_for(stream_url)
-    username = str(raw.get("username") or "").strip()
-    password = str(raw.get("password") or "")
-    channel = _channels(raw.get("channel"))
+    username = str(raw.get("username") or "").strip() or url_username
+    password = (
+        str(raw.get("password")) if raw.get("password") is not None else ""
+    ) or url_password
+    channel = (
+        _channels(raw.get("channel")) if raw.get("channel") is not None else None
+    ) or url_channel or DEFAULT_CHANNEL
     speed = _speed(raw.get("speed"))
+    port = _positive_port(raw.get("port"), DEFAULT_DVRIP_PORT)
+    token = str(raw.get("token") or "").strip()
 
     profile_commands = PTZ_PROFILES[profile]["commands"]
     supplied = raw.get("commands") if isinstance(raw.get("commands"), Mapping) else {}
@@ -330,6 +496,8 @@ def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
         "username": quote(username, safe=""),
         "password": quote(password, safe=""),
         "channel": str(channel),
+        "port": str(port),
+        "token": token,
     }
     commands: dict[str, str] = {}
     for action in PTZ_ACTIONS:
@@ -348,6 +516,10 @@ def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
         "base_url": base,
         "channel": channel,
         "speed": speed,
+        "port": port,
+        "token": token,
+        "username": username,
+        "password": password,
         "commands": commands,
         "stop_codes": dict(PTZ_PROFILES[profile]["direction_codes"]),
         "presets": _presets(raw.get("presets")),
@@ -392,6 +564,12 @@ def build_command(
     if direction:
         codes = config.get("stop_codes") or {}
         values["direction"] = str(codes.get(direction, direction))
+    elif "{direction}" in template:
+        # A stop without a direction (a plain "stop" from an automation) still has
+        # to be a valid command: the first code of the profile is used, which stops
+        # that axis - vendors like Dahua and Xiongmai need a direction here.
+        codes = config.get("stop_codes") or {}
+        values["direction"] = str(next(iter(codes.values()), "DirectionUp"))
     if seconds is not None:
         values["seconds"] = f"{float(seconds):g}"
     return fill(template, values)
@@ -406,10 +584,29 @@ def configured_actions(config: Mapping[str, Any] | None) -> list[str]:
 
 
 async def async_send(
-    command: str, timeout: float = COMMAND_TIMEOUT
+    command: str,
+    timeout: float = COMMAND_TIMEOUT,
+    *,
+    host: str = "",
+    port: int = DEFAULT_DVRIP_PORT,
+    username: str = "",
+    password: str = "",
 ) -> tuple[int | None, str | None]:
-    """Send a PTZ command and return its status code and an error message."""
+    """Send a command and return a status code and an error message.
+
+    HTTP commands (GET/POST/PUT) go through urllib, ``DVRIP`` commands through the
+    Xiongmai protocol on TCP ``port``.
+    """
     method, url, body = parse_command(command)
+
+    if method == "DVRIP":
+        try:
+            short = json.loads(url)
+        except ValueError as err:
+            return None, f"invalid_payload: {err}"
+        ok, detail = await dvrip.async_send(host, port, username, password, short, timeout)
+        return (LOGIN_OK if ok else None), detail
+
     return await asyncio.to_thread(_send_blocking, method, url, body, timeout)
 
 
@@ -419,7 +616,13 @@ def _send_blocking(
     """Send the HTTP request of a command in a worker thread."""
     request = Request(url, data=body, method=method)
     if body:
-        request.add_header("Content-Type", "application/xml")
+        # ONVIF wants SOAP, the vendor CGIs plain XML.
+        content_type = (
+            "application/soap+xml; charset=utf-8"
+            if b"Envelope" in body[:400]
+            else "application/xml"
+        )
+        request.add_header("Content-Type", content_type)
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - user configured URL
             snippet = response.read(MAX_RESPONSE_SNIPPET).decode("utf-8", "replace")
@@ -447,15 +650,88 @@ async def async_run(
     )
     if command is None:
         return PtzResult(ok=False, action=action, command="", detail="no_command_configured")
-    status, error = await async_send(command)
+
+    host = urlsplit(str(config.get("base_url") or "")).hostname or ""
+    status, error = await async_send(
+        command,
+        host=host,
+        port=_positive_port(config.get("port"), DEFAULT_DVRIP_PORT),
+        username=str(config.get("username") or ""),
+        password=str(config.get("password") or ""),
+    )
     return PtzResult(ok=error is None, action=action, command=command, status=status, detail=error)
+
+
+async def async_discover_onvif_token(
+    base_url: str,
+    username: str = "",
+    password: str = "",
+    timeout: float = ONVIF_DISCOVERY_TIMEOUT,
+) -> tuple[str | None, str | None]:
+    """Ask an ONVIF device for its first media profile token.
+
+    Returns the token and an error message. The media service usually lives next to
+    the PTZ service, so ``GetProfiles`` is tried on the common paths.
+    """
+    base = str(base_url or "").strip().rstrip("/")
+    if not base:
+        return None, "no_base_url"
+    if not base.lower().startswith(("http://", "https://")):
+        base = f"http://{base}"
+
+    body = onvif_envelope(
+        '<trt:GetProfiles xmlns:trt="http://www.onvif.org/ver10/media/wsdl"/>'
+    ).encode("utf-8")
+    urls = [
+        f"{base}/onvif/media_service",
+        f"{base}/onvif/device_service",
+        f"{base}/onvif/Media",
+    ]
+    if not base.endswith("/onvif/device_service"):
+        urls.append(f"{base}/onvif/device_service")
+
+    last_error = "no_token"
+    for url in dict.fromkeys(urls):
+        status, error, text = await asyncio.to_thread(
+            _post_soap, url, body, username, password, timeout
+        )
+        if error is not None:
+            last_error = error
+            continue
+        match = re.search(r"<[^>]*ProfileToken>([^<]+)</", text or "")
+        if match:
+            return match.group(1).strip(), None
+        last_error = "no_token_in_reply"
+        if status and status >= 400:
+            last_error = f"HTTP {status}"
+    return None, last_error
+
+
+def _post_soap(
+    url: str, body: bytes, username: str, password: str, timeout: float
+) -> tuple[int | None, str | None, str]:
+    """Send a SOAP request and return status, error and the response text."""
+    request = Request(url, data=body, method="POST")
+    request.add_header("Content-Type", "application/soap+xml; charset=utf-8")
+    if username:
+        import base64  # noqa: PLC0415 - only needed for authenticated devices
+
+        credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+        request.add_header("Authorization", f"Basic {credentials}")
+    try:
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - user URL
+            return int(response.status), None, response.read(4096).decode("utf-8", "replace")
+    except HTTPError as err:
+        return int(err.code), f"HTTP {err.code}", err.read(4096).decode("utf-8", "replace")
+    except (URLError, OSError, ValueError) as err:
+        return None, str(err), ""
 
 
 def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Return the PTZ configuration with masked credentials for the web interface.
 
-    Usernames and passwords may live inside the command URLs (many vendor CGIs
-    only accept them there), so they are hidden from the browser.
+    Usernames and passwords may live inside the command URLs (many vendor CGIs only
+    accept them there), so they are hidden from the browser.
     """
     if not config:
         return None
@@ -474,6 +750,9 @@ def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "base_url": config.get("base_url"),
         "channel": config.get("channel"),
         "speed": config.get("speed"),
+        "port": config.get("port"),
+        "token": config.get("token"),
+        "has_credentials": bool(config.get("username")),
         "commands": {
             action: mask(command) for action, command in (config.get("commands") or {}).items()
         },

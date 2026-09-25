@@ -888,6 +888,8 @@
       username: encodeURIComponent(document.getElementById('field-ptz-username').value.trim()),
       password: encodeURIComponent(document.getElementById('field-ptz-password').value),
       channel: document.getElementById('field-ptz-channel').value || '1',
+      port: document.getElementById('field-ptz-port').value || '34567',
+      token: document.getElementById('field-ptz-token').value.trim(),
     };
     ptzCommandNodes().forEach((input) => {
       const template = (profile.commands || {})[input.dataset.ptzAction];
@@ -932,6 +934,8 @@
     document.getElementById('field-ptz-base').value = (ptz && ptz.base_url) || '';
     document.getElementById('field-ptz-channel').value = (ptz && ptz.channel) || 1;
     document.getElementById('field-ptz-speed').value = (ptz && ptz.speed) || 4;
+    document.getElementById('field-ptz-port').value = (ptz && ptz.port) || 34567;
+    document.getElementById('field-ptz-token').value = (ptz && ptz.token) || '';
     document.getElementById('field-ptz-username').value = '';
     document.getElementById('field-ptz-password').value = '';
     document.getElementById('field-ptz-presets').value = presetLines(ptz && ptz.presets);
@@ -957,6 +961,8 @@
       base_url: document.getElementById('field-ptz-base').value.trim(),
       channel: Number(document.getElementById('field-ptz-channel').value) || 1,
       speed: Number(document.getElementById('field-ptz-speed').value) || 4,
+      port: Number(document.getElementById('field-ptz-port').value) || 34567,
+      token: document.getElementById('field-ptz-token').value.trim(),
       username: document.getElementById('field-ptz-username').value.trim(),
       password: document.getElementById('field-ptz-password').value,
       commands,
@@ -967,6 +973,44 @@
   function errorDetail(err) {
     const detail = err instanceof ApiError && err.data ? err.data.detail : null;
     return detail ? ' — ' + detail : '';
+  }
+
+  async function discoverOnvif() {
+    const box = document.getElementById('ptz-result');
+    const button = document.getElementById('btn-ptz-onvif');
+    const base = document.getElementById('field-ptz-base').value.trim();
+    if (!base) {
+      toast(errorText('ptz_base_url_required'), 'err');
+      return;
+    }
+    button.disabled = true;
+    box.hidden = false;
+    box.className = 'probe';
+    box.replaceChildren(el('p', { class: 'probe__head', text: t('ptz.discovering') }));
+    try {
+      const data = await api('api/ptz/onvif/discover', {
+        method: 'POST',
+        body: {
+          base_url: base,
+          username: document.getElementById('field-ptz-username').value.trim(),
+          password: document.getElementById('field-ptz-password').value,
+        },
+      });
+      document.getElementById('field-ptz-token').value = data.token || '';
+      box.className = 'probe probe--ok';
+      box.replaceChildren(
+        el('p', { class: 'probe__head', text: t('ptz.discovered', { token: data.token }) }),
+        el('p', { class: 'probe__hint', text: t('ptz.discovered_hint') }),
+      );
+      /* The commands were rendered without a token, so they are filled again. */
+      fillPtzFromProfile();
+    } catch (err) {
+      box.className = 'probe probe--err';
+      const code = err instanceof ApiError ? err.code : 'ptz_onvif_failed';
+      box.replaceChildren(el('p', { class: 'probe__error', text: errorText(code) + errorDetail(err) }));
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function testPtz() {
@@ -1541,6 +1585,7 @@
     document.getElementById('camera-form').addEventListener('submit', submitCamera);
     document.getElementById('btn-test-form').addEventListener('click', () => testForm(false));
     document.getElementById('btn-ptz-fill').addEventListener('click', fillPtzFromProfile);
+    document.getElementById('btn-ptz-onvif').addEventListener('click', discoverOnvif);
     document.getElementById('btn-ptz-test').addEventListener('click', testPtz);
     document.getElementById('field-ptz-profile').addEventListener('change', () => {
       const profile = ptzProfile();

@@ -56,6 +56,8 @@ PTZ_DIRECTIONS = {"up": "up", "down": "down", "left": "left", "right": "right"}
 PTZ_DEFAULT_SPEED = 4
 PTZ_MAX_SPEED = 8
 PTZ_TIMEOUT_SECONDS = 8
+#: Port of the Xiongmai DVRIP protocol (PTZ for DVRs without a web interface).
+DEFAULT_DVRIP_PORT = 34567
 #: Seconds a continuous move runs when the caller does not say it (ONVIF uses 0.5).
 PTZ_DEFAULT_DURATION = 0.5
 SERVICE_PTZ = "ptz"

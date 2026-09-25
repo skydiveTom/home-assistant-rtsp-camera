@@ -175,7 +175,13 @@
     "action_zoom_out": "Zoom −",
     "action_home": "Posición inicial",
     "action_stop": "Stop",
-    "action_preset": "Preset"
+    "action_preset": "Preset",
+    "port": "Puerto DVRIP (34567)",
+    "token": "Token de perfil ONVIF",
+    "discover": "Detectar el token ONVIF",
+    "discovering": "Consultando el token ONVIF ...",
+    "discovered": "Token: {token}",
+    "discovered_hint": "Los comandos se rellenaron con el token: guarda la cámara."
   },
   "errors": {
     "ptz_not_configured": "Esta cámara no tiene PTZ configurado",
@@ -200,7 +206,9 @@
     "stream_failed": "La vista previa terminó antes del primer fotograma",
     "supervisor_missing": "El Supervisor de Home Assistant no es accesible desde este complemento",
     "update_check_failed": "No se pudo comprobar la versión, inténtalo de nuevo en un momento",
-    "update_failed": "No se pudo iniciar la actualización del complemento"
+    "update_failed": "No se pudo iniciar la actualización del complemento",
+    "ptz_base_url_required": "Primero indica la dirección HTTP de la cámara",
+    "ptz_onvif_failed": "ONVIF no respondió"
   },
   "common": {
     "close": "Cerrar",

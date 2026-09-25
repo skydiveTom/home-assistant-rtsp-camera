@@ -10,6 +10,7 @@ add-on can talk to.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -67,8 +68,18 @@ def render(
         values["preset"] = str(preset)
     if direction:
         values["direction"] = str(config.stop_codes.get(direction, direction))
+    elif "{direction}" in template:
+        # A plain stop from an automation is still valid: the first code of the
+        # profile (usually "up") stops that axis.
+        values["direction"] = str(next(iter(config.stop_codes.values()), "up"))
     if seconds is not None:
         values["seconds"] = f"{float(seconds):g}"
+    # These are already filled in by the add-on; they are repeated here so hand
+    # written camera files work as well.
+    values["channel"] = str(config.channel)
+    if config.token:
+        values["token"] = config.token
+    values["port"] = str(config.port)
 
     command = template
     for name, value in values.items():
@@ -77,34 +88,74 @@ def render(
 
 
 def parse_command(command: str) -> tuple[str, str, bytes | None]:
-    """Split a command into method, URL and optional body."""
+    """Split a command into method, URL and optional body.
+
+    ``DVRIP`` commands have the JSON payload where the URL would be.
+    """
     method, _, rest = command.partition(" ")
     url, _, body = rest.strip().partition(" ")
     return method.upper() or "GET", url, body.encode("utf-8") if body else None
 
 
-async def async_send(hass: HomeAssistant, command: str) -> PtzOutcome:
-    """Send one PTZ command with the shared aiohttp session."""
+def is_dvrip(command: str) -> bool:
+    """Return True when a command uses the Xiongmai DVRIP protocol."""
+    return command.strip().upper().startswith("DVRIP ")
+
+
+async def async_send(
+    hass: HomeAssistant, command: str, config: PtzConfig | None = None
+) -> PtzOutcome:
+    """Send one PTZ command - over HTTP or, for DVRIP, over TCP 34567."""
+    if is_dvrip(command):
+        return await _async_send_dvrip(command, config)
+
     method, url, body = parse_command(command)
-    action = command
     session = async_get_clientsession(hass)
-    headers = {"Content-Type": "application/xml"} if body else {}
+    headers = {}
+    if body:
+        headers["Content-Type"] = (
+            "application/soap+xml; charset=utf-8"
+            if b"Envelope" in body[:400]
+            else "application/xml"
+        )
     try:
         async with asyncio.timeout(PTZ_TIMEOUT_SECONDS):
             async with session.request(method, url, data=body, headers=headers) as response:
                 status = int(response.status)
                 if status >= HTTPStatus.BAD_REQUEST:
                     return PtzOutcome(
-                        action=action,
-                        url=url,
-                        status=status,
-                        error=f"HTTP {status}",
+                        action=command, url=url, status=status, error=f"HTTP {status}"
                     )
-                return PtzOutcome(action=action, url=url, status=status)
+                return PtzOutcome(action=command, url=url, status=status)
     except TimeoutError:
-        return PtzOutcome(action=action, url=url, error="timeout")
+        return PtzOutcome(action=command, url=url, error="timeout")
     except aiohttp.ClientError as err:
-        return PtzOutcome(action=action, url=url, error=str(err))
+        return PtzOutcome(action=command, url=url, error=str(err))
+
+
+async def _async_send_dvrip(command: str, config: PtzConfig | None) -> PtzOutcome:
+    """Send a DVRIP command with the credentials of the camera."""
+    from .dvrip import DEFAULT_PORT
+    from .dvrip import async_send as dvrip_send
+
+    _method, payload, _body = parse_command(command)
+    try:
+        short: dict[str, Any] = json.loads(payload)
+    except ValueError as err:
+        return PtzOutcome(action=command, url="dvrip", error=f"invalid_payload: {err}")
+
+    host = (config.host if config else "") or ""
+    port = (config.port if config else DEFAULT_PORT) or DEFAULT_PORT
+    username = (config.username if config else "") or ""
+    password = (config.password if config else "") or ""
+    try:
+        async with asyncio.timeout(PTZ_TIMEOUT_SECONDS):
+            ok, error = await dvrip_send(host, port, username, password, short)
+    except TimeoutError:
+        return PtzOutcome(action=command, url="dvrip", error="timeout")
+    if not ok:
+        return PtzOutcome(action=command, url="dvrip", error=str(error))
+    return PtzOutcome(action=command, url="dvrip", status=200)
 
 
 async def async_execute(
@@ -134,7 +185,7 @@ async def async_execute(
             translation_placeholders={"action": action},
         )
 
-    outcome = await async_send(hass, command)
+    outcome = await async_send(hass, command, config)
     if not outcome.ok:
         _LOGGER.warning("PTZ %s failed for %s: %s", action, outcome.url, outcome.error)
         raise HomeAssistantError(

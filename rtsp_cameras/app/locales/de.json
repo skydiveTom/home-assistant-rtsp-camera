@@ -175,7 +175,13 @@
     "action_zoom_out": "Zoom −",
     "action_home": "Home-Position",
     "action_stop": "Stop",
-    "action_preset": "Preset"
+    "action_preset": "Preset",
+    "port": "DVRIP-Port (34567)",
+    "token": "ONVIF-Profil-Token",
+    "discover": "ONVIF-Token ermitteln",
+    "discovering": "Token wird abgefragt ...",
+    "discovered": "Token: {token}",
+    "discovered_hint": "Die Befehle wurden mit dem Token gefüllt - Kamera speichern."
   },
   "errors": {
     "ptz_not_configured": "Für diese Kamera ist kein PTZ eingerichtet",
@@ -200,7 +206,9 @@
     "stream_failed": "Die Vorschau endete vor dem ersten Bild",
     "supervisor_missing": "Der Home-Assistant-Supervisor ist aus diesem Add-on nicht erreichbar",
     "update_check_failed": "Die Version konnte nicht geprüft werden, bitte gleich erneut versuchen",
-    "update_failed": "Die Aktualisierung des Add-ons konnte nicht gestartet werden"
+    "update_failed": "Die Aktualisierung des Add-ons konnte nicht gestartet werden",
+    "ptz_base_url_required": "Zuerst die HTTP-Adresse der Kamera eintragen",
+    "ptz_onvif_failed": "ONVIF hat nicht geantwortet"
   },
   "common": {
     "close": "Schließen",

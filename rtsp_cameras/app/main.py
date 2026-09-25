@@ -53,8 +53,8 @@ from .models import (
     validate_optional_stream_url,
     validate_stream_url,
 )
+from .ptz import async_discover_onvif_token, normalize_action, profile_list
 from .ptz import async_run as ptz_run
-from .ptz import normalize_action, profile_list
 from .storage import CameraStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -418,6 +418,25 @@ async def camera_ptz(request: Request) -> JSONResponse:
 async def ptz_profiles(request: Request) -> JSONResponse:
     """Return the vendor presets for the camera editor."""
     return _ok(profiles=profile_list())
+
+
+async def ptz_onvif_discover(request: Request) -> JSONResponse:
+    """Ask an ONVIF device for its profile token (used by the camera editor)."""
+    body = await _json_body(request)
+    base_url = str(body.get("base_url") or "").strip()
+    if not base_url:
+        return await _error(request, "ptz_base_url_required", 400)
+
+    token, error = await async_discover_onvif_token(
+        base_url,
+        str(body.get("username") or "").strip(),
+        str(body.get("password") or ""),
+    )
+    if token is None:
+        return JSONResponse(
+            {"ok": False, "error": "ptz_onvif_failed", "detail": error}, status_code=502
+        )
+    return _ok(token=token)
 
 
 async def camera_test(request: Request) -> JSONResponse:
@@ -1066,6 +1085,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
         Route("/api/cameras/{camera_id}/test", camera_test, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz", camera_ptz, methods=["POST"]),
         Route("/api/ptz/profiles", ptz_profiles),
+        Route("/api/ptz/onvif/discover", ptz_onvif_discover, methods=["POST"]),
         Route("/api/cameras/{camera_id}/snapshot.jpg", camera_snapshot),
         Route("/api/cameras/{camera_id}/mjpeg", camera_mjpeg),
         Route("/api/cameras/{camera_id}/preview/detect", camera_preview_detect, methods=["POST"]),

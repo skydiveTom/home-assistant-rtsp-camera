@@ -206,6 +206,14 @@
               <span class="field__label" data-i18n="ptz.password"></span>
               <input type="password" id="field-ptz-password" autocomplete="new-password">
             </label>
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.port"></span>
+              <input type="number" id="field-ptz-port" min="1" max="65535" step="1" value="34567">
+            </label>
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.token"></span>
+              <input type="text" id="field-ptz-token" autocomplete="off" spellcheck="false">
+            </label>
           </div>
           <p class="note note--tight" data-i18n="ptz.base_hint"></p>
           <p class="field__hint" id="ptz-profile-hint"></p>
@@ -213,6 +221,10 @@
             <button type="button" class="btn btn--ghost" id="btn-ptz-fill">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"></path></svg>
               <span data-i18n="ptz.fill"></span>
+            </button>
+            <button type="button" class="btn btn--ghost" id="btn-ptz-onvif">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 1-9 9"></path><path d="M3 12l3-3M3 12l3 3"></path></svg>
+              <span data-i18n="ptz.discover"></span>
             </button>
             <button type="button" class="btn btn--ghost" id="btn-ptz-test" hidden>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2-5 4 10 2-5h4"></path></svg>

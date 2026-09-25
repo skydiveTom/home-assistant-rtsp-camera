@@ -49,8 +49,10 @@ exactly one place — the add-on panel.
   example the H.264 sub stream of an H.265 camera) can be published to Home
   Assistant when a camera card stays black.
 - **PTZ control** – a camera with pan/tilt/zoom gets a PTZ section in the panel with
-  ready made command sets (Axis, Dahua/Amcrest, Xiongmai, Hikvision, Foscam or your
-  own), a pad in the preview and presets. Home Assistant receives
+  ready made command sets (Axis, Dahua/Amcrest, Xiongmai, Hikvision, Foscam,
+  **ONVIF (SOAP)** or **DVRIP on TCP 34567** for DVRs without a web interface - plus
+  your own commands), a pad in the preview and presets. Credentials are **inherited
+  from the RTSP URL**, so they are never typed twice. Home Assistant receives
   `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset.
 - **Live in seconds** – adding, renaming, disabling or deleting a camera is picked

@@ -6,8 +6,10 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from .const import (
+    DEFAULT_DVRIP_PORT,
     DEFAULT_MODEL,
     PTZ_ACTIONS,
     PTZ_DEFAULT_SPEED,
@@ -25,6 +27,12 @@ def _positive_int(value: Any, fallback: int, maximum: int = PTZ_MAX_SPEED) -> in
     if number < 1:
         return fallback
     return min(number, maximum)
+
+
+def _host_from_base(base: Any) -> str:
+    """Return the host of a ``http://host:port`` base URL."""
+    parts = urlsplit(str(base or ""))
+    return parts.hostname or ""
 
 
 def redact_url(url: str) -> str:
@@ -45,6 +53,12 @@ class PtzConfig:
     commands: Mapping[str, str] = field(default_factory=dict)
     stop_codes: Mapping[str, str] = field(default_factory=dict)
     presets: tuple[tuple[str, str], ...] = ()
+    host: str = ""
+    port: int = DEFAULT_DVRIP_PORT
+    channel: int = 1
+    token: str = ""
+    username: str = ""
+    password: str = ""
 
     @property
     def enabled(self) -> bool:
@@ -100,6 +114,12 @@ class PtzConfig:
             commands=commands,
             stop_codes=stop_codes,
             presets=tuple(presets),
+            host=str(data.get("host") or _host_from_base(data.get("base_url")) or "").strip(),
+            port=_positive_int(data.get("port"), DEFAULT_DVRIP_PORT, 65535),
+            channel=_positive_int(data.get("channel"), 1, 16),
+            token=str(data.get("token") or ""),
+            username=str(data.get("username") or ""),
+            password=str(data.get("password") or ""),
         )
 
 

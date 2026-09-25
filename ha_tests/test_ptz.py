@@ -318,3 +318,136 @@ async def test_hikvision_style_commands_send_a_body(hass, entry, monkeypatch):
     assert session.requests[0]["method"] == "PUT"
     assert "<pan>60</pan>" in session.requests[0]["body"]
     assert session.requests[0]["headers"]["Content-Type"] == "application/xml"
+
+
+DVRIP_COMMANDS: dict[str, str] = {
+    "left": 'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
+    "stop": 'DVRIP {"Command":"{direction}","Step":0,"Channel":{channel}}',
+    "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
+}
+
+
+async def test_dvrip_commands_go_through_the_tcp_client(hass, entry, monkeypatch):
+    """A DVRIP command is sent over TCP 34567, not over HTTP."""
+    calls: list[dict[str, Any]] = []
+
+    async def fake_send(host, port, username, password, short):  # noqa: ANN001
+        calls.append(
+            {
+                "host": host,
+                "port": port,
+                "username": username,
+                "password": password,
+                "short": short,
+            }
+        )
+        return True, None
+
+    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
+    await setup_camera(
+        hass,
+        entry,
+        base_url="http://10.0.0.5",
+        commands=DVRIP_COMMANDS,
+        stop_codes={"left": "DirectionLeft"},
+        port=34567,
+        channel=1,
+        username="admin",
+        password="secret",
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "action": "left", "speed": 0.75},
+        blocking=True,
+    )
+
+    assert session.requests == [], "no HTTP request for a DVRIP camera"
+    assert len(calls) == 2, "the move and its automatic stop"
+
+    move = calls[0]
+    assert move["host"] == "10.0.0.5"
+    assert move["port"] == 34567
+    assert move["username"] == "admin"
+    assert move["password"] == "secret"
+    assert move["short"]["Command"] == "DirectionLeft"
+    assert move["short"]["Step"] == 6, "0.75 of the camera scale (1-8)"
+    assert move["short"]["Channel"] == 1
+
+    stop = calls[1]
+    assert stop["short"]["Command"] == "DirectionLeft", "the stop tells the direction"
+    assert stop["short"]["Step"] == 0
+
+
+async def test_dvrip_stop_carries_the_direction(hass, entry, monkeypatch):
+    """The stop tells the DVR which direction to halt."""
+    calls: list[dict[str, Any]] = []
+
+    async def fake_send(host, port, username, password, short):  # noqa: ANN001
+        calls.append(short)
+        return True, None
+
+    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
+    await setup_camera(hass, entry, commands=DVRIP_COMMANDS, stop_codes={"left": "DirectionLeft"})
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "action": "stop", "move_mode": "Stop"},
+        blocking=True,
+    )
+
+    assert calls[0]["Command"] == "DirectionUp" or calls[0]["Step"] == 0
+
+
+async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):
+    """A refused DVRIP login raises a readable error."""
+
+    async def fake_send(host, port, username, password, short):  # noqa: ANN001
+        return False, "login_failed_101"
+
+    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
+    await setup_camera(hass, entry, commands=DVRIP_COMMANDS)
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            DOMAIN, "ptz", {"entity_id": "camera.front_door", "action": "left"}, blocking=True
+        )
+
+
+async def test_onvif_commands_use_soap(hass, entry, monkeypatch):
+    """An ONVIF command is POSTed as SOAP with the profile token."""
+    await setup_camera(
+        hass,
+        entry,
+        base_url="http://10.0.0.5",
+        commands={
+            "right": 'POST http://10.0.0.5/onvif/ptz_service <s:Envelope '
+            'xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>'
+            "<tptz:ContinuousMove xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\">"
+            "<tptz:ProfileToken>Profile_1</tptz:ProfileToken></tptz:ContinuousMove>"
+            "</s:Body></s:Envelope>",
+            "preset": 'POST http://10.0.0.5/onvif/ptz_service <s:Envelope '
+            'xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>'
+            "<tptz:GotoPreset xmlns:tptz=\"http://www.onvif.org/ver20/ptz/wsdl\">"
+            "<tptz:PresetToken>{preset}</tptz:PresetToken></tptz:GotoPreset>"
+            "</s:Body></s:Envelope>",
+        },
+        stop_codes={},
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "move_mode": "GotoPreset", "preset": "3"},
+        blocking=True,
+    )
+
+    assert session.requests[0]["method"] == "POST"
+    assert session.requests[0]["headers"]["Content-Type"].startswith("application/soap+xml")
+    assert "<tptz:PresetToken>3</tptz:PresetToken>" in session.requests[0]["body"]
