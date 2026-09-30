@@ -190,6 +190,33 @@ without any control interface (for example a device that only speaks RTSP and a
 proprietary port that does not answer DVRIP) cannot be moved - the test reports that
 clearly.
 
+**PTZ test mode - which variant does this camera understand?**
+
+Nobody has to know the vendor of a camera. Open the camera, expand *PTZ control* and
+use the *PTZ test mode* block: enter the address of the camera (an **IP is enough**,
+`http://` is added, an empty field means the host of the RTSP URL) and press *Test
+every PTZ variant*. The add-on then asks that address one variant after another -
+ONVIF, the vendor CGIs (Dahua/Amcrest, Hikvision, Axis, Foscam, Xiongmai) and DVRIP
+on TCP 34567 - and lists what each one answered:
+
+| Answer | Meaning |
+| --- | --- |
+| answers | the variant accepted the command and is stored as the **main PTZ handling** |
+| needs credentials | the interface exists (HTTP 401/403), but the user name or the password does not fit |
+| not supported | the variant is not implemented (HTTP 404, or a failure code in the body of a `200 OK`) |
+| no ONVIF profile token | the PTZ service exists, but the device published no media profile |
+| no answer (timeout), not reachable | the address did not answer within three seconds |
+
+**The test never moves a camera**: every HTTP and DVRIP variant is asked with its
+*stop* command, ONVIF only with read only queries (`GetConfigurations`,
+`GetCapabilities(PTZ)`, `GetProfiles`). The variant that answers becomes the **main PTZ
+handling** of the camera - profile, HTTP address, channel, DVRIP port, ONVIF profile
+token and the credentials that were used - and the form follows it, so the *Save*
+button cannot undo it. The presets of the camera survive a test. A variant that only
+*needs credentials* is reported, but never applied automatically. Home Assistant picks
+the new commands up within its scan interval, without a restart, and shows the variant
+in the `ptz_profile` attribute of the camera entity.
+
 Home Assistant gets:
 
 - `rtsp_cameras.ptz` - move with the **same fields as `onvif.ptz`** (`pan`, `tilt`,

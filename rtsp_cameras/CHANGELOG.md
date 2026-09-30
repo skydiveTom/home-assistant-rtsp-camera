@@ -4,6 +4,45 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-30
+
+### Added
+
+- **PTZ test mode: the add-on finds out which PTZ variant works with the camera.**
+  The camera editor has a new *PTZ test mode* block - enter the address of the camera
+  (an **IP is enough**, `http://` is added, empty means the host of the RTSP URL) and
+  press *Test every PTZ variant*. The address is asked variant by variant: ONVIF, the
+  vendor CGIs (Dahua/Amcrest, Hikvision ISAPI, Axis VAPIX, Foscam, Xiongmai) and
+  DVRIP on TCP 34567. The **first variant that answers is stored as the main PTZ
+  handling of the camera** - profile, HTTP address, channel, port, ONVIF profile
+  token and the credentials that were used - and the form follows, so a later *Save*
+  cannot undo it. Home Assistant takes over the new commands within its scan
+  interval, without a restart.
+  - Nothing moves during the test: every HTTP and DVRIP variant is asked with its
+    **stop** command, ONVIF with the read only queries `GetConfigurations`,
+    `GetCapabilities(PTZ)` and `GetProfiles`.
+  - The result list shows every variant with the reason: *answers*, *needs
+    credentials* (a 401 means the interface exists, the password does not fit),
+    *not supported*, *no ONVIF profile token*, *no answer (timeout)* or *not
+    reachable*. A variant that only refuses the credentials is never applied
+    automatically - the report says what to correct instead.
+  - The presets of the camera survive a test; `apply: false` (the API field) reports
+    the winner and changes nothing.
+  - New API endpoint `POST /api/ptz/probe` (also at
+    `POST /api/cameras/<id>/ptz/probe`), the panel uses it through the ingress.
+- The camera entities of the integration expose the variant in use as the
+  **`ptz_profile` attribute**, next to `ptz` and `ptz_presets` - a glance at the
+  entity shows which command set was detected.
+
+### Changed
+
+- `app.ptz.async_send` keeps the answer of a camera (`async_send_detail`), because
+  several vendor CGIs report a failure with `200 OK` and an error code in the body
+  (`result=-1`, `result=-3`); the test mode now reports such a variant as *needs
+  credentials* / *not supported* instead of *answers*.
+- The credential masking of the PTZ editor is a shared helper (`mask_credentials`),
+  so the commands shown in the test result are masked like the camera editor does it.
+
 ## [0.2.4] - 2026-09-25
 
 ### Changed

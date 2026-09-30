@@ -36,6 +36,8 @@ ATTR_STREAM_URL = "stream_url"
 ATTR_CODEC = "codec"
 ATTR_PTZ = "ptz"
 ATTR_PTZ_PRESETS = "ptz_presets"
+#: Which PTZ variant (vendor command set) moves this camera.
+ATTR_PTZ_PROFILE = "ptz_profile"
 
 SUPPORTED_SCHEMES = ("rtsp://", "rtsps://", "rtmp://", "http://", "https://")
 

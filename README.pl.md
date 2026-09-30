@@ -56,7 +56,10 @@ w panelu dodatku.
   gotowymi zestawami komend (Axis, Dahua/Amcrest, Xiongmai, Hikvision, Foscam,
   **ONVIF (SOAP)** albo **DVRIP na porcie 34567** dla DVR-ów bez WWW — plus własne
   komendy), padem w podglądzie i presetami. Login i hasło są **przepisywane z adresu
-  RTSP**, więc nie wpisujesz ich drugi raz. Home Assistant dostaje usługę
+  RTSP**, więc nie wpisujesz ich drugi raz. **Tryb testowania PTZ** sam znajdzie
+  właściwy wariant: wpisz IP kamery (albo nic), jeden przycisk odpytuje wszystkie
+  warianty, a ten który odpowie staje się główną obsługą — bez ruszania kamery, bo test
+  wysyła tylko komendy stop. Home Assistant dostaje usługę
   `rtsp_cameras.ptz` (te same pola co `onvif.ptz`), `rtsp_cameras.ptz_home` oraz
   przycisk dla każdego presetu.
 - **Działa od razu** – dodanie, zmiana nazwy, wyłączenie lub usunięcie kamery jest

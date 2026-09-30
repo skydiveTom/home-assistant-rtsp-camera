@@ -911,7 +911,7 @@
     box.replaceChildren(el('p', { class: 'field__label', text: t('ptz.commands') }), ...rows);
   }
 
-  function fillPtzFromProfile() {
+  function fillPtzFromProfile(quiet) {
     const profile = ptzProfile();
     if (!profile) return;
     const base = document.getElementById('field-ptz-base').value.trim();
@@ -934,7 +934,7 @@
       );
     });
     document.getElementById('ptz-profile-hint').textContent = profile.description || '';
-    toast(t('ptz.filled'), 'ok');
+    if (!quiet) toast(t('ptz.filled'), 'ok');
   }
 
   function presetLines(presets) {
@@ -975,6 +975,14 @@
     document.getElementById('ptz-profile-hint').textContent = (ptzProfile() || {}).description || '';
     document.getElementById('ptz-state').textContent = ptz && ptz.enabled ? t('ptz.on') : t('ptz.off');
     document.getElementById('btn-ptz-test').hidden = !camera;
+    /* The test mode keeps the address of the camera, not the result of the last run,
+       so it is ready for the next camera as well. */
+    document.getElementById('field-ptz-test-ip').value =
+      (ptz && ptz.base_url) || hostFromUrl(camera && camera.url) || '';
+    document.getElementById('field-ptz-test-port').value = (ptz && ptz.port) || '';
+    const detectResult = document.getElementById('ptz-detect-result');
+    detectResult.hidden = true;
+    detectResult.replaceChildren();
     const result = document.getElementById('ptz-result');
     result.hidden = true;
     result.replaceChildren();
@@ -1070,6 +1078,133 @@
     } catch (err) {
       box.className = 'probe probe--err';
       const code = err instanceof ApiError ? err.code : 'ptz_failed';
+      box.replaceChildren(
+        el('p', { class: 'probe__error', text: errorText(code) + errorDetail(err) }),
+      );
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  /* ------------------------------------------------- PTZ test mode (detection) */
+  function hostFromUrl(value) {
+    try {
+      return new URL(String(value || '').trim()).hostname || '';
+    } catch (err) {
+      return '';
+    }
+  }
+
+  /* The address the test mode asks: what the user typed, else the HTTP address of the
+     camera, else the host of the RTSP URL - so the IP is usually already there. */
+  function ptzTestAddress() {
+    const typed = document.getElementById('field-ptz-test-ip').value.trim();
+    if (typed) return typed;
+    const base = document.getElementById('field-ptz-base').value.trim();
+    if (base) return base;
+    return hostFromUrl(document.getElementById('field-url').value.trim());
+  }
+
+  function ptzStatusText(status) {
+    const key = 'ptz.status_' + String(status || '').replace(/[^a-z_]/g, '');
+    const text = t(key);
+    return text === key ? String(status || '') : text;
+  }
+
+  function renderPtzProbe(container, report, applied) {
+    const winner = report && report.ok ? report : null;
+    container.hidden = false;
+    container.className = 'probe ' + (winner ? 'probe--ok' : 'probe--err');
+    const head = winner
+      ? t('ptz.detect_ok', { profile: report.label || report.profile })
+      : report && report.profile
+        ? t('ptz.detect_partial', { profile: report.label || report.profile })
+        : t('ptz.detect_none');
+    const children = [
+      el('div', { class: 'probe__head' }, [
+        led(winner ? 'ok' : 'err'),
+        el('span', { text: head }),
+      ]),
+      el(
+        'dl',
+        { class: 'probe__grid' },
+        (report.results || []).flatMap((item) => [
+          el('dt', { text: item.label || item.profile }),
+          el('dd', {
+            text: ptzStatusText(item.status) + (item.detail ? ' — ' + item.detail : ''),
+          }),
+        ]),
+      ),
+    ];
+    if (winner) {
+      children.push(
+        el('p', {
+          class: 'probe__hint',
+          text: applied ? t('ptz.detect_applied') : t('ptz.detect_save'),
+        }),
+      );
+    } else if (report && report.profile) {
+      children.push(el('p', { class: 'probe__hint', text: t('ptz.detect_partial_hint') }));
+    }
+    container.replaceChildren(...children);
+  }
+
+  /* The add-on already stored the winner as the main PTZ handling of the camera; the
+     form follows, so a later "Save" cannot overwrite it again. */
+  function adoptPtzProfile(report) {
+    document.getElementById('field-ptz-enabled').checked = true;
+    document.getElementById('field-ptz-profile').value = report.profile || 'custom';
+    document.getElementById('field-ptz-base').value = report.base_url || ptzTestAddress();
+    if (report.token) document.getElementById('field-ptz-token').value = report.token;
+    const profile = ptzProfile();
+    document.getElementById('ptz-profile-hint').textContent = (profile && profile.description) || '';
+    fillPtzFromProfile(true);
+  }
+
+  async function detectPtz() {
+    const camera = state.editing ? cameraById(state.editing) : null;
+    const box = document.getElementById('ptz-detect-result');
+    const button = document.getElementById('btn-ptz-detect');
+    const address = ptzTestAddress();
+    if (!address) {
+      toast(errorText('ptz_base_url_required'), 'err');
+      document.getElementById('field-ptz-test-ip').focus();
+      return;
+    }
+    button.disabled = true;
+    box.hidden = false;
+    box.className = 'probe';
+    box.replaceChildren(el('p', { class: 'probe__head', text: t('ptz.detecting') }));
+    try {
+      const data = await api('api/ptz/probe', {
+        method: 'POST',
+        body: {
+          camera_id: camera ? camera.id : null,
+          base_url: address,
+          stream_url: document.getElementById('field-url').value.trim(),
+          channel: Number(document.getElementById('field-ptz-channel').value) || undefined,
+          speed: Number(document.getElementById('field-ptz-speed').value) || undefined,
+          port: Number(document.getElementById('field-ptz-test-port').value) || undefined,
+          username: document.getElementById('field-ptz-username').value.trim(),
+          password: document.getElementById('field-ptz-password').value,
+        },
+      });
+      const report = data.probe || {};
+      renderPtzProbe(box, report, Boolean(data.applied));
+      if (report.ok && report.profile) {
+        adoptPtzProfile(report);
+        toast(t('ptz.detect_ok', { profile: report.label || report.profile }), 'ok');
+      }
+      if (data.cameras) {
+        state.cameras = data.cameras;
+        renderCameras();
+      } else if (data.camera && camera) {
+        Object.assign(camera, data.camera);
+        renderCameras();
+      }
+    } catch (err) {
+      box.className = 'probe probe--err';
+      const code = err instanceof ApiError ? err.code : 'generic';
       box.replaceChildren(
         el('p', { class: 'probe__error', text: errorText(code) + errorDetail(err) }),
       );
@@ -1616,9 +1751,10 @@
     });
     document.getElementById('camera-form').addEventListener('submit', submitCamera);
     document.getElementById('btn-test-form').addEventListener('click', () => testForm(false));
-    document.getElementById('btn-ptz-fill').addEventListener('click', fillPtzFromProfile);
+    document.getElementById('btn-ptz-fill').addEventListener('click', () => fillPtzFromProfile());
     document.getElementById('btn-ptz-onvif').addEventListener('click', discoverOnvif);
     document.getElementById('btn-ptz-test').addEventListener('click', testPtz);
+    document.getElementById('btn-ptz-detect').addEventListener('click', detectPtz);
     document.getElementById('field-ptz-profile').addEventListener('change', () => {
       const profile = ptzProfile();
       document.getElementById('ptz-profile-hint').textContent = (profile && profile.description) || '';

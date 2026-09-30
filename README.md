@@ -52,7 +52,10 @@ exactly one place — the add-on panel.
   ready made command sets (Axis, Dahua/Amcrest, Xiongmai, Hikvision, Foscam,
   **ONVIF (SOAP)** or **DVRIP on TCP 34567** for DVRs without a web interface - plus
   your own commands), a pad in the preview and presets. Credentials are **inherited
-  from the RTSP URL**, so they are never typed twice. Home Assistant receives
+  from the RTSP URL**, so they are never typed twice. The **PTZ test mode** finds the
+  right variant for you: enter the IP of the camera (or nothing at all), one button
+  asks every variant and the one that answers becomes the main handling - without
+  moving the camera, because the test only sends stop commands. Home Assistant receives
   `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset.
 - **Live in seconds** – adding, renaming, disabling or deleting a camera is picked

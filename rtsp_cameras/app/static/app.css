@@ -1219,6 +1219,28 @@ select:focus {
   margin: 10px 0 4px;
 }
 
+/* PTZ test mode: the address of the camera and the button that asks every vendor
+   variant which one moves it. */
+.ptz__test {
+  margin: 14px 0 6px;
+  padding: 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-3);
+}
+
+.ptz__test-title {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.ptz__test .form__grid {
+  margin-bottom: 4px;
+}
+
 .ptz__commands label {
   display: grid;
   grid-template-columns: 96px 1fr;

@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -59,6 +59,48 @@ DEFAULT_DVRIP_PORT = 34567
 COMMAND_TIMEOUT = 6.0
 ONVIF_DISCOVERY_TIMEOUT = 8.0
 MAX_RESPONSE_SNIPPET = 200
+
+#: PTZ test mode: the address of a camera (an IP is enough) is asked variant by
+#: variant which command set really moves it. Every request is a ``stop`` command or
+#: a read only query, so the test never moves a camera.
+PROBE_TIMEOUT = 3.0
+MAX_PROBE_TIMEOUT = 10.0
+#: Order of the test and of the preference: the first transport that answers wins.
+#: ONVIF first, because it is vendor neutral and works on almost every modern device,
+#: then the native command sets, then the DVRs that only speak DVRIP.
+PROBE_ORDER = (
+    "onvif",
+    "dahua",
+    "hikvision",
+    "axis",
+    "foscam",
+    "xiongmai",
+    "xiongmai_dvrip",
+)
+#: Status of one probe result.
+PROBE_STATUS_OK = "ok"
+PROBE_STATUS_AUTH = "auth"
+PROBE_STATUS_NO_TOKEN = "no_token"
+PROBE_STATUS_UNSUPPORTED = "unsupported"
+PROBE_STATUS_TIMEOUT = "timeout"
+PROBE_STATUS_UNREACHABLE = "unreachable"
+PROBE_STATUS_ERROR = "error"
+#: Vendor CGIs answer "200 OK" and put the failure into the body; these markers keep
+#: such an answer from being mistaken for a working camera.
+PROBE_AUTH_MARKERS = (
+    "result=-1",
+    "notauthorized",
+    "not authorized",
+    "unauthorized",
+    "authentication",
+)
+PROBE_FAILURE_MARKERS = (
+    "result=-3",
+    "<fault",
+    "notsupported",
+    "not supported",
+    "invalidoperation",
+)
 
 #: Minimal SOAP documents. Most ONVIF devices accept them without the full
 #: namespaces; the profile token is discovered once and stays in the camera.
@@ -341,6 +383,43 @@ class PtzResult:
         }
 
 
+@dataclass(slots=True)
+class PtzProbeResult:
+    """What one transport answered in the PTZ test mode."""
+
+    profile: str
+    label: str
+    status: str
+    ok: bool = False
+    detail: str | None = None
+    command: str = ""
+    token: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the representation used by the web interface."""
+        return {
+            "profile": self.profile,
+            "label": self.label,
+            "status": self.status,
+            "ok": self.ok,
+            "detail": self.detail,
+            # The credentials of a vendor CGI live inside the command URL, so the
+            # copy that goes to the browser is masked like the camera editor does it.
+            "command": mask_credentials(self.command),
+            "token": self.token,
+        }
+
+
+def mask_credentials(value: Any) -> str:
+    """Replace the credentials of a command URL with asterisks."""
+    text = str(value or "")
+    for marker in ("password=", "pwd=", "pass="):
+        head, separator, _ = text.partition(marker)
+        if separator:
+            text = f"{head}{separator}***"
+    return text
+
+
 def profile_list() -> list[dict[str, Any]]:
     """Return the vendor presets for the web interface."""
     return [
@@ -369,6 +448,36 @@ def base_url_for(stream_url: str) -> str:
     if not host:
         return ""
     return f"http://{host}"
+
+
+def probe_base_url(address: Any, *, stream_url: str = "", port: int | None = None) -> str:
+    """Return the HTTP base URL the PTZ test mode should ask.
+
+    Accepts what users type into the address field of the test mode:
+    ``192.168.1.108``, ``camera.fritz.box:8080``, ``http://192.168.1.108`` or a full
+    URL. An empty value falls back to the host of the stream URL, so the IP of the
+    camera never has to be typed twice.
+    """
+    value = " ".join(str(address or "").split())
+    if value and "://" not in value:
+        value = f"http://{value}"
+
+    parts = urlsplit(value)
+    if not parts.hostname:
+        parts = urlsplit(base_url_for(stream_url))
+    host = parts.hostname or ""
+    if not host:
+        return ""
+
+    try:
+        typed_port = parts.port
+    except ValueError:  # pragma: no cover - a port outside 1..65535
+        typed_port = None
+    chosen = _positive_port(port, 0) or typed_port
+    scheme = parts.scheme if parts.scheme in ("http", "https") else "http"
+    if ":" in host:  # an IPv6 address needs its brackets back
+        host = f"[{host}]"
+    return f"{scheme}://{host}" if chosen is None else f"{scheme}://{host}:{chosen}"
 
 
 def _channels(value: Any) -> int:
@@ -592,10 +701,28 @@ async def async_send(
     username: str = "",
     password: str = "",
 ) -> tuple[int | None, str | None]:
-    """Send a command and return a status code and an error message.
+    """Send a command and return a status code and an error message."""
+    status, error, _snippet = await async_send_detail(
+        command, timeout, host=host, port=port, username=username, password=password
+    )
+    return status, error
+
+
+async def async_send_detail(
+    command: str,
+    timeout: float = COMMAND_TIMEOUT,
+    *,
+    host: str = "",
+    port: int = DEFAULT_DVRIP_PORT,
+    username: str = "",
+    password: str = "",
+) -> tuple[int | None, str | None, str]:
+    """Send a command and return status, error and the beginning of the answer.
 
     HTTP commands (GET/POST/PUT) go through urllib, ``DVRIP`` commands through the
-    Xiongmai protocol on TCP ``port``.
+    Xiongmai protocol on TCP ``port``. The answer is kept for the PTZ test mode,
+    which has to look into the body: several vendor CGIs report a failure with
+    ``200 OK`` and an error code in the text.
     """
     method, url, body = parse_command(command)
 
@@ -603,17 +730,25 @@ async def async_send(
         try:
             short = json.loads(url)
         except ValueError as err:
-            return None, f"invalid_payload: {err}"
+            return None, f"invalid_payload: {err}", ""
         ok, detail = await dvrip.async_send(host, port, username, password, short, timeout)
-        return (LOGIN_OK if ok else None), detail
+        return (LOGIN_OK if ok else None), detail, str(detail or "")
 
-    return await asyncio.to_thread(_send_blocking, method, url, body, timeout)
+    return await asyncio.to_thread(_send_blocking_detail, method, url, body, timeout)
 
 
 def _send_blocking(
     method: str, url: str, body: bytes | None, timeout: float
 ) -> tuple[int | None, str | None]:
     """Send the HTTP request of a command in a worker thread."""
+    status, error, _snippet = _send_blocking_detail(method, url, body, timeout)
+    return status, error
+
+
+def _send_blocking_detail(
+    method: str, url: str, body: bytes | None, timeout: float
+) -> tuple[int | None, str | None, str]:
+    """Send an HTTP command and keep the beginning of the answer."""
     request = Request(url, data=body, method=method)
     if body:
         # ONVIF wants SOAP, the vendor CGIs plain XML.
@@ -628,12 +763,13 @@ def _send_blocking(
             snippet = response.read(MAX_RESPONSE_SNIPPET).decode("utf-8", "replace")
             status = int(response.status)
     except HTTPError as err:
-        return int(err.code), f"HTTP {err.code}"
+        snippet = err.read(MAX_RESPONSE_SNIPPET).decode("utf-8", "replace")
+        return int(err.code), f"HTTP {err.code}", snippet
     except (URLError, OSError, ValueError) as err:
-        return None, str(err)
+        return None, str(err), ""
     if status >= 400:
-        return status, f"HTTP {status} {snippet.strip()}".strip()
-    return status, None
+        return status, f"HTTP {status} {snippet.strip()}".strip(), snippet
+    return status, None, snippet
 
 async def async_run(
     config: Mapping[str, Any],
@@ -736,14 +872,6 @@ def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not config:
         return None
 
-    def mask(text: Any) -> str:
-        value = str(text or "")
-        for marker in ("password=", "pwd=", "pass="):
-            head, separator, _ = value.partition(marker)
-            if separator:
-                value = f"{head}{separator}***"
-        return value
-
     return {
         "enabled": True,
         "profile": config.get("profile"),
@@ -754,9 +882,283 @@ def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "token": config.get("token"),
         "has_credentials": bool(config.get("username")),
         "commands": {
-            action: mask(command) for action, command in (config.get("commands") or {}).items()
+            action: mask_credentials(command)
+            for action, command in (config.get("commands") or {}).items()
         },
         "stop_codes": dict(config.get("stop_codes") or {}),
         "presets": list(config.get("presets") or []),
         "actions": configured_actions(config),
+    }
+
+
+# --------------------------------------------------------------- PTZ test mode
+# The test mode answers one question: which command set does this camera really
+# understand? It is meant for the panel, where the user only enters the address of
+# the camera (an IP is enough) - everything else is tried out. Nothing moves a
+# camera: the HTTP and DVRIP transports are asked with their *stop* command, ONVIF
+# with read only SOAP queries, and only the transport that answers can become the
+# main PTZ handling.
+def _probe_outcome(
+    status: int | None, error: str | None, snippet: str = ""
+) -> tuple[str, str | None]:
+    """Translate the answer of a transport into the vocabulary of the test mode."""
+    text = " ".join(str(snippet or "").split())
+    lowered = text.lower()
+
+    if error is None:
+        # Some vendor CGIs send "200 OK" and put the failure into the body.
+        if any(marker in lowered for marker in PROBE_AUTH_MARKERS):
+            return PROBE_STATUS_AUTH, text[:MAX_RESPONSE_SNIPPET] or None
+        if any(marker in lowered for marker in PROBE_FAILURE_MARKERS):
+            return PROBE_STATUS_UNSUPPORTED, text[:MAX_RESPONSE_SNIPPET] or None
+        return PROBE_STATUS_OK, None
+
+    if error.startswith("login_failed"):
+        return PROBE_STATUS_AUTH, error
+    if error.startswith("unexpected_reply"):
+        # Something answers on the port, but not the protocol that was asked for.
+        return PROBE_STATUS_UNSUPPORTED, error
+    if error == "no_host" or error.startswith("invalid_payload"):
+        return PROBE_STATUS_ERROR, error
+    if status in (401, 403):
+        return PROBE_STATUS_AUTH, f"HTTP {status}"
+    if status in (404, 405, 501):
+        return PROBE_STATUS_UNSUPPORTED, f"HTTP {status}"
+    if status is None:
+        if error == "timeout" or "timed out" in error.lower():
+            return PROBE_STATUS_TIMEOUT, error
+        return PROBE_STATUS_UNREACHABLE, error
+    return PROBE_STATUS_ERROR, error
+
+
+async def _probe_profile(
+    profile: str,
+    base_url: str,
+    *,
+    username: str = "",
+    password: str = "",
+    channel: int = DEFAULT_CHANNEL,
+    speed: int | None = None,
+    port: int = DEFAULT_DVRIP_PORT,
+    stream_url: str = "",
+    timeout: float = PROBE_TIMEOUT,
+) -> PtzProbeResult:
+    """Ask one transport whether it moves the camera (it sends the stop command)."""
+    label = str(PTZ_PROFILES[profile]["label"])
+    if profile == "onvif":  # ONVIF is asked with read only SOAP queries instead
+        return await _probe_onvif(
+            base_url, username=username, password=password, timeout=timeout
+        )
+
+    config = normalize_ptz(
+        {
+            "profile": profile,
+            "base_url": base_url,
+            "channel": channel,
+            "speed": speed,
+            "port": port,
+            "username": username,
+            "password": password,
+        },
+        stream_url,
+    )
+    command = build_command(config, "stop") if config else None
+    if not command:
+        return PtzProbeResult(
+            profile=profile,
+            label=label,
+            status=PROBE_STATUS_UNSUPPORTED,
+            detail="no_command",
+        )
+
+    # DVRIP logs in with the credentials; they may come from the stream URL, so the
+    # normalized configuration decides, not the fields of the editor alone.
+    send_username = str(config.get("username") or username)
+    send_password = str(config.get("password") or password)
+
+    try:
+        status, error, snippet = await async_send_detail(
+            command,
+            timeout,
+            host=urlsplit(base_url).hostname or "",
+            port=port,
+            username=send_username,
+            password=send_password,
+        )
+    except (OSError, ValueError) as err:  # pragma: no cover - defensive
+        return PtzProbeResult(
+            profile=profile, label=label, status=PROBE_STATUS_ERROR, detail=str(err)
+        )
+
+    state, detail = _probe_outcome(status, error, snippet)
+    return PtzProbeResult(
+        profile=profile,
+        label=label,
+        status=state,
+        ok=state == PROBE_STATUS_OK,
+        detail=detail,
+        command=command,
+    )
+
+
+async def _probe_onvif(
+    base_url: str,
+    *,
+    username: str = "",
+    password: str = "",
+    timeout: float = PROBE_TIMEOUT,
+) -> PtzProbeResult:
+    """Ask an ONVIF device for its PTZ service and its profile token (read only)."""
+    label = str(PTZ_PROFILES["onvif"]["label"])
+    state, detail = await _onvif_ptz_service(base_url, username, password, timeout)
+    if state != PROBE_STATUS_OK:
+        return PtzProbeResult(profile="onvif", label=label, status=state, detail=detail)
+
+    token, token_error = await async_discover_onvif_token(
+        base_url, username, password, timeout
+    )
+    if not token:
+        # Without a profile token the SOAP commands cannot name the stream.
+        return PtzProbeResult(
+            profile="onvif",
+            label=label,
+            status=PROBE_STATUS_NO_TOKEN,
+            detail=str(token_error or "no_token"),
+        )
+    return PtzProbeResult(
+        profile="onvif", label=label, status=PROBE_STATUS_OK, ok=True, token=token
+    )
+
+
+async def _onvif_ptz_service(
+    base_url: str, username: str, password: str, timeout: float
+) -> tuple[str, str | None]:
+    """Return whether the ONVIF PTZ service of a device answers."""
+    status, error, text = await asyncio.to_thread(
+        _post_soap,
+        f"{base_url.rstrip('/')}/onvif/ptz_service",
+        onvif_envelope("<tptz:GetConfigurations/>").encode("utf-8"),
+        username,
+        password,
+        timeout,
+    )
+    if error is None and "<fault" not in str(text or "").lower():
+        return PROBE_STATUS_OK, None
+    if error is None or status in (404, 405, 501):
+        # ``GetConfigurations`` is optional in the ONVIF PTZ service, so the device
+        # service decides whether the device has PTZ at all.
+        return await _onvif_device_capabilities(base_url, username, password, timeout)
+    return _probe_outcome(status, error, text)
+
+
+async def _onvif_device_capabilities(
+    base_url: str, username: str, password: str, timeout: float
+) -> tuple[str, str | None]:
+    """Ask the ONVIF device service whether the device offers PTZ."""
+    body = onvif_envelope(
+        '<tds:GetCapabilities xmlns:tds="http://www.onvif.org/ver10/device/wsdl">'
+        "<tds:Category>PTZ</tds:Category></tds:GetCapabilities>"
+    ).encode("utf-8")
+    status, error, text = await asyncio.to_thread(
+        _post_soap,
+        f"{base_url.rstrip('/')}/onvif/device_service",
+        body,
+        username,
+        password,
+        timeout,
+    )
+    if error is not None or "<fault" in str(text or "").lower():
+        return _probe_outcome(status, error, text)
+    if "ptz" in str(text or "").lower():
+        return PROBE_STATUS_OK, None
+    return PROBE_STATUS_UNSUPPORTED, "no_ptz_service"
+
+
+async def async_probe_ptz(
+    address: Any,
+    *,
+    username: str = "",
+    password: str = "",
+    channel: int = DEFAULT_CHANNEL,
+    speed: int | None = None,
+    port: int = DEFAULT_DVRIP_PORT,
+    stream_url: str = "",
+    timeout: float = PROBE_TIMEOUT,
+    order: Sequence[str] = PROBE_ORDER,
+) -> dict[str, Any]:
+    """Find out which PTZ variant of a camera answers - the test mode of the panel.
+
+    The address of the camera (an IP is enough) is asked transport by transport with
+    a harmless *stop* command; ONVIF is asked with read only SOAP queries. The first
+    transport that answers is returned as ``profile`` next to every attempt in
+    ``results``, so the caller can make it the main PTZ handling of the camera.
+    """
+    base_url = probe_base_url(address, stream_url=stream_url)
+    if not base_url:
+        return _probe_report("", [])
+
+    channel = _channels(channel)
+    probe_port = _positive_port(port, DEFAULT_DVRIP_PORT)
+
+    results: list[PtzProbeResult] = []
+    if "onvif" in order:
+        # ONVIF is the best answer there is, so it is asked first and alone: a device
+        # that speaks ONVIF needs no second request, a DVR gets one connection at a
+        # time instead of seven.
+        result = await _probe_onvif(
+            base_url, username=username, password=password, timeout=timeout
+        )
+        results.append(result)
+        if result.ok:
+            return _probe_report(base_url, results)
+
+    remaining = [profile for profile in order if profile != "onvif"]
+    if remaining:
+        answers = await asyncio.gather(
+            *(
+                _probe_profile(
+                    profile,
+                    base_url,
+                    username=username,
+                    password=password,
+                    channel=channel,
+                    speed=speed,
+                    port=probe_port,
+                    stream_url=stream_url,
+                    timeout=timeout,
+                )
+                for profile in remaining
+            ),
+            return_exceptions=True,
+        )
+        for profile, answer in zip(remaining, answers, strict=True):
+            if isinstance(answer, PtzProbeResult):
+                results.append(answer)
+            else:  # pragma: no cover - a single probe must not break the test
+                results.append(
+                    PtzProbeResult(
+                        profile=profile,
+                        label=str(PTZ_PROFILES[profile]["label"]),
+                        status=PROBE_STATUS_ERROR,
+                        detail=str(answer),
+                    )
+                )
+    return _probe_report(base_url, results)
+
+
+def _probe_report(base_url: str, results: Sequence[PtzProbeResult]) -> dict[str, Any]:
+    """Summarize the attempts and name the transport that should be the main one."""
+    winner = next((item for item in results if item.ok), None)
+    # A device that asks for credentials exists - it only needs the right ones.
+    partial = next((item for item in results if item.status == PROBE_STATUS_AUTH), None)
+    best = winner or partial
+    return {
+        "base_url": base_url,
+        "results": [item.to_dict() for item in results],
+        "tested": len(results),
+        "ok": winner is not None,
+        "profile": best.profile if best else None,
+        "label": best.label if best else None,
+        "status": best.status if best else None,
+        "token": winner.token if winner else "",
     }

@@ -53,7 +53,16 @@ from .models import (
     validate_optional_stream_url,
     validate_stream_url,
 )
-from .ptz import async_discover_onvif_token, normalize_action, profile_list
+from .ptz import (
+    DEFAULT_DVRIP_PORT,
+    MAX_PROBE_TIMEOUT,
+    PROBE_TIMEOUT,
+    async_discover_onvif_token,
+    async_probe_ptz,
+    normalize_action,
+    probe_base_url,
+    profile_list,
+)
 from .ptz import async_run as ptz_run
 from .storage import CameraStore
 
@@ -437,6 +446,109 @@ async def ptz_onvif_discover(request: Request) -> JSONResponse:
             {"ok": False, "error": "ptz_onvif_failed", "detail": error}, status_code=502
         )
     return _ok(token=token)
+
+
+def _probe_timeout(value: Any) -> float:
+    """Return the timeout of one PTZ test request, clamped to sane bounds."""
+    seconds = _optional_float(value)
+    if seconds is None:
+        return PROBE_TIMEOUT
+    return max(1.0, min(MAX_PROBE_TIMEOUT, seconds))
+
+
+async def ptz_probe(request: Request) -> JSONResponse:
+    """Test every PTZ variant of a camera and keep the one that answers.
+
+    This is the test mode of the camera editor: the address of the camera (an IP is
+    enough) is asked variant by variant which command set it understands. Nothing
+    moves: every HTTP and DVRIP variant gets its *stop* command, ONVIF is asked with
+    read only SOAP queries. The transport that answers becomes the **main PTZ
+    handling** of the camera, so nobody has to know the vendor of the device.
+    """
+    context = _ctx(request)
+    body = await _json_body(request)
+    camera_id = str(
+        body.get("camera_id") or request.path_params.get("camera_id") or ""
+    ).strip()
+    camera = context.store.get(camera_id) if camera_id else None
+    if camera_id and camera is None:
+        return await _error(request, "not_found", 404)
+
+    stream_url = str(body.get("stream_url") or (camera.url if camera else "")).strip()
+    base_url = probe_base_url(
+        body.get("base_url") or body.get("address") or body.get("ip"),
+        stream_url=stream_url,
+        port=_optional_int(body.get("http_port")),
+    )
+    if not base_url:
+        return await _error(request, "ptz_base_url_required", 400)
+
+    # The fields of the editor win over what the camera already stores; credentials
+    # that are still missing come from the stream URL during normalization.
+    saved = camera.ptz if camera and camera.ptz else {}
+    username = str(body.get("username") or saved.get("username") or "").strip()
+    password = (
+        str(body.get("password"))
+        if body.get("password") is not None
+        else str(saved.get("password") or "")
+    )
+    channel = _optional_int(body.get("channel")) or _optional_int(saved.get("channel")) or 1
+    speed = _optional_int(body.get("speed")) or _optional_int(saved.get("speed"))
+    port = (
+        _optional_int(body.get("port"))
+        or _optional_int(saved.get("port"))
+        or DEFAULT_DVRIP_PORT
+    )
+
+    report = await async_probe_ptz(
+        base_url,
+        username=username,
+        password=password,
+        channel=channel,
+        speed=speed,
+        port=port,
+        stream_url=stream_url,
+        timeout=_probe_timeout(body.get("timeout")),
+    )
+    if report["profile"]:
+        _LOGGER.info(
+            "PTZ test of %s: %s (%s)",
+            camera_id or base_url,
+            report["label"],
+            report["status"],
+        )
+
+    applied: dict[str, Any] | None = None
+    if report["ok"] and camera is not None and bool(body.get("apply", True)):
+        # The winner becomes the main handling: the commands are rebuilt from its
+        # profile (with the credentials that were just used), the presets of the
+        # camera survive the test.
+        updated = context.store.update(
+            camera.id,
+            ptz={
+                "enabled": True,
+                "profile": report["profile"],
+                "base_url": report["base_url"],
+                "channel": channel,
+                "speed": speed,
+                "port": port,
+                "token": report["token"],
+                "username": username,
+                "password": password,
+                "presets": [
+                    {"id": preset.get("id"), "name": preset.get("name")}
+                    for preset in (saved.get("presets") or [])
+                ],
+            },
+        )
+        applied = updated.to_api_dict() if updated is not None else None
+
+    return _ok(
+        probe=report,
+        applied=applied is not None,
+        camera=applied,
+        cameras=_cameras_payload(context) if applied else None,
+    )
 
 
 async def camera_test(request: Request) -> JSONResponse:
@@ -1100,7 +1212,9 @@ def create_app(settings: Settings | None = None) -> Starlette:
         ),
         Route("/api/cameras/{camera_id}/test", camera_test, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz", camera_ptz, methods=["POST"]),
+        Route("/api/cameras/{camera_id}/ptz/probe", ptz_probe, methods=["POST"]),
         Route("/api/ptz/profiles", ptz_profiles),
+        Route("/api/ptz/probe", ptz_probe, methods=["POST"]),
         Route("/api/ptz/onvif/discover", ptz_onvif_discover, methods=["POST"]),
         Route("/api/cameras/{camera_id}/snapshot.jpg", camera_snapshot),
         Route("/api/cameras/{camera_id}/mjpeg", camera_mjpeg),

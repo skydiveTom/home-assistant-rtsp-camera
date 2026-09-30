@@ -142,6 +142,53 @@ async def test_ptz_fields_are_exposed(hass, entry):
     assert state is not None
     assert state.attributes["ptz"] is True
     assert state.attributes["ptz_presets"] == ["Door", "Gate"]
+    # Which variant moves the camera: picked with the PTZ test mode of the add-on.
+    assert state.attributes["ptz_profile"] == "dahua"
+
+
+async def test_a_detected_variant_reaches_a_running_camera(hass, entry, monkeypatch):
+    """A variant picked by the add-on takes over the commands of the entity.
+
+    The PTZ test mode of the add-on republishes the camera file with the command set
+    that answered; the entity of a running Home Assistant follows it without a
+    restart - that is what "set as the main handling" means on this side.
+    """
+    camera = await setup_camera(hass, entry)
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    write_cameras_file(
+        hass,
+        {
+            "id": "front_door",
+            "name": "Front Door",
+            "url": "rtsp://10.0.0.5:554/stream1",
+            "rtsp_transport": "tcp",
+            "enabled": True,
+            "ptz": ptz_block(
+                profile="onvif",
+                commands={
+                    "left": "POST http://10.0.0.5/onvif/ptz_service <tptz:ContinuousMove/>"
+                },
+                stop_codes={},
+            ),
+        },
+    )
+    await camera.coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    state = hass.states.get("camera.front_door")
+    assert state is not None
+    assert state.attributes["ptz_profile"] == "onvif"
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "action": "left"},
+        blocking=True,
+    )
+    assert session.requests[-1]["method"] == "POST"
+    assert session.requests[-1]["url"] == "http://10.0.0.5/onvif/ptz_service"
 
 
 async def test_service_moves_and_stops_the_camera(hass, entry, monkeypatch):

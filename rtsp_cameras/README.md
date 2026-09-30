@@ -20,6 +20,11 @@ camera on any dashboard, because every instance turns into a regular
 - **Camera entities** – a bundled integration turns every instance into a
   `camera.<name>` entity with native Home Assistant streaming, so the camera card
   works like it does for any other camera.
+- **PTZ test mode** – enter the IP of the camera (or nothing at all) and one button
+  asks every supported variant (ONVIF, Axis, Dahua/Amcrest, Hikvision, Foscam,
+  Xiongmai, DVRIP on TCP 34567) which one really moves it. The variant that answers
+  becomes the main PTZ handling of the camera; the test only sends stop commands, so
+  the camera never moves.
 - **Four languages** – English, German, Spanish and Polish. The interface follows
   the language configured in Home Assistant, English is the default.
 - **Safe by design** – the interface is only reachable through the authenticated

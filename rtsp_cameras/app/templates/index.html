@@ -216,6 +216,34 @@
             </label>
           </div>
           <p class="note note--tight" data-i18n="ptz.base_hint"></p>
+
+          <div class="ptz__test">
+            <p class="ptz__test-title" data-i18n="ptz.test_mode"></p>
+            <div class="form__grid">
+              <label class="field">
+                <span class="field__label" data-i18n="ptz.test_address"></span>
+                <input type="text" id="field-ptz-test-ip" autocomplete="off" spellcheck="false"
+                       placeholder="192.168.1.108">
+              </label>
+              <label class="field">
+                <span class="field__label" data-i18n="ptz.test_port"></span>
+                <input type="number" id="field-ptz-test-port" min="1" max="65535" step="1"
+                       placeholder="34567">
+              </label>
+            </div>
+            <div class="ptz__actions">
+              <button type="button" class="btn btn--ghost" id="btn-ptz-detect">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v3M12 18v3M3 12h3M18 12h3"></path>
+                  <circle cx="12" cy="12" r="4"></circle>
+                </svg>
+                <span data-i18n="ptz.detect"></span>
+              </button>
+            </div>
+            <p class="note note--tight" data-i18n="ptz.test_address_hint"></p>
+            <div class="probe" id="ptz-detect-result" hidden></div>
+          </div>
+
           <p class="field__hint" id="ptz-profile-hint"></p>
           <div class="ptz__actions">
             <button type="button" class="btn btn--ghost" id="btn-ptz-fill">

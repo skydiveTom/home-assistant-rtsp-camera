@@ -32,11 +32,20 @@ from app.dvrip import (
     hash_password,
 )
 from app.ptz import (
+    PROBE_STATUS_AUTH,
+    PROBE_STATUS_NO_TOKEN,
+    PROBE_STATUS_OK,
+    PROBE_STATUS_TIMEOUT,
+    PROBE_STATUS_UNREACHABLE,
+    PROBE_STATUS_UNSUPPORTED,
     PTZ_PROFILES,
+    _probe_outcome,
+    async_probe_ptz,
     async_send,
     build_command,
     configured_actions,
     normalize_ptz,
+    probe_base_url,
     public_config,
 )
 from app.ptz import (
@@ -52,6 +61,8 @@ class RecordingHandler(BaseHTTPRequestHandler):
 
     received: list[dict[str, Any]] = []
     reply_body: bytes = b"ok"
+    #: Status every request is answered with (the PTZ test mode checks for 401 too).
+    status_code: int = 200
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         """Record a GET request."""
@@ -79,7 +90,7 @@ class RecordingHandler(BaseHTTPRequestHandler):
                 "content_type": self.headers.get("Content-Type"),
             }
         )
-        self.send_response(200)
+        self.send_response(RecordingHandler.status_code)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
         self.wfile.write(RecordingHandler.reply_body)
@@ -621,4 +632,294 @@ def test_dvrip_reports_a_refused_login(dvrip_cam: int) -> None:
 
     assert status is None
     assert error == "login_failed_101"
+
+
+# ----------------------------------------------------------- PTZ test mode
+@pytest.fixture(name="locked_cam")
+def locked_cam_fixture() -> Iterator[str]:
+    """Run a fake camera that answers every request with '401 Unauthorized'."""
+    RecordingHandler.received = []
+    RecordingHandler.status_code = 401
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RecordingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        RecordingHandler.status_code = 200
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_probe_base_url_accepts_what_a_user_types() -> None:
+    """An IP, a host:port and a full URL all become an HTTP base URL."""
+    assert probe_base_url("192.168.1.108") == "http://192.168.1.108"
+    assert probe_base_url("  192.168.1.108  ") == "http://192.168.1.108"
+    assert probe_base_url("camera.fritz.box:8080") == "http://camera.fritz.box:8080"
+    assert (
+        probe_base_url("https://192.168.1.108/onvif/device_service")
+        == "https://192.168.1.108"
+    )
+    assert probe_base_url("192.168.1.108", port=8000) == "http://192.168.1.108:8000"
+    assert probe_base_url("192.168.1.108:8080", port=8000) == "http://192.168.1.108:8000"
+    assert probe_base_url("") == ""
+    assert probe_base_url("", stream_url=RTSP_URL) == "http://192.168.1.28"
+
+
+@pytest.mark.parametrize(
+    ("status", "error", "snippet", "expected"),
+    [
+        (200, None, "ok", PROBE_STATUS_OK),
+        (204, None, "", PROBE_STATUS_OK),
+        # Vendor CGIs that report the failure with "200 OK" in the body
+        (200, None, "result=-1", PROBE_STATUS_AUTH),
+        (200, None, "result=-3", PROBE_STATUS_UNSUPPORTED),
+        (200, None, "<s:Fault>NotAuthorized</s:Fault>", PROBE_STATUS_AUTH),
+        (401, "HTTP 401", "", PROBE_STATUS_AUTH),
+        (403, "HTTP 403", "", PROBE_STATUS_AUTH),
+        (404, "HTTP 404", "", PROBE_STATUS_UNSUPPORTED),
+        (501, "HTTP 501", "", PROBE_STATUS_UNSUPPORTED),
+        (500, "HTTP 500", "", "error"),
+        (None, "[WinError 10061] connection refused", "", PROBE_STATUS_UNREACHABLE),
+        (None, "timeout", "", "timeout"),
+        (None, "login_failed_101", "", PROBE_STATUS_AUTH),
+        (None, "unexpected_reply_1001", "", PROBE_STATUS_UNSUPPORTED),
+    ],
+)
+def test_probe_outcome_maps_every_answer(
+    status: int | None, error: str | None, snippet: str, expected: str
+) -> None:
+    """Every answer of a camera is translated into the vocabulary of the test mode."""
+    assert _probe_outcome(status, error, snippet)[0] == expected
+
+
+def test_probe_keeps_the_variant_that_answers(
+    settings: Settings, client: TestClient, ptz_cam: str
+) -> None:
+    """The test mode stores the command set that accepted the stop command."""
+    camera = add_camera(
+        client,
+        url=RTSP_URL,
+        rtsp_transport="tcp",
+        ptz={
+            "enabled": True,
+            "profile": "custom",
+            "base_url": ptz_cam,
+            "commands": {"stop": f"GET {ptz_cam}/custom/stop"},
+            "presets": [{"id": "1", "name": "Gate"}],
+        },
+    )
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={"camera_id": camera["id"], "base_url": ptz_cam, "timeout": 2},
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    assert data["probe"]["ok"] is True
+    # ONVIF has no profile token here, so the first vendor CGI that answers wins.
+    assert data["probe"]["profile"] == "dahua"
+    assert data["applied"] is True
+
+    statuses = {item["profile"]: item["status"] for item in data["probe"]["results"]}
+    assert statuses["onvif"] == PROBE_STATUS_NO_TOKEN
+    assert statuses["dahua"] == PROBE_STATUS_OK
+
+    # The winner is the main handling now - with the commands of its profile and the
+    # presets of the camera - and it reaches Home Assistant through the camera file.
+    stored = data["camera"]["ptz"]
+    assert stored["profile"] == "dahua"
+    assert stored["actions"] == list(PTZ_PROFILES["dahua"]["commands"])
+    assert stored["presets"] == [{"id": "1", "name": "Gate"}]
+    assert "action=stop" in stored["commands"]["stop"]
+    # The stored command keeps the placeholders: which direction has to be stopped is
+    # only known when the command is sent.
+    assert "code={direction}" in stored["commands"]["stop"]
+
+    published = json.loads(Path(settings.published_file).read_text(encoding="utf-8"))
+    assert published["cameras"][0]["ptz"]["profile"] == "dahua"
+
+    # The probe really sent the stop command of the variant that won the test.
+    stops = [request for request in received() if request["query"].get("action") == "stop"]
+    assert stops
+    assert any(request["query"].get("code") == "Up" for request in stops)
+
+
+def test_probe_prefers_onvif_when_the_token_is_there(
+    client: TestClient, soap_cam: str
+) -> None:
+    """A device with an ONVIF PTZ service wins - and its token is filled in."""
+    camera = add_camera(client, url=RTSP_URL)
+
+    response = client.post(
+        "/api/ptz/probe", json={"camera_id": camera["id"], "base_url": soap_cam}
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    assert data["probe"]["profile"] == "onvif"
+    assert data["probe"]["token"] == "Profile_1"
+    # ONVIF is asked first and alone: the other variants need no request at all.
+    assert [item["profile"] for item in data["probe"]["results"]] == ["onvif"]
+    assert data["camera"]["ptz"]["token"] == "Profile_1"
+    assert (
+        "<tptz:ProfileToken>Profile_1</tptz:ProfileToken>"
+        in data["camera"]["ptz"]["commands"]["stop"]
+    )
+
+
+def test_probe_reports_missing_credentials(client: TestClient, locked_cam: str) -> None:
+    """A device that refuses the credentials is never made the main handling."""
+    camera = add_camera(
+        client, url=RTSP_URL, ptz={"profile": "xiongmai", "base_url": locked_cam}
+    )
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={"camera_id": camera["id"], "base_url": locked_cam, "timeout": 2},
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    assert data["probe"]["ok"] is False
+    # The variant exists, it only refuses the credentials - and that is reported.
+    assert data["probe"]["profile"] == "onvif"
+    assert data["probe"]["status"] == PROBE_STATUS_AUTH
+    assert data["applied"] is False
+    stored = client.get(f"/api/cameras/{camera['id']}").json()["camera"]["ptz"]
+    assert stored["profile"] == "xiongmai"
+
+
+def test_probe_reports_an_address_that_does_not_answer(client: TestClient) -> None:
+    """Nothing answers - the test says so and leaves the camera as it is."""
+    camera = add_camera(client, url=RTSP_URL)
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={"camera_id": camera["id"], "base_url": "http://127.0.0.1:9", "timeout": 2},
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    assert data["probe"]["ok"] is False
+    assert data["probe"]["profile"] is None
+    assert data["applied"] is False
+    # A closed port answers with "connection refused" or swallows the request.
+    assert {item["status"] for item in data["probe"]["results"]} <= {
+        PROBE_STATUS_UNREACHABLE,
+        PROBE_STATUS_TIMEOUT,
+    }
+    assert client.get(f"/api/cameras/{camera['id']}").json()["camera"]["ptz"] is None
+
+
+def test_probe_takes_the_address_from_the_camera(client: TestClient, ptz_cam: str) -> None:
+    """Without an address the host of the RTSP URL is used - the IP is typed once."""
+    port = urlsplit(ptz_cam).port
+    camera = add_camera(client, url=f"rtsp://127.0.0.1:{port}/stream1")
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={"camera_id": camera["id"], "http_port": port, "timeout": 2},
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    assert data["probe"]["base_url"] == f"http://127.0.0.1:{port}"
+    assert data["probe"]["profile"] == "dahua"
+    assert data["applied"] is True
+
+
+def test_probe_can_run_without_applying(client: TestClient, ptz_cam: str) -> None:
+    """``apply: false`` reports the winner and leaves the stored commands alone."""
+    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "xiongmai", "base_url": ptz_cam})
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={"camera_id": camera["id"], "base_url": ptz_cam, "apply": False},
+    )
+    data = response.json()
+
+    assert data["probe"]["profile"] == "dahua"
+    assert data["applied"] is False
+    assert data["camera"] is None
+    stored = client.get(f"/api/cameras/{camera['id']}").json()["camera"]["ptz"]
+    assert stored["profile"] == "xiongmai"
+
+
+def test_probe_needs_an_address(client: TestClient) -> None:
+    """A test without any address to ask is refused."""
+    response = client.post("/api/ptz/probe", json={"base_url": ""})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "ptz_base_url_required"
+
+
+def test_probe_reports_an_unknown_camera(client: TestClient, ptz_cam: str) -> None:
+    """A camera id that does not exist is reported instead of silently ignored."""
+    response = client.post(
+        "/api/ptz/probe", json={"camera_id": "nope", "base_url": ptz_cam}
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"] == "not_found"
+
+
+def test_probe_finds_a_dvrip_port(client: TestClient, dvrip_cam: int) -> None:
+    """A DVR without any HTTP interface is detected on its DVRIP port."""
+    camera = add_camera(
+        client,
+        url="rtsp://user:pass@127.0.0.1:554/user=user&password=pass&channel=1&stream=0.sdp",
+    )
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={
+            "camera_id": camera["id"],
+            # The HTTP interface of this DVR does not exist, its DVRIP port does.
+            "base_url": "127.0.0.1:9",
+            "port": dvrip_cam,
+            "timeout": 2,
+        },
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    assert data["probe"]["profile"] == "xiongmai_dvrip"
+    assert data["applied"] is True
+    assert data["camera"]["ptz"]["profile"] == "xiongmai_dvrip"
+    assert data["camera"]["ptz"]["port"] == dvrip_cam
+    assert DvripCamera.login["UserName"] == "user"
+    assert DvripCamera.received[0]["payload"]["PTZControl"]["Command"] == "DirectionUp"
+
+
+def test_probe_asks_every_variant_in_order(ptz_cam: str) -> None:
+    """The report carries one result per variant, in the order of the test."""
+    report = asyncio.run(async_probe_ptz(ptz_cam, timeout=2, stream_url=RTSP_URL))
+
+    assert report["ok"] is True
+    assert report["profile"] == "dahua"
+    assert report["tested"] == len(report["results"])
+    assert [item["profile"] for item in report["results"]] == [
+        "onvif",
+        "dahua",
+        "hikvision",
+        "axis",
+        "foscam",
+        "xiongmai",
+        "xiongmai_dvrip",
+    ]
+    assert all(item["label"] for item in report["results"])
+
+
+def test_probe_without_an_address_asks_nothing() -> None:
+    """An empty address is reported instead of asking the network."""
+    report = asyncio.run(async_probe_ptz(""))
+
+    assert report["ok"] is False
+    assert report["profile"] is None
+    assert report["results"] == []
+
+
 

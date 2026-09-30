@@ -25,6 +25,7 @@ from .const import (
     ATTR_CODEC,
     ATTR_PTZ,
     ATTR_PTZ_PRESETS,
+    ATTR_PTZ_PROFILE,
     ATTR_RTSP_TRANSPORT,
     ATTR_SOURCE_FILE,
     ATTR_STREAM_URL,
@@ -214,6 +215,9 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         ptz = self._definition.ptz
         if ptz is not None:
             attributes[ATTR_PTZ] = True
+            # Which variant moves this camera: picked with the PTZ test mode of the
+            # add-on, so the entity shows the handling that is in use.
+            attributes[ATTR_PTZ_PROFILE] = ptz.profile
             attributes[ATTR_PTZ_PRESETS] = [name for _, name in ptz.presets]
         return attributes
 
