@@ -185,14 +185,28 @@ channel. Only cameras with a different PTZ login need the fields filled in.
 
 For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
 `GetProfiles` to the media service, takes the first profile token and fills the
-commands with it. For **DVRIP** the port field (default 34567) is used; the add-on
-logs in with the credentials of the stream URL, which the devices expect as a double
-MD5 hash.
+commands with it. For **DVRIP** the port field (default 34567) is used; the add-on logs
+in with the credentials of the stream URL. The frames follow the vendor SDK
+(`libFunSDK.so` of the Android FunSDK): a 20 byte header (`0xFF`, version `0x01`,
+session, sequence, two flag bytes, the message type as a 16 bit value at offset 14 and
+the length of the JSON payload as a 32 bit value at offset 16) in front of a plain JSON
+payload. The `PassWord` of the login is the eight character hash `XMMD5Encrypt` builds
+out of the MD5 of the password - the bytes of every pair are added, the sum is taken
+modulo 62 and written as `0-9A-Za-z`, the user name is not part of it. The login types
+of the family (`DVRIP-Web`, `DVRIP-Mobile`, `DVRIP-Xm030`) are tried in that order, so a
+device that dislikes the first one is reached as well. Answers that a device pads with
+NUL bytes or line ends are parsed anyway.
 
 *Test PTZ* sends the **stop** command, so the test never moves the camera. Cameras
 without any control interface (for example a device that only speaks RTSP and a
 proprietary port that does not answer DVRIP) cannot be moved - the test reports that
-clearly.
+clearly. A camera that answers a command with `200 OK` and `Error` in the body (Dahua
+and Xiongmai do that when a code, a channel or the credentials do not fit) has not moved
+either: the panel and Home Assistant report it as a failure instead of showing nothing.
+The same is true for an answer that is a **web page**: devices that serve their web
+interface on port 80 (Xiongmai cameras do) reply `200 OK` and HTML to *every* path,
+which says nothing about a PTZ interface - the panel reports `camera answered: <!DOCTYPE
+html>…` and the test mode does not treat such a variant as the one that answered.
 
 **PTZ test mode - which variant does this camera understand?**
 
@@ -207,7 +221,7 @@ on TCP 34567 - and lists what each one answered:
 | --- | --- |
 | answers | the variant accepted the command and is stored as the **main PTZ handling** |
 | needs credentials | the interface exists (HTTP 401/403), but the user name or the password does not fit |
-| not supported | the variant is not implemented (HTTP 404, or a failure code in the body of a `200 OK`) |
+| not supported | the variant is not implemented (HTTP 404, a failure code in the body of a `200 OK`, or the web page of the device) |
 | no ONVIF profile token | the PTZ service exists, but the device published no media profile |
 | no answer (timeout), not reachable | the address did not answer within three seconds |
 
@@ -220,6 +234,14 @@ button cannot undo it. The presets of the camera survive a test. A variant that 
 *needs credentials* is reported, but never applied automatically. Home Assistant picks
 the new commands up within its scan interval, without a restart, and shows the variant
 in the `ptz_profile` attribute of the camera entity.
+
+**The stream URL is used as a hint**: its shape often names the family of a device. A
+Xiongmai URL (`…/user=admin&password=secret&channel=1&stream=0.sdp`) makes the test ask
+the Xiongmai variants first, `?channel=1&subtype=0` the Dahua one and
+`/Streaming/Channels/…` Hikvision. That matters, because several devices answer a foreign
+CGI with `200 OK` and `Error` in the body instead of refusing it - without the hint the
+commands of the wrong family would look like a camera that works. A variant whose answer
+consists of nothing but a failure word (like `Error`) is never stored.
 
 Home Assistant gets:
 

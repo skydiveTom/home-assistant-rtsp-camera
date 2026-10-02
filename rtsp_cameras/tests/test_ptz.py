@@ -24,13 +24,13 @@ from starlette.testclient import TestClient
 
 from app.config import Settings
 from app.dvrip import (
-    HEADER_FORMAT,
-    HEADER_SIZE,
     LOGIN_OK,
     MSG_LOGIN_RESPONSE,
     MSG_PTZ_REQUEST,
     MSG_PTZ_RESPONSE,
     hash_password,
+    pack,
+    unpack,
 )
 from app.ptz import (
     PROBE_STATUS_AUTH,
@@ -46,6 +46,7 @@ from app.ptz import (
     build_command,
     configured_actions,
     normalize_ptz,
+    preferred_profiles,
     probe_base_url,
     public_config,
     split_userinfo,
@@ -83,11 +84,12 @@ class RecordingHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
         parts = urlsplit(self.path)
+        query = {key: value[0] for key, value in parse_qs(parts.query).items()}
         RecordingHandler.received.append(
             {
                 "method": self.command,
                 "path": parts.path,
-                "query": {key: value[0] for key, value in parse_qs(parts.query).items()},
+                "query": query,
                 "body": body,
                 "content_type": self.headers.get("Content-Type"),
                 "authorization": self.headers.get("Authorization"),
@@ -96,10 +98,28 @@ class RecordingHandler(BaseHTTPRequestHandler):
         self.send_response(RecordingHandler.status_code)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(RecordingHandler.reply_body)
+        self.wfile.write(self.reply_for(query))
+
+    def reply_for(self, query: dict[str, str]) -> bytes:
+        """Return the body this fake camera answers with (a hook for test cameras)."""
+        return RecordingHandler.reply_body
 
     def log_message(self, *args: Any) -> None:
         """Keep the test output clean."""
+
+
+class XiongmaiHandler(RecordingHandler):
+    """A camera that only understands the PTZ codes of its own family.
+
+    Xiongmai devices answer a foreign CGI - the Dahua one for example - with ``200 OK``
+    and ``Error`` in the body, so a stop command alone does not tell which family a
+    device belongs to.
+    """
+
+    def reply_for(self, query: dict[str, str]) -> bytes:
+        """Accept the Xiongmai codes and reject the codes of other families."""
+        code = str(query.get("code") or "")
+        return b"OK" if code.startswith("Direction") else b"Error"
 
 
 @pytest.fixture(name="ptz_cam")
@@ -115,6 +135,61 @@ def ptz_cam_fixture() -> Iterator[str]:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.fixture(name="error_cam")
+def error_cam_fixture() -> Iterator[str]:
+    """Run a fake camera whose CGI reports failures with "200 OK" and "Error"."""
+    RecordingHandler.received = []
+    RecordingHandler.reply_body = b"Error"
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RecordingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        RecordingHandler.reply_body = b"ok"
+
+
+@pytest.fixture(name="html_cam")
+def html_cam_fixture() -> Iterator[str]:
+    """Run a fake camera whose web interface answers every command with a page.
+
+    This is what an Xiongmai device does on its port 80: the CGI paths do not exist,
+    the web server answers ``200 OK`` and the page of its interface for each of them.
+    """
+    RecordingHandler.received = []
+    RecordingHandler.reply_body = b"<!DOCTYPE html><html><body>NETSurveillance WEB</body></html>"
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RecordingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        RecordingHandler.reply_body = b"ok"
+
+
+@pytest.fixture(name="xiongmai_cam")
+def xiongmai_cam_fixture() -> Iterator[str]:
+    """Run a fake Xiongmai camera that rejects the codes of other families."""
+    RecordingHandler.received = []
+    RecordingHandler.reply_body = b"ok"
+    server = ThreadingHTTPServer(("127.0.0.1", 0), XiongmaiHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
 
 def test_profile_of_a_dvr_derives_the_base_url() -> None:
     """The Xiongmai profile fills the host from the RTSP URL."""
@@ -580,6 +655,54 @@ def test_ptz_endpoint_reports_a_broken_camera(client: TestClient) -> None:
     assert response.json()["detail"]
 
 
+def test_ptz_endpoint_reports_a_camera_that_answers_error(
+    client: TestClient, error_cam: str
+) -> None:
+    """A camera that answers "200 OK" and "Error" did not move - it is reported."""
+    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "dahua", "base_url": error_cam})
+
+    response = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "right"})
+
+    assert response.status_code == 502
+    assert response.json()["error"] == "ptz_failed"
+    assert "Error" in response.json()["detail"]
+
+
+def test_ptz_endpoint_reports_a_web_page(client: TestClient, html_cam: str) -> None:
+    """A command URL answered with the web page of the device did not reach a CGI."""
+    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "dahua", "base_url": html_cam})
+
+    response = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "up"})
+
+    assert response.status_code == 502
+    assert response.json()["error"] == "ptz_failed"
+    assert "DOCTYPE html" in response.json()["detail"]
+
+
+def test_probe_does_not_keep_a_web_page(client: TestClient, html_cam: str) -> None:
+    """No variant answered a command, so none of them is stored as the main handling.
+
+    A device whose port 80 is its web interface answers all seven transports with
+    ``200 OK`` and a page. Picking the first of them would publish commands that never
+    move the camera - the test mode has to report that nothing understood it.
+    """
+    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "dahua", "base_url": html_cam})
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={"camera_id": camera["id"], "base_url": html_cam, "timeout": 2},
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    assert data["probe"]["ok"] is False
+    assert data["probe"]["profile"] is None
+    assert data["applied"] is False
+    statuses = {item["profile"]: item["status"] for item in data["probe"]["results"]}
+    assert statuses["dahua"] == PROBE_STATUS_UNSUPPORTED
+    assert statuses["xiongmai"] == PROBE_STATUS_UNSUPPORTED
+
+
 def test_ptz_profiles_are_published(client: TestClient) -> None:
     """The editor loads the vendor presets from the add-on."""
     response = client.get("/api/ptz/profiles")
@@ -605,13 +728,24 @@ def test_ptz_is_published_to_home_assistant(
     assert ptz["stop_codes"]["left"] == "DirectionLeft"
     assert ptz["commands"]["left"].startswith(f"GET {ptz_cam}/cgi-bin/ptz.cgi?")
 
+#: The framing the devices use, written out here so that the test does not simply
+#: follow the implementation: a header of 20 bytes with the message type as a 16 bit
+#: value at offset 14 and the payload length as a 32 bit value at offset 16, the
+#: payload as plain JSON.
+DVRIP_HEADER = "<BB2xIIBBHI"
+DVRIP_HEADER_SIZE = struct.calcsize(DVRIP_HEADER)
+DVRIP_SESSION = 0x1234
+
+
 class DvripCamera(socketserver.ThreadingTCPServer):
     """Fake Xiongmai device that answers the DVRIP login and PTZ requests."""
 
     allow_reuse_address = True
     received: list[dict[str, Any]] = []
+    logins: list[dict[str, Any]] = []
     login: dict[str, Any] = {}
     fail_login = False
+    reject_login_types: dict[str, int] = {}
 
     def __init__(self) -> None:
         """Bind to a free port on localhost."""
@@ -625,47 +759,60 @@ class DvripHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         """Answer the two messages the client sends."""
         _message_id, payload = read_message(self.request)
+        DvripCamera.logins.append(payload)
         DvripCamera.login = payload
+        rejection = DvripCamera.reject_login_types.get(str(payload.get("LoginType")))
+        if rejection is not None:
+            self.request.sendall(reply(MSG_LOGIN_RESPONSE, {"Ret": rejection}))
+            return
         if DvripCamera.fail_login:
             self.request.sendall(reply(MSG_LOGIN_RESPONSE, {"Ret": 101}))
             return
-        self.request.sendall(reply(MSG_LOGIN_RESPONSE, {"Ret": 100, "SessionID": 1234}))
+        self.request.sendall(
+            reply(MSG_LOGIN_RESPONSE, {"Ret": 100, "SessionID": f"0x{DVRIP_SESSION:08X}"})
+        )
 
         message_id, payload = read_message(self.request)
         DvripCamera.received.append({"message_id": message_id, "payload": payload})
         self.request.sendall(reply(MSG_PTZ_RESPONSE, {"Ret": 100}))
 
 
+def _read_exactly(sock: Any, length: int) -> bytes:
+    """Read exactly ``length`` bytes from a socket."""
+    data = b""
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            raise AssertionError("connection closed")
+        data += chunk
+    return data
+
+
 def read_message(sock: Any) -> tuple[int, dict[str, Any]]:
     """Read a complete DVRIP message from a socket."""
-    header = b""
-    while len(header) < HEADER_SIZE:
-        chunk = sock.recv(HEADER_SIZE - len(header))
-        if not chunk:
-            raise AssertionError("connection closed")
-        header += chunk
-    _, _, _, _, _session, _, total, _current, message_id = struct.unpack(HEADER_FORMAT, header)
-    body = b""
-    while len(body) < total:
-        chunk = sock.recv(total - len(body))
-        if not chunk:
-            raise AssertionError("connection closed")
-        body += chunk
-    return message_id, json.loads(body.decode("utf-8") or "{}")
+    header = _read_exactly(sock, DVRIP_HEADER_SIZE)
+    parsed = struct.unpack(DVRIP_HEADER, header)
+    body = _read_exactly(sock, parsed[7]) if parsed[7] else b"{}"
+    return parsed[6], json.loads(body.decode("utf-8"))
 
 
 def reply(message_id: int, payload: dict[str, Any]) -> bytes:
-    """Build a DVRIP reply."""
+    """Build a DVRIP reply; devices pad the payload, the client has to tolerate it."""
     body = json.dumps(payload).encode("utf-8")
-    return struct.pack(HEADER_FORMAT, 0xFF, 0, 0, 0, 1234, 1, len(body), 0, message_id) + body
+    padding = b"\r\n"
+    length = len(body) + len(padding)
+    header = struct.pack(DVRIP_HEADER, 0xFF, 1, DVRIP_SESSION, 1, 0, 0, message_id, length)
+    return header + body + padding
 
 
 @pytest.fixture(name="dvrip_cam")
 def dvrip_cam_fixture() -> Iterator[int]:
     """Run a fake DVRIP device and yield its port."""
     DvripCamera.received = []
+    DvripCamera.logins = []
     DvripCamera.login = {}
     DvripCamera.fail_login = False
+    DvripCamera.reject_login_types = {}
     server = DvripCamera()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -699,7 +846,9 @@ def test_dvrip_login_and_ptz_reach_the_dvr(dvrip_cam: int) -> None:
     assert error is None, error
     assert status == LOGIN_OK
     assert DvripCamera.login["UserName"] == "admin"
-    assert DvripCamera.login["PassWord"] == hash_password("admin", "secret")
+    assert DvripCamera.login["EncryptType"] == "MD5"
+    assert DvripCamera.login["LoginType"] == "DVRIP-Web"
+    assert DvripCamera.login["PassWord"] == hash_password("secret")
 
     assert len(DvripCamera.received) == 1
     sent = DvripCamera.received[0]
@@ -708,7 +857,7 @@ def test_dvrip_login_and_ptz_reach_the_dvr(dvrip_cam: int) -> None:
     assert sent["payload"]["PTZControl"]["Command"] == "DirectionLeft"
     assert sent["payload"]["PTZControl"]["Parameter"]["Step"] == 6
     assert sent["payload"]["PTZControl"]["Parameter"]["Channel"] == 0
-    assert sent["payload"]["SessionID"] == 1234
+    assert sent["payload"]["SessionID"] == f"0x{DVRIP_SESSION:08X}"
 
 
 def test_dvrip_reports_a_refused_login(dvrip_cam: int) -> None:
@@ -725,6 +874,73 @@ def test_dvrip_reports_a_refused_login(dvrip_cam: int) -> None:
 
     assert status is None
     assert error == "login_failed_101"
+    assert [login["LoginType"] for login in DvripCamera.logins] == ["DVRIP-Web"], (
+        "a refused password is not worth another login type"
+    )
+
+
+def test_dvrip_login_hash_matches_the_sdk() -> None:
+    """``PassWord`` is the eight character hash of the vendor SDK.
+
+    ``XMMD5Encrypt`` of the FunSDK adds the two bytes of every MD5 pair, takes the
+    sum modulo 62 and writes it as ``0-9A-Za-z``. The user name is not part of it.
+    """
+    assert hash_password("") == "tlJwpbo6"
+    assert hash_password("admin") == "6QNMIQGe"
+    assert hash_password("secret") == "awAU3E4X"
+    assert len(hash_password("secret")) == 8
+
+
+def test_dvrip_header_follows_the_sdk_layout() -> None:
+    """The header carries the type at offset 14 and the payload length at offset 16."""
+    body = b'{"Ret":100}'
+    message = pack(MSG_LOGIN_RESPONSE, {"Ret": 100})
+
+    assert message[:2] == b"\xff\x01", "magic and version of the header"
+    assert message[2:4] == b"\x00\x00", "reserved bytes"
+    assert struct.unpack_from("<II", message, 4) == (0, 0), "session and sequence"
+    assert struct.unpack_from("<H", message, 14)[0] == MSG_LOGIN_RESPONSE
+    assert struct.unpack_from("<I", message, 16)[0] == len(body)
+    assert len(message) == 20 + len(body), "no padding behind the JSON"
+    assert message[20:] == body
+
+
+def test_dvrip_answers_with_padding_are_parsed() -> None:
+    """Devices pad their answers; the payload has to survive it."""
+    body = b'{"Ret":100,"SessionID":"0x0000002C"}'
+    header = struct.pack(DVRIP_HEADER, 0xFF, 1, 0x2C, 1, 0, 0, MSG_LOGIN_RESPONSE, len(body))
+
+    for padding in (b"", b"\r\n", b"\x00", b"\x00\x00"):
+        message_id, session, payload = unpack(header + body + padding)
+        assert message_id == MSG_LOGIN_RESPONSE
+        assert session == 0x2C
+        assert payload == {"Ret": 100, "SessionID": "0x0000002C"}
+
+
+def test_dvrip_asks_again_with_another_login_type(dvrip_cam: int) -> None:
+    """A device that dislikes the login type is asked with the next one."""
+    DvripCamera.reject_login_types = {"DVRIP-Web": 102}
+    config = normalize_ptz({"profile": "xiongmai_dvrip", "port": dvrip_cam}, RTSP_URL)
+    assert config is not None
+    command = build_command(config, "stop", direction="left")
+    assert command is not None
+
+    status, error = asyncio.run(
+        async_send(
+            command,
+            host="127.0.0.1",
+            port=dvrip_cam,
+            username="admin",
+            password="secret",
+        )
+    )
+
+    assert error is None, error
+    assert status == LOGIN_OK
+    assert [login["LoginType"] for login in DvripCamera.logins] == [
+        "DVRIP-Web",
+        "DVRIP-Mobile",
+    ]
 
 
 # ----------------------------------------------------------- PTZ test mode
@@ -760,6 +976,19 @@ def test_probe_base_url_accepts_what_a_user_types() -> None:
     assert probe_base_url("", stream_url=RTSP_URL) == "http://192.168.1.28"
 
 
+def test_the_stream_url_names_the_family_of_a_device() -> None:
+    """The shape of a stream URL is used as the hint for the PTZ test mode."""
+    assert preferred_profiles(RTSP_URL) == ("xiongmai", "xiongmai_dvrip")
+    assert preferred_profiles(
+        "rtsp://admin:secret@192.168.1.64:554/cam/realmonitor?channel=1&subtype=0"
+    ) == ("dahua",)
+    assert preferred_profiles("rtsp://admin:secret@192.168.1.64:554/Streaming/Channels/101") == (
+        "hikvision",
+    )
+    assert preferred_profiles("rtsp://192.168.1.28:554/stream1") == ()
+    assert preferred_profiles("") == ()
+
+
 @pytest.mark.parametrize(
     ("status", "error", "snippet", "expected"),
     [
@@ -778,6 +1007,18 @@ def test_probe_base_url_accepts_what_a_user_types() -> None:
         (None, "timeout", "", "timeout"),
         (None, "login_failed_101", "", PROBE_STATUS_AUTH),
         (None, "unexpected_reply_1001", "", PROBE_STATUS_UNSUPPORTED),
+        # ... and with nothing but a word: cheap cameras answer "200 OK" and "Error"
+        # when a code or a channel is wrong, which moves nothing.
+        (200, None, "Error", PROBE_STATUS_UNSUPPORTED),
+        (200, None, "  failed  ", PROBE_STATUS_UNSUPPORTED),
+        # ... and with a web page: the command URL does not exist, the device served the
+        # page of its web interface (an Xiongmai device answers like that on port 80).
+        (
+            200,
+            None,
+            "<!DOCTYPE html><html><body>NETSurveillance WEB</body></html>",
+            PROBE_STATUS_UNSUPPORTED,
+        ),
     ],
 )
 def test_probe_outcome_maps_every_answer(
@@ -812,19 +1053,20 @@ def test_probe_keeps_the_variant_that_answers(
 
     assert response.status_code == 200, response.text
     assert data["probe"]["ok"] is True
-    # ONVIF has no profile token here, so the first vendor CGI that answers wins.
-    assert data["probe"]["profile"] == "dahua"
+    # ONVIF has no profile token here and the stream URL is the Xiongmai shape, so the
+    # hinted variant is asked before the other vendor CGIs and wins the test.
+    assert data["probe"]["profile"] == "xiongmai"
     assert data["applied"] is True
 
     statuses = {item["profile"]: item["status"] for item in data["probe"]["results"]}
     assert statuses["onvif"] == PROBE_STATUS_NO_TOKEN
-    assert statuses["dahua"] == PROBE_STATUS_OK
+    assert statuses["xiongmai"] == PROBE_STATUS_OK
 
     # The winner is the main handling now - with the commands of its profile and the
     # presets of the camera - and it reaches Home Assistant through the camera file.
     stored = data["camera"]["ptz"]
-    assert stored["profile"] == "dahua"
-    assert stored["actions"] == list(PTZ_PROFILES["dahua"]["commands"])
+    assert stored["profile"] == "xiongmai"
+    assert stored["actions"] == list(PTZ_PROFILES["xiongmai"]["commands"])
     assert stored["presets"] == [{"id": "1", "name": "Gate"}]
     assert "action=stop" in stored["commands"]["stop"]
     # The stored command keeps the placeholders: which direction has to be stopped is
@@ -832,12 +1074,12 @@ def test_probe_keeps_the_variant_that_answers(
     assert "code={direction}" in stored["commands"]["stop"]
 
     published = json.loads(Path(settings.published_file).read_text(encoding="utf-8"))
-    assert published["cameras"][0]["ptz"]["profile"] == "dahua"
+    assert published["cameras"][0]["ptz"]["profile"] == "xiongmai"
 
     # The probe really sent the stop command of the variant that won the test.
     stops = [request for request in received() if request["query"].get("action") == "stop"]
     assert stops
-    assert any(request["query"].get("code") == "Up" for request in stops)
+    assert any(request["query"].get("code") == "DirectionUp" for request in stops)
 
 
 def test_probe_prefers_onvif_when_the_token_is_there(
@@ -926,7 +1168,7 @@ def test_probe_takes_the_address_from_the_camera(client: TestClient, ptz_cam: st
 
 def test_probe_can_run_without_applying(client: TestClient, ptz_cam: str) -> None:
     """``apply: false`` reports the winner and leaves the stored commands alone."""
-    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "xiongmai", "base_url": ptz_cam})
+    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "dahua", "base_url": ptz_cam})
 
     response = client.post(
         "/api/ptz/probe",
@@ -934,11 +1176,11 @@ def test_probe_can_run_without_applying(client: TestClient, ptz_cam: str) -> Non
     )
     data = response.json()
 
-    assert data["probe"]["profile"] == "dahua"
+    assert data["probe"]["profile"] == "xiongmai"
     assert data["applied"] is False
     assert data["camera"] is None
     stored = client.get(f"/api/cameras/{camera['id']}").json()["camera"]["ptz"]
-    assert stored["profile"] == "xiongmai"
+    assert stored["profile"] == "dahua"
 
 
 def test_probe_needs_an_address(client: TestClient) -> None:
@@ -987,9 +1229,42 @@ def test_probe_finds_a_dvrip_port(client: TestClient, dvrip_cam: int) -> None:
     assert DvripCamera.received[0]["payload"]["PTZControl"]["Command"] == "DirectionUp"
 
 
+def test_probe_finds_the_variant_a_xiongmai_url_points_at(
+    client: TestClient, xiongmai_cam: str
+) -> None:
+    """Foreign codes are answered with "Error", the codes of the device with "OK".
+
+    This is the case that stored Dahua commands in a Xiongmai camera: the stop command
+    of the wrong family was answered with "200 OK" and "Error" instead of being
+    refused, so the wrong commands looked like a camera that works.
+    """
+    camera = add_camera(
+        client,
+        url="rtsp://borys:secret@127.0.0.1:554/user=borys&password=secret&channel=1&stream=0.sdp",
+        ptz={"enabled": True, "profile": "custom", "base_url": xiongmai_cam},
+    )
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={"camera_id": camera["id"], "base_url": xiongmai_cam, "timeout": 2},
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    assert data["probe"]["profile"] == "xiongmai"
+    assert data["applied"] is True
+    assert data["camera"]["ptz"]["profile"] == "xiongmai"
+    statuses = {item["profile"]: item["status"] for item in data["probe"]["results"]}
+    assert statuses["xiongmai"] == PROBE_STATUS_OK
+    # "200 OK" with "Error" in the body is not a camera that moves.
+    assert statuses["dahua"] == PROBE_STATUS_UNSUPPORTED
+
+
 def test_probe_asks_every_variant_in_order(ptz_cam: str) -> None:
     """The report carries one result per variant, in the order of the test."""
-    report = asyncio.run(async_probe_ptz(ptz_cam, timeout=2, stream_url=RTSP_URL))
+    report = asyncio.run(
+        async_probe_ptz(ptz_cam, timeout=2, stream_url="rtsp://192.168.1.28:554/stream1")
+    )
 
     assert report["ok"] is True
     assert report["profile"] == "dahua"
@@ -1004,6 +1279,27 @@ def test_probe_asks_every_variant_in_order(ptz_cam: str) -> None:
         "xiongmai_dvrip",
     ]
     assert all(item["label"] for item in report["results"])
+
+
+def test_probe_asks_the_variant_of_the_stream_url_first(ptz_cam: str) -> None:
+    """A URL that names the family of a device decides which variant is asked first.
+
+    The fake camera answers every command with "ok", so without the hint the second
+    entry of PROBE_ORDER (Dahua) would win - which is how the commands of the wrong
+    family ended up in a camera that does not understand them.
+    """
+    report = asyncio.run(async_probe_ptz(ptz_cam, timeout=2, stream_url=RTSP_URL))
+
+    assert report["profile"] == "xiongmai"
+    assert [item["profile"] for item in report["results"]] == [
+        "onvif",
+        "xiongmai",
+        "xiongmai_dvrip",
+        "dahua",
+        "hikvision",
+        "axis",
+        "foscam",
+    ]
 
 
 def test_probe_without_an_address_asks_nothing() -> None:

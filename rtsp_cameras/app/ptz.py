@@ -22,7 +22,7 @@ import base64
 import json
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from http.client import HTTPException
 from typing import Any
@@ -79,6 +79,24 @@ PROBE_ORDER = (
     "xiongmai",
     "xiongmai_dvrip",
 )
+#: The shape of a stream URL names the family of a device often enough to be worth a
+#: hint: Xiongmai style URLs carry the credentials, the channel and the stream as path
+#: parameters, Dahua URLs a ``channel``/``subtype`` pair. The test mode asks the variants
+#: such a URL points at first - devices of other families answer a foreign CGI with
+#: ``200 OK`` as well, so the order decides which commands end up being stored.
+URL_PROFILE_HINTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
+    (
+        re.compile(r"[?&/]user=[^&]*&password=|(?:^|[?&])stream=\d+(?:\.sdp)?", re.IGNORECASE),
+        ("xiongmai", "xiongmai_dvrip"),
+    ),
+    (re.compile(r"realmonitor|subtype=\d+", re.IGNORECASE), ("dahua",)),
+    (re.compile(r"/streaming/channels/", re.IGNORECASE), ("hikvision",)),
+    (re.compile(r"/axis-media/|/axis-cgi/", re.IGNORECASE), ("axis",)),
+)
+#: A body that consists of nothing but one of these words is a failure as well. Cheap
+#: cameras answer ``200 OK`` with ``Error`` when a code or a channel is wrong, which
+#: would otherwise look like a camera that works and moves nothing.
+PROBE_FAILURE_WORDS = ("error", "failed", "failure", "not support", "unsupported")
 #: Status of one probe result.
 PROBE_STATUS_OK = "ok"
 PROBE_STATUS_AUTH = "auth"
@@ -103,6 +121,11 @@ PROBE_FAILURE_MARKERS = (
     "not supported",
     "invalidoperation",
 )
+#: An answer that is a web page: the command URL does not exist on the device and its
+#: web interface served the page instead. Xiongmai cameras answer every path of their
+#: port 80 with ``200 OK`` and HTML, so the status line alone would make each variant of
+#: the test mode look like a transport that answered.
+PROBE_HTML_MARKERS = ("<!doctype", "<html")
 
 #: Minimal SOAP documents. Most ONVIF devices accept them without the full
 #: namespaces; the profile token is discovered once and stays in the camera.
@@ -585,6 +608,29 @@ def _positive_port(value: Any, fallback: int) -> int:
     return port if 1 <= port <= 65535 else fallback
 
 
+def preferred_profiles(stream_url: str) -> tuple[str, ...]:
+    """Return the PTZ variants the shape of a stream URL points at.
+
+    The stream URL is usually the only thing a user knows about a camera, and it is a
+    good hint: a Xiongmai device carries its credentials, its channel and its stream as
+    path parameters. An empty result means the URL says nothing about the vendor.
+    """
+    text = str(stream_url or "")
+    for pattern, profiles in URL_PROFILE_HINTS:
+        if pattern.search(text):
+            return profiles
+    return ()
+
+
+def _hinted_first(profiles: Iterable[str], stream_url: str) -> list[str]:
+    """Put the variants a stream URL points at in front of the other ones."""
+    rest = list(profiles)
+    hinted = [profile for profile in preferred_profiles(stream_url) if profile in rest]
+    if not hinted:
+        return rest
+    return hinted + [profile for profile in rest if profile not in hinted]
+
+
 def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
     """Validate the PTZ block of a camera and fill in its defaults.
 
@@ -827,6 +873,27 @@ def _send_blocking_detail(
         return status, f"HTTP {status} {snippet.strip()}".strip(), snippet
     return status, None, snippet
 
+
+def answer_says_failure(snippet: str) -> bool:
+    """Return True when a camera answered ``2xx`` and still reported a failure.
+
+    Several vendor CGIs answer ``200 OK`` and put the reason into the body: Dahua and
+    Xiongmai say ``Error``, others repeat the rejected action or a ``result=-1``. A
+    device whose port 80 is its web interface answers *every* command URL with a page,
+    which is no answer to a PTZ command either. A command that was answered like that
+    has not moved the camera, so it is not a success - the panel and Home Assistant
+    have to report it.
+    """
+    text = " ".join(str(snippet or "").split()).lower().strip(" .:!;")
+    if not text:
+        return False
+    if any(marker in text for marker in PROBE_AUTH_MARKERS + PROBE_FAILURE_MARKERS):
+        return True
+    if text.startswith(PROBE_HTML_MARKERS):
+        return True
+    return text in PROBE_FAILURE_WORDS
+
+
 async def async_run(
     config: Mapping[str, Any],
     action: str,
@@ -844,13 +911,18 @@ async def async_run(
         return PtzResult(ok=False, action=action, command="", detail="no_command_configured")
 
     host = urlsplit(str(config.get("base_url") or "")).hostname or ""
-    status, error = await async_send(
+    status, error, snippet = await async_send_detail(
         command,
         host=host,
         port=_positive_port(config.get("port"), DEFAULT_DVRIP_PORT),
         username=str(config.get("username") or ""),
         password=str(config.get("password") or ""),
     )
+    if error is None and answer_says_failure(snippet):
+        # "200 OK" with "Error" in the body: the camera rejected the command without
+        # saying so in the status line. It is reported instead of pretending that the
+        # camera moved.
+        error = f"camera answered: {' '.join(str(snippet).split())[:MAX_RESPONSE_SNIPPET]}"
     return PtzResult(ok=error is None, action=action, command=command, status=status, detail=error)
 
 
@@ -966,7 +1038,7 @@ def _probe_outcome(
         # Some vendor CGIs send "200 OK" and put the failure into the body.
         if any(marker in lowered for marker in PROBE_AUTH_MARKERS):
             return PROBE_STATUS_AUTH, text[:MAX_RESPONSE_SNIPPET] or None
-        if any(marker in lowered for marker in PROBE_FAILURE_MARKERS):
+        if answer_says_failure(text):
             return PROBE_STATUS_UNSUPPORTED, text[:MAX_RESPONSE_SNIPPET] or None
         return PROBE_STATUS_OK, None
 
@@ -1169,7 +1241,7 @@ async def async_probe_ptz(
         if result.ok:
             return _probe_report(base_url, results)
 
-    remaining = [profile for profile in order if profile != "onvif"]
+    remaining = _hinted_first((profile for profile in order if profile != "onvif"), stream_url)
     if remaining:
         answers = await asyncio.gather(
             *(

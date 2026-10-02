@@ -15,3 +15,6 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
+
+# Vendor SDK the DVRIP protocol was read out of (not part of the add-on)
+.sdk/

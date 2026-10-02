@@ -29,8 +29,13 @@ CAMERAS_FILE = "rtsp_cameras/cameras.json"
 class FakeResponse:
     """Stand-in for an aiohttp response of the camera."""
 
-    def __init__(self, status: int = 200) -> None:
+    def __init__(self, status: int = 200, body: str = "") -> None:
         self.status = status
+        self.body = body
+
+    async def text(self) -> str:
+        """Return what the camera answered in the body."""
+        return self.body
 
     async def __aenter__(self) -> FakeResponse:
         """Enter the response context."""
@@ -44,9 +49,10 @@ class FakeResponse:
 class FakeSession:
     """Record the PTZ requests Home Assistant would send."""
 
-    def __init__(self, status: int = 200, error: Exception | None = None) -> None:
+    def __init__(self, status: int = 200, error: Exception | None = None, body: str = "") -> None:
         self.status = status
         self.error = error
+        self.body = body
         self.requests: list[dict[str, Any]] = []
 
     def request(
@@ -63,7 +69,7 @@ class FakeSession:
         )
         if self.error is not None:
             raise self.error
-        return FakeResponse(self.status)
+        return FakeResponse(self.status, self.body)
 
 
 def use_session(monkeypatch: pytest.MonkeyPatch, session: FakeSession) -> None:
@@ -311,6 +317,29 @@ async def test_service_reports_a_camera_without_ptz(hass, entry, monkeypatch):
     assert session.requests == []
 
 
+async def test_service_reports_a_web_page_instead_of_a_command(hass, entry, monkeypatch):
+    """A command URL answered with a web page has not reached a PTZ interface.
+
+    Xiongmai devices answer every path of their port 80 with ``200 OK`` and the page of
+    their web interface, which used to look like a command that worked.
+    """
+    await setup_camera(hass, entry)
+    use_session(
+        monkeypatch,
+        FakeSession(body="<!DOCTYPE html><html><body>NETSurveillance WEB</body></html>"),
+    )
+
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            DOMAIN,
+            "ptz",
+            {"entity_id": "camera.front_door", "action": "up"},
+            blocking=True,
+        )
+
+    assert "camera answered: <!DOCTYPE html>" in str(err.value)
+
+
 async def test_service_reports_a_broken_camera(hass, entry, monkeypatch):
     """A camera answering with an error does not look like success."""
     await setup_camera(hass, entry)
@@ -320,6 +349,26 @@ async def test_service_reports_a_broken_camera(hass, entry, monkeypatch):
         await hass.services.async_call(
             DOMAIN, "ptz", {"entity_id": "camera.front_door", "action": "stop"}, blocking=True
         )
+
+
+async def test_service_reports_a_camera_that_answers_error(hass, entry, monkeypatch):
+    """A camera that answers "200 OK" and "Error" has not moved - it is an error.
+
+    Dahua and Xiongmai answer a rejected command like that, which used to look like a
+    service call that worked.
+    """
+    await setup_camera(hass, entry)
+    use_session(monkeypatch, FakeSession(body="Error"))
+
+    with pytest.raises(HomeAssistantError) as err:
+        await hass.services.async_call(
+            DOMAIN,
+            "ptz",
+            {"entity_id": "camera.front_door", "action": "right"},
+            blocking=True,
+        )
+
+    assert "camera answered: Error" in str(err.value)
 
 
 async def test_preset_buttons_are_created(hass, entry, monkeypatch):

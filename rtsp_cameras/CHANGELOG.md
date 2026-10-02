@@ -4,6 +4,49 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-10-02
+
+### Fixed
+
+- **DVRIP (TCP 34567) speaks the protocol of the devices now - the header and the
+  password hash were both wrong, so a Xiongmai camera answered nothing at all.**
+  Measured against the vendor SDK (`libFunSDK.so` of the Android FunSDK, see
+  `DVRIP_MSG_HEAD_T`, `MNetSDK::CProtocolNetIP::InitMsg` and `XMMD5Encrypt`): the
+  20 byte header carries the message type as a 16 bit value at **offset 14** and the
+  length of the JSON payload as a 32 bit value at **offset 16** (`0xFF`, version
+  `0x01`, session, sequence, two flag bytes). The add-on had the two fields swapped, so
+  a device read `type 0`, waited for the payload of a message that never came and closed
+  the connection - that is exactly the "accepted and closed again, no answer" the test
+  mode kept reporting. The `PassWord` of the login is neither the password nor its
+  double MD5 either: it is the eight character hash of `XMMD5Encrypt`, built from the
+  MD5 digest (the two bytes of every pair are added, the sum is taken modulo 62 and
+  written as `0-9A-Za-z`; the user name is not part of it). The login types of the
+  family (`DVRIP-Web`, `DVRIP-Mobile`, `DVRIP-Xm030`) are tried in that order, so a
+  device that rejects the one that is asked first is still reached, and answers that a
+  device pads with NUL bytes or line ends are parsed.
+- **A camera that says which family it belongs to through its stream URL is asked the
+  matching PTZ variant first.** A Xiongmai device (stream URLs shaped like
+  `…/user=admin&password=secret&channel=1&stream=0.sdp`) answers the *stop* command of
+  the Dahua profile with `200 OK`, so the test mode stored the Dahua commands and every
+  arrow of the panel moved nothing. The shape of the stream URL now decides which
+  variant is asked first - `xiongmai` (and `xiongmai_dvrip`) before `dahua`,
+  `/Streaming/Channels/…` before the rest, `?channel=…&subtype=…` for Dahua - so the
+  commands that really move the camera are the ones that get stored.
+- **A command that is answered with `200 OK` and a failure in the body is reported
+  instead of being taken for a success.** Dahua and Xiongmai answer a rejected command
+  (wrong code, wrong channel, credentials that do not fit) with `200 OK` and `Error`.
+  The panel and Home Assistant report that as `ptz_failed` **with the answer of the
+  camera next to it** instead of showing nothing while the camera stands still. A body
+  that consists of nothing but a failure word (`Error`, `failed`, …) no longer counts as
+  a variant that answered in the PTZ test mode either.
+- **A command URL that is answered with the web page of the camera counts as a failure
+  now.** Xiongmai cameras serve their web interface on port 80 and answer *every* path
+  with `200 OK` and HTML - the CGI paths of the vendor profiles included. Measured on a
+  live device: all seven variants of the test mode looked like a transport that
+  answered, the first one (Dahua) was stored, and none of its commands moved anything.
+  An answer that is a web page is now treated like `Error`: reported as `ptz_failed` and
+  never a winner of the PTZ test mode.
+
 ## [0.3.1] - 2026-10-02
 
 ### Fixed

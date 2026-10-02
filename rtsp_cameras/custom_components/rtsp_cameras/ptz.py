@@ -5,6 +5,10 @@ the add-on documentation). Home Assistant only fills in the values of the moment
 speed, preset number and the direction of a stop command - and sends the request.
 That keeps this integration free of vendor tables and works for every camera the
 add-on can talk to.
+
+An answer of ``200 OK`` is not proof that the camera moved: Dahua and Xiongmai answer a
+rejected command with ``200 OK`` and ``Error`` in the body. Such an answer is reported
+as a failure as well, so an automation does not silently assume that the camera moved.
 """
 
 from __future__ import annotations
@@ -32,6 +36,44 @@ ONVIF_DIRECTIONS = {
     "tilt": {"UP": "up", "DOWN": "down"},
     "zoom": {"ZOOM_IN": "zoom_in", "ZOOM_OUT": "zoom_out"},
 }
+
+
+#: Answers that report a failure although the status line said ``2xx``. Several vendor
+#: CGIs do that: Dahua and Xiongmai answer "Error" when a code, a channel or the
+#: credentials are wrong, others a ``result=-1`` or a SOAP fault.
+ANSWER_FAILURE_MARKERS = (
+    "result=-1",
+    "notauthorized",
+    "not authorized",
+    "unauthorized",
+    "authentication",
+    "result=-3",
+    "<fault",
+    "notsupported",
+    "not supported",
+    "invalidoperation",
+)
+#: Bodies that consist of nothing but a word - the whole answer is the failure report.
+ANSWER_FAILURE_WORDS = ("error", "failed", "failure", "not support", "unsupported")
+#: Bodies that are a web page: the command URL does not exist on the device, its web
+#: interface served a page instead of running the command. Xiongmai devices answer each
+#: path of their port 80 with ``200 OK`` and HTML, so the status line alone makes every
+#: variant of a PTZ test look like a camera that answered.
+ANSWER_HTML_MARKERS = ("<!doctype", "<html")
+#: How much of such an answer is kept for the error message of the failed command.
+MAX_ANSWER_LENGTH = 200
+
+
+def answer_says_failure(snippet: str) -> bool:
+    """Return True when a camera answered ``2xx`` and still reported a failure."""
+    text = " ".join(str(snippet or "").split()).lower().strip(" .:!;")
+    if not text:
+        return False
+    if any(marker in text for marker in ANSWER_FAILURE_MARKERS):
+        return True
+    if text.startswith(ANSWER_HTML_MARKERS):
+        return True
+    return text in ANSWER_FAILURE_WORDS
 
 
 @dataclass(slots=True)
@@ -125,6 +167,15 @@ async def async_send(
                 if status >= HTTPStatus.BAD_REQUEST:
                     return PtzOutcome(
                         action=command, url=url, status=status, error=f"HTTP {status}"
+                    )
+                snippet = await response.text()
+                if answer_says_failure(snippet):
+                    answer = " ".join(snippet.split())[:MAX_ANSWER_LENGTH]
+                    return PtzOutcome(
+                        action=command,
+                        url=url,
+                        status=status,
+                        error=f"camera answered: {answer}",
                     )
                 return PtzOutcome(action=command, url=url, status=status)
     except TimeoutError:
