@@ -8,6 +8,7 @@ interface of a camera and records what it received.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import socketserver
 import struct
@@ -47,6 +48,7 @@ from app.ptz import (
     normalize_ptz,
     probe_base_url,
     public_config,
+    split_userinfo,
 )
 from app.ptz import (
     async_discover_onvif_token as discover_onvif_token,
@@ -88,6 +90,7 @@ class RecordingHandler(BaseHTTPRequestHandler):
                 "query": {key: value[0] for key, value in parse_qs(parts.query).items()},
                 "body": body,
                 "content_type": self.headers.get("Content-Type"),
+                "authorization": self.headers.get("Authorization"),
             }
         )
         self.send_response(RecordingHandler.status_code)
@@ -139,6 +142,36 @@ def test_credentials_are_encoded_and_hidden() -> None:
     assert masked is not None
     assert "pwd=***" in masked["commands"]["up"]
     assert "p w" not in json.dumps(masked)
+
+
+def test_split_userinfo_moves_credentials_into_a_header() -> None:
+    """A command URL with user information cannot be sent by urllib as it is.
+
+    urllib reads ``user:password@host`` as host and port, so such a command used
+    to end in ``InvalidURL: nonnumeric port`` instead of a request.
+    """
+    clean, authorization = split_userinfo(
+        "http://admin:p%40ss@192.168.1.10:8080/cgi-bin/ptz.cgi?action=start&code=Left"
+    )
+
+    assert clean == "http://192.168.1.10:8080/cgi-bin/ptz.cgi?action=start&code=Left"
+    expected = base64.b64encode(b"admin:p@ss").decode("ascii")
+    assert authorization == f"Basic {expected}"
+
+
+def test_split_userinfo_leaves_plain_urls_alone() -> None:
+    """Nothing to do without credentials, and a broken URL stays readable."""
+    url = "http://192.168.1.10/cgi-bin/ptz.cgi?action=stop"
+
+    assert split_userinfo(url) == (url, None)
+    assert split_userinfo("") == ("", None)
+    # A port that is not a number is reported by the sender, not by this helper.
+    assert split_userinfo("http://camera:abc/x") == ("http://camera:abc/x", None)
+    # A URL without a host stays broken, but the password is still taken out of it.
+    clean, authorization = split_userinfo("http://admin:secret@")
+    assert clean == "http://"
+    expected = base64.b64encode(b"admin:secret").decode("ascii")
+    assert authorization == f"Basic {expected}"
 
 
 def test_custom_commands_win_over_the_profile() -> None:
@@ -394,6 +427,66 @@ def test_ptz_endpoint_sends_the_command(client: TestClient, ptz_cam: str) -> Non
     assert request["query"]["action"] == "start"
     assert request["query"]["code"] == "DirectionLeft"
     assert request["query"]["arg2"] == "6"
+
+
+def test_ptz_endpoint_with_credentials_inside_the_command_url(
+    client: TestClient, ptz_cam: str
+) -> None:
+    """A command URL carrying user information must be sent, not rejected.
+
+    Such a URL used to end in the generic HTTP 500 of the endpoint, because
+    urllib cannot split ``user:password@host``. The credentials now travel in an
+    ``Authorization`` header and the URL reaches the camera without them.
+    """
+    host = ptz_cam.replace("http://", "http://admin:secret@", 1)
+    camera = add_camera(
+        client,
+        url=RTSP_URL,
+        ptz={
+            "profile": "custom",
+            "commands": {"left": f"GET {host}/cgi-bin/ptz.cgi?action=start&code=DirectionLeft"},
+        },
+    )
+
+    response = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "left"})
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["ptz"]["ok"] is True
+    assert payload["ptz"]["status"] == 200
+    assert "secret" not in json.dumps(payload), "the password must not be echoed"
+
+    request = received()[0]
+    assert request["path"] == "/cgi-bin/ptz.cgi"
+    assert request["query"]["action"] == "start"
+    token = base64.b64encode(b"admin:secret").decode("ascii")
+    assert request["authorization"] == f"Basic {token}"
+
+
+def test_ptz_endpoint_reports_a_command_url_that_cannot_be_sent(
+    client: TestClient,
+) -> None:
+    """A send that cannot even be prepared is a clear error, not a crash.
+
+    ``urllib`` refuses ``host:port`` when the port is not a number; that used to
+    escape as an unhandled ``InvalidURL`` and a generic HTTP 500.
+    """
+    camera = add_camera(
+        client,
+        url=RTSP_URL,
+        ptz={
+            "profile": "custom",
+            "commands": {"left": "GET http://camera:not_a_port/x"},
+        },
+    )
+
+    response = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "left"})
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["error"] == "ptz_failed"
+    assert "port" in payload["detail"].lower()
+    assert "<html>" not in response.text, "not the HTML error page of the web server"
 
 
 def test_ptz_endpoint_stops_with_the_moved_direction(client: TestClient, ptz_cam: str) -> None:

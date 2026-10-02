@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -315,6 +316,127 @@ def test_hls_preview_falls_back_to_tcp(
     assert started.json()["transport"] == "tcp"
 
 
+def test_hls_start_reports_the_ffmpeg_output_of_a_stalled_stream(
+    workspace: Path,
+    integration_source: Path,
+    fake_tools: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A black picture must come with an explanation, not just ``stream_failed``.
+
+    A camera that accepts the RTSP connection but never sends a picture leaves
+    ffmpeg running without a playlist; the only hint is its stderr, so the API
+    has to send that along.
+    """
+    settings = build_settings(
+        workspace, {"test_timeout": 1}, integration_source=integration_source
+    )
+    with TestClient(create_app(settings)) as test_client:
+        camera = add_camera(test_client)
+        monkeypatch.setenv("FAKE_FFMPEG_MODE", "hls-stall")
+
+        response = test_client.post(f"/api/cameras/{camera['id']}/hls/start")
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["error"] == "stream_failed"
+    assert "Operation timed out" in payload["detail"]
+    assert set(payload["attempts"]) == {"tcp/encode"}
+    assert "Operation timed out" in payload["attempts"]["tcp/encode"]
+    report = payload["report"]
+    assert report["segments"] == 0
+    assert any("Operation timed out" in line for line in report["log"])
+
+
+def test_hls_start_reports_every_attempt_when_nothing_works(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both H.264 handlings are tried, and both failures are kept.
+
+    The codec of ffprobe may be stale, so the copy is attempted first and the
+    encode second - a single ``stream_failed`` cannot tell whether the stream or
+    the option was wrong.
+    """
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_PROBE_MODE", "ok")
+    client.post(f"/api/cameras/{camera['id']}/test")
+    probed = client.get(f"/api/cameras/{camera['id']}").json()["camera"]
+    assert probed["last_probe"]["details"]["codec"] == "h264"
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "fail")
+
+    response = client.post(f"/api/cameras/{camera['id']}/hls/start")
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert set(payload["attempts"]) == {"tcp/copy", "tcp/encode"}
+    assert "Connection refused" in payload["attempts"]["tcp/copy"]
+    assert "Connection refused" in payload["attempts"]["tcp/encode"]
+
+
+def test_hls_start_encodes_when_the_copy_of_a_reported_h264_fails(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stream that is not what ffprobe reported is still turned into pictures."""
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_PROBE_MODE", "ok")
+    client.post(f"/api/cameras/{camera['id']}/test")
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "hls-copy-fail")
+
+    started = client.post(f"/api/cameras/{camera['id']}/hls/start")
+
+    assert started.status_code == 200, started.text
+    payload = started.json()
+    assert payload["transport"] == "tcp"
+    assert payload["transcode"] is True, "the copy failed, so the stream is encoded"
+
+
+def test_hls_start_does_not_accept_a_playlist_without_media(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A playlist holding a zero length segment is not a preview.
+
+    A source that can be opened but never delivers a picture still leaves a
+    playlist behind: one ``#EXTINF:0.000000`` segment behind an ENDLIST, written
+    when ffmpeg closes. Reporting that as a running preview is what turns into a
+    black player and a bare ``stream_failed`` in the panel, so the ffmpeg reason
+    has to be handed to the caller instead.
+    """
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "hls-empty")
+
+    response = client.post(f"/api/cameras/{camera['id']}/hls/start")
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["error"] == "stream_failed"
+    assert "I/O error" in payload["detail"]
+    assert "I/O error" in payload["attempts"]["tcp/encode"]
+
+
+def test_preview_detect_does_not_report_an_empty_playlist_as_working(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The detection must not keep a mode whose playlist carries no media.
+
+    The panel asks for a preview mode and trusts the answer, so a playlist
+    without a playable segment has to be reported as a failure - with both
+    attempts named - instead of being stored as the mode that works.
+    """
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "hls-empty")
+
+    response = client.post(f"/api/cameras/{camera['id']}/preview/detect")
+
+    assert response.status_code == 502, response.text
+    payload = response.json()
+    assert payload["error"] == "stream_failed"
+    assert set(payload["attempts"]) == {"mjpeg/tcp", "hls/tcp"}
+    assert "I/O error" in payload["attempts"]["hls/tcp"]
+
+    stored = client.get(f"/api/cameras/{camera['id']}").json()["camera"]
+    assert not stored["preview_mode"], "a dead stream must not become the mode"
+
+
 def test_probe_hints_tcp_when_the_transport_delivers_nothing(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -469,6 +591,49 @@ def test_stream_test_publishes_the_codec(
     published = json.loads(settings.published_file.read_text(encoding="utf-8"))
     # Home Assistant warns about streams browsers cannot play.
     assert published["cameras"][0]["codec"] == "h264"
+
+
+def test_hls_playlist_survives_a_rewrite_while_it_is_served(
+    client: TestClient, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The playlist has to be sent from one snapshot, not from the file on disk.
+
+    ffmpeg overwrites ``index.m3u8`` every second while the browser is fetching
+    it. A response that announces the size from a moment ago and then streams
+    whatever the file holds ends in "Too little data for declared Content-Length"
+    (h11 drops the connection) and the player reports a dead stream. The playlist
+    and the segments are therefore read in one go.
+    """
+    camera = add_camera(client)
+    monkeypatch.setenv("FAKE_FFMPEG_MODE", "hls")
+    assert client.post(f"/api/cameras/{camera['id']}/hls/start").status_code == 200
+
+    playlist = settings.preview_dir / camera["id"] / "index.m3u8"
+    playlist_text = str(playlist)
+    complete = playlist.read_bytes()
+    assert b"#EXTINF" in complete
+    real_stat = os.stat
+    measurements = {"count": 0}
+
+    def stat_then_rewrite(target, *args, **kwargs):
+        """Shrink the playlist the way ffmpeg does, right after it is measured."""
+        result = real_stat(target, *args, **kwargs)
+        if str(target) == playlist_text:
+            measurements["count"] += 1
+            if measurements["count"] == 2:
+                playlist.write_text("#EXTM3U\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(os, "stat", stat_then_rewrite)
+    served = client.get(f"/api/cameras/{camera['id']}/hls/index.m3u8")
+    monkeypatch.undo()
+
+    # A size that was measured before the file changed must not be announced:
+    # the browser would be left with a truncated playlist and report a dead
+    # stream instead of playing the camera.
+    assert served.status_code == 200
+    assert int(served.headers["content-length"]) == len(served.content)
+    assert b"#EXTINF" in served.content
 
 
 def test_hls_endpoints(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

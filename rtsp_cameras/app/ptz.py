@@ -18,14 +18,16 @@ is currently moving, because most vendor APIs need the direction on stop as well
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from . import dvrip
@@ -377,7 +379,9 @@ class PtzResult:
         return {
             "ok": self.ok,
             "action": self.action,
-            "command": self.command,
+            # The credentials of a vendor CGI live inside the command URL, so the
+            # copy that goes to the browser is masked like the camera editor does it.
+            "command": mask_credentials(self.command),
             "status": self.status,
             "detail": self.detail,
         }
@@ -411,13 +415,22 @@ class PtzProbeResult:
 
 
 def mask_credentials(value: Any) -> str:
-    """Replace the credentials of a command URL with asterisks."""
+    """Replace the credentials of a command URL with asterisks.
+
+    Credentials show up in two places: inside the query string of the vendor CGI
+    (``?password=...``) and - for cameras whose driver puts them there - as the
+    user information of the URL (``http://user:password@camera/...``).
+    """
     text = str(value or "")
     for marker in ("password=", "pwd=", "pass="):
         head, separator, _ = text.partition(marker)
         if separator:
             text = f"{head}{separator}***"
-    return text
+    # Imported here: app.models imports this module, so a module level import
+    # would be circular.
+    from .models import redact_credentials  # noqa: PLC0415 - avoids a cycle
+
+    return redact_credentials(text)
 
 
 def profile_list() -> list[dict[str, Any]]:
@@ -737,6 +750,39 @@ async def async_send_detail(
     return await asyncio.to_thread(_send_blocking_detail, method, url, body, timeout)
 
 
+def split_userinfo(url: str) -> tuple[str, str | None]:
+    """Split ``http://user:password@host/path`` into URL and Authorization value.
+
+    ``urllib`` cannot send a URL that carries the credentials as user information:
+    it splits the host at the last colon, so ``user:password@host`` becomes the
+    host and ``password@host`` the port, which fails with
+    ``InvalidURL: nonnumeric port``. Such a command therefore has to be turned
+    into a clean URL plus a ready made ``Authorization: Basic ...`` header.
+
+    Returns the URL unchanged and ``None`` when it carries no credentials. A URL
+    that cannot be parsed at all is returned unchanged as well, so the caller
+    still reports a readable error instead of raising.
+    """
+    text = str(url or "").strip()
+    try:
+        parts = urlsplit(text)
+        username = parts.username
+        password = parts.password
+        port = parts.port
+    except ValueError:
+        return text, None
+    if not username and not password:
+        return text, None
+
+    host = parts.hostname or ""
+    if port is not None:
+        host = f"{host}:{port}"
+    clean = urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+    credentials = f"{unquote(username or '')}:{unquote(password or '')}"
+    token = base64.b64encode(credentials.encode()).decode("ascii")
+    return clean, f"Basic {token}"
+
+
 def _send_blocking(
     method: str, url: str, body: bytes | None, timeout: float
 ) -> tuple[int | None, str | None]:
@@ -748,25 +794,35 @@ def _send_blocking(
 def _send_blocking_detail(
     method: str, url: str, body: bytes | None, timeout: float
 ) -> tuple[int | None, str | None, str]:
-    """Send an HTTP command and keep the beginning of the answer."""
-    request = Request(url, data=body, method=method)
-    if body:
-        # ONVIF wants SOAP, the vendor CGIs plain XML.
-        content_type = (
-            "application/soap+xml; charset=utf-8"
-            if b"Envelope" in body[:400]
-            else "application/xml"
-        )
-        request.add_header("Content-Type", content_type)
+    """Send an HTTP command and keep the beginning of the answer.
+
+    Commands of several vendor profiles carry the credentials of the camera
+    inside the URL; urllib cannot send that shape at all, so the user
+    information is moved into an ``Authorization`` header first.
+    """
+    url, authorization = split_userinfo(url)
     try:
+        request = Request(url, data=body, method=method)
+        if authorization:
+            request.add_header("Authorization", authorization)
+        if body:
+            # ONVIF wants SOAP, the vendor CGIs plain XML.
+            content_type = (
+                "application/soap+xml; charset=utf-8"
+                if b"Envelope" in body[:400]
+                else "application/xml"
+            )
+            request.add_header("Content-Type", content_type)
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - user configured URL
             snippet = response.read(MAX_RESPONSE_SNIPPET).decode("utf-8", "replace")
             status = int(response.status)
     except HTTPError as err:
         snippet = err.read(MAX_RESPONSE_SNIPPET).decode("utf-8", "replace")
         return int(err.code), f"HTTP {err.code}", snippet
-    except (URLError, OSError, ValueError) as err:
-        return None, str(err), ""
+    except (HTTPException, URLError, OSError, ValueError) as err:
+        # HTTPException covers http.client.InvalidURL, which a malformed command
+        # URL used to turn into an unhandled 500.
+        return None, str(err) or err.__class__.__name__, ""
     if status >= 400:
         return status, f"HTTP {status} {snippet.strip()}".strip(), snippet
     return status, None, snippet
@@ -847,20 +903,21 @@ def _post_soap(
     url: str, body: bytes, username: str, password: str, timeout: float
 ) -> tuple[int | None, str | None, str]:
     """Send a SOAP request and return status, error and the response text."""
+    url, authorization = split_userinfo(url)
     request = Request(url, data=body, method="POST")
     request.add_header("Content-Type", "application/soap+xml; charset=utf-8")
-    if username:
-        import base64  # noqa: PLC0415 - only needed for authenticated devices
-
-        credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
-        request.add_header("Authorization", f"Basic {credentials}")
+    if not authorization and username:
+        token = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
+        authorization = f"Basic {token}"
+    if authorization:
+        request.add_header("Authorization", authorization)
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - user URL
             return int(response.status), None, response.read(4096).decode("utf-8", "replace")
     except HTTPError as err:
         return int(err.code), f"HTTP {err.code}", err.read(4096).decode("utf-8", "replace")
-    except (URLError, OSError, ValueError) as err:
-        return None, str(err), ""
+    except (HTTPException, URLError, OSError, ValueError) as err:
+        return None, str(err) or err.__class__.__name__, ""
 
 
 def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:

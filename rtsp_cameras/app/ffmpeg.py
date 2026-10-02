@@ -6,8 +6,10 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import shutil
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +23,22 @@ _LOGGER = logging.getLogger(__name__)
 STREAM_CHUNK = 64 * 1024
 JPEG_START = b"\xff\xd8"
 JPEG_END = b"\xff\xd9"
+#: How many lines of ffmpeg output are kept for error reporting.
+STDERR_TAIL_LINES = 40
+#: Length of one HLS segment in seconds.
+HLS_SEGMENT_SECONDS = 1
+#: ffmpeg prints the reason for a failure first and then the shutdown noise of
+#: its encoders ("Task finished with error code: -22"), so the last lines alone
+#: would hand the panel the noise instead of the cause.
+_ERROR_CAUSE = re.compile(
+    r"\bError\b|Invalid data|Connection (refused|reset|timed out)|Operation timed out|"
+    r"No such file|Permission denied|Non-monotonous DTS|Server returned|not found"
+)
+_ERROR_NOISE = re.compile(
+    r"Task finished with error code|Terminating thread with return code|"
+    r"Nothing was written into output file|Conversion failed"
+)
+_ERROR_SCAN_LINES = 12
 
 
 def _scale_filter(max_height: int) -> str:
@@ -91,11 +109,20 @@ class HlsSession:
     directory: Path
     process: asyncio.subprocess.Process
     touched: float
+    #: Last lines ffmpeg wrote to stderr, kept for error reporting.
+    log_lines: deque[str] = field(default_factory=lambda: deque(maxlen=STDERR_TAIL_LINES))
+    #: Task that fills ``log_lines`` while the process is alive.
+    drain: asyncio.Task[None] | None = None
 
     @property
     def playlist(self) -> Path:
         """Return the playlist path of this session."""
         return self.directory / "index.m3u8"
+
+    @property
+    def segments(self) -> list[Path]:
+        """Return the segments written so far."""
+        return sorted(self.directory.glob("segment_*.ts"))
 
 
 def binary_command(name: str) -> list[str] | None:
@@ -147,10 +174,23 @@ class FFmpegService:
         return [*self._input_args(url, transport, timeout), "-i", url]
 
     def _clean_error(self, raw: bytes | str) -> str:
-        """Return a short error message with any URL credentials removed."""
+        """Return a short error message with any URL credentials removed.
+
+        ffmpeg reports the reason first (``Error during demuxing: I/O error``)
+        and then the teardown of its encoders (``Task finished with error code:
+        -22``). Taking the last lines blindly therefore hides the cause of a
+        failed preview behind the noise that followed it.
+        """
         text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
         lines = [line.strip() for line in text.splitlines() if line.strip()]
-        message = " | ".join(lines[-3:]) or "ffmpeg stopped without an error message"
+        causes = [
+            line
+            for line in lines[-_ERROR_SCAN_LINES:]
+            if _ERROR_CAUSE.search(line) and not _ERROR_NOISE.search(line)
+        ]
+        message = " | ".join((causes or lines[-3:])[-3:])
+        if not message:
+            message = "ffmpeg stopped without an error message"
         if self.settings.redact_credentials_in_logs:
             message = redact_credentials(message)
         return message[:500]
@@ -167,6 +207,25 @@ class FFmpegService:
         if transport is not None:
             with contextlib.suppress(Exception):
                 transport.close()
+
+    async def _drain_stderr(self, session: HlsSession) -> None:
+        """Keep the last lines of ffmpeg output of an HLS session.
+
+        ffmpeg often keeps running without writing a single segment (a camera
+        that sends no packets, for example), so its output has to be read while
+        it runs - otherwise the failure cannot be explained afterwards.
+        """
+        stream = session.process.stderr
+        if stream is None:
+            return
+        with contextlib.suppress(Exception):
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                text = line.decode("utf-8", "replace").strip()
+                if text:
+                    session.log_lines.append(text)
 
     # ----------------------------------------------------------------- probe
     async def probe(
@@ -377,6 +436,55 @@ class FFmpegService:
             await self._stop(process)
 
     # ------------------------------------------------------------------- hls
+    def _hls_video_args(
+        self,
+        codec: str | None,
+        transcode: bool | None,
+        fps: int | None = None,
+        max_height: int | None = None,
+    ) -> list[str]:
+        """Return the video options of an HLS session.
+
+        ``transcode=None`` keeps the historical rule: an H.264 stream is copied,
+        anything else is encoded, because a browser can only play H.264 (and HLS
+        cannot carry the MJPEG of a camera). ``True``/``False`` force one of the
+        two, so a camera whose codec cannot be detected can be tried both ways.
+        """
+        if transcode is None:
+            transcode = str(codec or "").lower() != "h264"
+        if not transcode:
+            return ["-an", "-c:v", "copy"]
+        height = int(max_height or self.settings.preview_max_height)
+        rate = max(1, int(fps or self.settings.preview_fps))
+        # A segment can only end at a keyframe, and ``-tune zerolatency`` leaves
+        # libx264 at its default GOP of 250 frames: at preview_fps the next
+        # keyframe after the start would be 50 seconds away, so the muxer wrote a
+        # single huge segment and the panel never got a playable playlist
+        # (reported as "stream_failed"). One keyframe per segment keeps the
+        # preview alive one segment after the start.
+        keyframe_interval = max(1, rate * HLS_SEGMENT_SECONDS)
+        return [
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-tune",
+            "zerolatency",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(rate),
+            "-g",
+            str(keyframe_interval),
+            "-keyint_min",
+            str(keyframe_interval),
+            "-sc_threshold",
+            "0",
+            "-vf",
+            _scale_filter(height),
+        ]
+
     async def start_hls(
         self,
         camera_id: str,
@@ -385,8 +493,14 @@ class FFmpegService:
         codec: str | None = None,
         fps: int | None = None,
         max_height: int | None = None,
+        transcode: bool | None = None,
     ) -> HlsSession:
-        """Start an HLS session for a camera and return it."""
+        """Start an HLS session for a camera and return it.
+
+        ``transcode`` overrides the video handling derived from ``codec``, which
+        lets the caller fall back to a plain copy when encoding is impossible
+        (a container without ``libx264``, for example).
+        """
         if not self.ffmpeg_bin:
             raise FFmpegUnavailable("ffmpeg is not installed in this container")
 
@@ -394,26 +508,7 @@ class FFmpegService:
         directory = self.settings.preview_dir / camera_id
         shutil.rmtree(directory, ignore_errors=True)
         directory.mkdir(parents=True, exist_ok=True)
-        height = int(max_height or self.settings.preview_max_height)
-
-        if str(codec or "").lower() == "h264":
-            video_args = ["-an", "-c:v", "copy"]
-        else:
-            video_args = [
-                "-an",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-tune",
-                "zerolatency",
-                "-pix_fmt",
-                "yuv420p",
-                "-r",
-                str(int(fps or self.settings.preview_fps)),
-                "-vf",
-                _scale_filter(height),
-            ]
+        video_args = self._hls_video_args(codec, transcode, fps, max_height)
 
         command = [
             *self.ffmpeg_bin,
@@ -422,7 +517,7 @@ class FFmpegService:
             "-f",
             "hls",
             "-hls_time",
-            "1",
+            str(HLS_SEGMENT_SECONDS),
             "-hls_list_size",
             "5",
             "-hls_flags",
@@ -447,6 +542,9 @@ class FFmpegService:
             touched=time.monotonic(),
         )
         self.sessions[camera_id] = session
+        # Read stderr while ffmpeg runs: a process that stays alive without
+        # writing a segment is otherwise completely silent.
+        session.drain = asyncio.create_task(self._drain_stderr(session))
         return session
 
     def get_session(self, camera_id: str, touch: bool = True) -> HlsSession | None:
@@ -461,6 +559,11 @@ class FFmpegService:
         session = self.sessions.pop(camera_id, None)
         if session is None:
             return False
+        if session.drain is not None:
+            session.drain.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await session.drain
+            session.drain = None
         await self._stop(session.process)
         return True
 
@@ -482,7 +585,21 @@ class FFmpegService:
             await self.stop_hls(camera_id)
 
     async def hls_error(self, session: HlsSession) -> str | None:
-        """Return the error output of a finished HLS process."""
+        """Return the ffmpeg message of an HLS session, or None when there is none.
+
+        The output captured while ffmpeg was running comes first: a process that
+        never wrote a segment is usually still alive (it simply waits for packets
+        that never arrive), so insisting on a finished process would turn every
+        such failure into the useless ``stream_failed``.
+        """
+        # Let the reader task finish first when the process is gone: it may
+        # already have taken the text out of the pipe, and then only ``log_lines``
+        # knows about it. A still running process keeps its reader.
+        if session.process.returncode is not None and session.drain is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(session.drain), timeout=1)
+        if session.log_lines:
+            return self._clean_error("\n".join(session.log_lines))
         if session.process.returncode is None:
             return None
         stderr = b""
@@ -490,3 +607,16 @@ class FFmpegService:
             with contextlib.suppress(Exception):
                 stderr = await session.process.stderr.read()
         return self._clean_error(stderr)
+
+    def session_report(self, session: HlsSession) -> dict[str, Any]:
+        """Return a small diagnostic report about an HLS session.
+
+        The JSON API sends it along when a preview cannot be started, so "ffmpeg
+        is stuck" and "ffmpeg died" can be told apart without another request.
+        """
+        return {
+            "running": session.process.returncode is None,
+            "returncode": session.process.returncode,
+            "segments": len(session.segments),
+            "log": list(session.log_lines)[-3:],
+        }

@@ -118,8 +118,12 @@ The add-on option *Preview mode* defaults to `auto`: the first time you open the
 preview of a camera, MJPEG is tried first and HLS second. The mode that produced
 a picture is stored on that camera and is the only one used afterwards - so a
 camera whose MJPEG stream cannot be decoded (or whose frames are swallowed by a
-buffering reverse proxy) simply switches to HLS and stays there. Set the option
-to `mjpeg` or `hls` to skip the detection and force one mode.
+buffering reverse proxy) simply switches to HLS. That note is kept per browser
+for ten minutes and then MJPEG is tried again, so one slow first frame does not
+decide the mode for good (the add-on itself waits for that first frame up to
+`test_timeout` seconds before it answers, and the browser waits at least as
+long). Set the option to `mjpeg` or `hls` to skip the detection and force one
+mode.
 
 ## The camera entity in Home Assistant
 
@@ -310,7 +314,7 @@ If you manage the integration yourself, set the add-on option
 | `test_timeout` | `15` | Seconds to wait for a camera when testing or previewing. |
 | `preview_mode` | `auto` | `auto` tests MJPEG first and HLS second and keeps the working mode per camera. `mjpeg` re-encodes every frame (universal), `hls` copies H.264 streams when possible (low CPU). |
 | `preview_max_height` | `1080` | Height limit for snapshots and previews. |
-| `preview_fps` | `5` | Frame rate of the MJPEG preview and of transcoded HLS. |
+| `preview_fps` | `5` | Frame rate of the MJPEG preview and of transcoded HLS. It also sets the keyframe interval of the HLS preview, so a segment is one second long and an H.265 stream starts playing instead of waiting for the next keyframe. |
 | `redact_credentials_in_logs` | `true` | Mask user name and password inside stream URLs before logging. |
 
 ## Files
@@ -410,6 +414,9 @@ camera to `tcp` as well so the health checks and Home Assistant use it too.
   stream header, the preview has to **decode** the frames. RTSP over **UDP** loses
   packets easily, so the add-on retries the preview over **TCP** automatically - the
   panel then shows `UDP lost too many packets ...` as a hint.
+- A failed preview names the reason: `attempts` lists every mode and RTSP transport
+  that was tried, `report` carries what ffmpeg printed - the cause first, not the
+  shutdown of its encoder threads.
 - H.264/H.265 streams work best in the HLS mode; switch the mode in the preview
   window.
 - A camera in **H.265/HEVC** has to be decoded (and for Home Assistant also

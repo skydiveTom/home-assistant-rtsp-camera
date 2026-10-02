@@ -4,11 +4,20 @@
 
   const STORAGE_KEY = 'rtsp-camera-manager.language';
   const MJPEG_FLAG_KEY = 'rtsp-camera-manager.mjpeg-blocked';
-  /* How long the browser waits for the first MJPEG frame before it assumes the
-     frames never make it through the reverse proxy and switches to HLS. */
-  const PREVIEW_FIRST_FRAME_MS = 8000;
+  /* The note "MJPEG does not arrive here" is a hint for the next try, not a fact:
+     one slow first frame (a camera whose stream has to be decoded, a busy Wi-Fi
+     link) must not push this browser to HLS forever, so the note expires. */
+  const MJPEG_FLAG_TTL_MS = 10 * 60 * 1000;
   const bootstrap = JSON.parse(document.getElementById('bootstrap').textContent || '{}');
   const BASE = String(bootstrap.base_path || '').replace(/\/+$/, '');
+  /* How long the browser waits for the first MJPEG frame before it assumes the
+     frames never make it through the reverse proxy and switches to HLS. The
+     add-on itself waits for that first frame before it answers and gives the
+     stream its own timeout, so the browser has to wait at least as long -
+     otherwise a slow camera is declared blocked while its frame is on the way. */
+  const previewTimeoutSeconds =
+    Number(bootstrap.settings && bootstrap.settings.test_timeout) || 15;
+  const PREVIEW_FIRST_FRAME_MS = Math.max(8000, previewTimeoutSeconds * 1000 + 2000);
 
   const state = {
     cameras: bootstrap.cameras || [],
@@ -19,7 +28,15 @@
     language: 'en',
     editing: null,
     addonUpdate: { available: false, update_available: false, busy: false },
-    preview: { cameraId: null, mode: 'auto', hls: null, loaded: {}, resolved: {}, timer: null },
+    preview: {
+      cameraId: null,
+      mode: 'auto',
+      hls: null,
+      loaded: {},
+      resolved: {},
+      mjpegBlockedAt: 0,
+      timer: null,
+    },
     ptzProfiles: [],
     ptzActions: ['up', 'down', 'left', 'right', 'zoom_in', 'zoom_out', 'home', 'stop', 'preset'],
     ptzDirection: null,
@@ -1282,18 +1299,27 @@
   }
 
   function mjpegBlocked() {
-    if (state.preview.mjpegBlocked) return true;
+    if (state.preview.mjpegBlockedAt) {
+      if (Date.now() - state.preview.mjpegBlockedAt < MJPEG_FLAG_TTL_MS) return true;
+      state.preview.mjpegBlockedAt = 0;
+    }
     try {
-      return window.localStorage.getItem(MJPEG_FLAG_KEY) === '1';
+      const stored = window.localStorage.getItem(MJPEG_FLAG_KEY);
+      if (!stored) return false;
+      const at = Number.parseInt(stored, 10);
+      if (Number.isFinite(at) && Date.now() - at < MJPEG_FLAG_TTL_MS) return true;
+      // An expired note (or the older plain "1") must not decide the next preview.
+      window.localStorage.removeItem(MJPEG_FLAG_KEY);
+      return false;
     } catch (err) {
       return false;
     }
   }
 
   function rememberMjpegBlocked() {
-    state.preview.mjpegBlocked = true;
+    state.preview.mjpegBlockedAt = Date.now();
     try {
-      window.localStorage.setItem(MJPEG_FLAG_KEY, '1');
+      window.localStorage.setItem(MJPEG_FLAG_KEY, String(state.preview.mjpegBlockedAt));
     } catch (err) {
       /* the flag is optional */
     }

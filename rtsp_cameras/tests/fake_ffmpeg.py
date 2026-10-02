@@ -1,10 +1,16 @@
 """Stand-in for ffmpeg used by the add-on test suite.
 
 The behaviour is selected with the FAKE_FFMPEG_MODE environment variable:
-snapshot (default), mjpeg, hls, mixed, fail, sleep.
+snapshot (default), mjpeg, hls, mixed, fail, sleep, udp-fail, hls-stall,
+hls-copy-fail, hls-empty and demux-noise.
 
 ``mixed`` emulates a camera whose frames cannot be decoded (MJPEG fails) while
 HLS works, which is what the automatic preview detection has to cope with.
+``hls-stall`` stands for a camera that never delivers a picture (ffmpeg stays
+alive without writing a segment), ``hls-copy-fail`` for one that is not the
+codec ffprobe claims (the copy fails, the encode works), and ``hls-empty`` for
+one that ends up with a playlist that holds a zero length segment only, which
+must not be mistaken for a working preview.
 """
 
 from __future__ import annotations
@@ -91,6 +97,57 @@ def main() -> int:
         return 0
     if MODE == "hls":
         return write_hls(command)
+    if MODE == "hls-stall":
+        # A camera that accepts the connection but never sends a picture: ffmpeg
+        # stays alive without writing a segment, so only stderr says anything.
+        sys.stderr.write("rtsp://camera.local:554/stream: Operation timed out\n")
+        sys.stderr.flush()
+        time.sleep(SLEEP_SECONDS)
+        return 0
+    if MODE == "hls-copy-fail":
+        # A stream that is not the codec ffprobe reported: copying it yields
+        # nothing usable, while the same stream can be encoded.
+        if "libx264" not in command:
+            sys.stderr.write("Non-monotonous DTS in output stream 0:0\n")
+            return 1
+        return write_hls(command)
+    if MODE == "demux-noise":
+        # A failed demuxing followed by the teardown of the encoder, in the order
+        # ffmpeg writes it: the cause is printed first, the noise after it.
+        sys.stderr.write("[in#0 @ 0x1] Error during demuxing: I/O error\n")
+        sys.stderr.write("[vost#0:0/mjpeg @ 0x2] Task finished with error code: -22\n")
+        sys.stderr.write("[vost#0:0/mjpeg @ 0x2] Terminating thread with return code -22\n")
+        sys.stderr.write(
+            "[vost#0:0/mjpeg @ 0x2] Nothing was written into output file, "
+            "because at least one of its streams received no packets.\n"
+        )
+        return 1
+    if MODE == "hls-empty":
+        # A source that can be opened but never delivers a picture: the HLS
+        # muxer writes a playlist with a single zero length segment and closes
+        # it behind an ENDLIST, exactly like a real ffmpeg does after a failed
+        # demuxing. Such a playlist is not a preview.
+        if output_format(command) != "hls":
+            sys.stderr.write("no frames\n")
+            return 1
+        playlist = command[-1]
+        directory = os.path.dirname(playlist)
+        os.makedirs(directory, exist_ok=True)
+        with open(playlist, "w", encoding="utf-8") as handle:
+            handle.write(
+                "#EXTM3U\n"
+                "#EXT-X-VERSION:3\n"
+                "#EXT-X-TARGETDURATION:0\n"
+                "#EXT-X-MEDIA-SEQUENCE:0\n"
+                "#EXT-X-DISCONTINUITY\n"
+                "#EXTINF:0.000000,\n"
+                "segment_000.ts\n"
+                "#EXT-X-ENDLIST\n"
+            )
+        with open(os.path.join(directory, "segment_000.ts"), "wb"):
+            pass
+        sys.stderr.write("Error during demuxing: I/O error\n")
+        return 1
     if MODE == "mixed":
         if output_format(command) in ("mjpeg", "image2", "image2pipe"):
             sys.stderr.write(

@@ -18,7 +18,6 @@ from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import (
-    FileResponse,
     HTMLResponse,
     JSONResponse,
     Response,
@@ -667,6 +666,25 @@ def _preview_transports(camera: Camera) -> list[str]:
     return transports
 
 
+def _hls_transcode_modes(camera: Camera) -> list[bool]:
+    """Return the video handling of HLS to try, first choice first.
+
+    ``codec`` comes from ffprobe and can be wrong (a camera switched between
+    H.264 and H.265 keeps its old report), and the wrong choice looks exactly
+    like a dead stream - a copy of an unplayable codec and an encode of a stream
+    that never arrives both end in a black player. The opposite handling is
+    therefore tried as well; an extra encode costs CPU, a preview that never
+    arrives costs more.
+    """
+    codec = _camera_codec(camera)
+    if codec in ("h264", "avc1"):
+        # A copy needs no encoder at all, so it is the cheapest first attempt.
+        return [False, True]
+    # Everything else has to be encoded (HLS cannot carry MJPEG), and an unknown
+    # codec is treated the same way: encoding H.264 works as well.
+    return [True]
+
+
 def _mjpeg_part(frame: bytes) -> bytes:
     """Frame one JPEG image as a multipart body part."""
     header = (
@@ -762,13 +780,38 @@ async def camera_mjpeg(request: Request) -> Response:
     )
 
 
-async def _start_hls_session(
-    context: AppContext, camera: Camera, transport: str | None = None
-) -> tuple[HlsSession | None, str | None]:
-    """Start an HLS session for a camera and wait until its playlist exists.
+_EXTINF = re.compile(r"#EXTINF:\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 
-    Returns the running session, or None together with an error message. The
-    special value ``ffmpeg_missing`` means the container has no ffmpeg at all.
+
+def _playlist_has_media(session: HlsSession) -> bool:
+    """Return True when the playlist announces a segment with a real duration.
+
+    The HLS muxer writes ``index.m3u8`` as soon as it has closed a segment, so an
+    existing playlist normally means pictures are arriving. A source that can be
+    opened but never delivers a frame is muxed as one zero length segment
+    instead (``#EXTINF:0.000000`` and ``#EXT-X-ENDLIST``). Accepting that as a
+    success is what leaves the panel with a black player and the bare message
+    ``stream_failed``: the mode looks fine while there is nothing to play, and
+    the ffmpeg reason that explains it is thrown away.
+    """
+    try:
+        playlist = session.playlist.read_text(errors="replace")
+    except OSError:
+        return False
+    return any(float(match) > 0 for match in _EXTINF.findall(playlist))
+
+
+async def _start_hls_session(
+    context: AppContext,
+    camera: Camera,
+    transport: str | None = None,
+    transcode: bool | None = None,
+) -> tuple[HlsSession | None, str | None, dict[str, Any] | None]:
+    """Start an HLS session for a camera and wait until it really plays.
+
+    Returns the running session, or None together with an error message and a
+    small report about the failed process. The special value ``ffmpeg_missing``
+    means the container has no ffmpeg at all.
     """
     probe_details = (camera.last_probe or {}).get("details") or {}
     try:
@@ -777,25 +820,37 @@ async def _start_hls_session(
             camera.url,
             transport or camera.rtsp_transport,
             codec=probe_details.get("codec"),
+            transcode=transcode,
         )
     except FFmpegUnavailable:
-        return None, "ffmpeg_missing"
+        return None, "ffmpeg_missing", None
 
     deadline = time.monotonic() + _preview_timeout(context, camera)
     while time.monotonic() < deadline:
-        if session.playlist.is_file():
-            return session, None
+        # Only a playlist with a segment of a real duration proves that pictures
+        # are being written. Without that check a source that produced nothing
+        # is announced as a working HLS preview and the player then shows
+        # ``stream_failed`` without ever naming the ffmpeg reason.
+        if _playlist_has_media(session):
+            return session, None, None
         if session.process.returncode is not None:
             break
         await asyncio.sleep(0.25)
 
     error = await context.ffmpeg.hls_error(session)
+    report = context.ffmpeg.session_report(session)
     await context.ffmpeg.stop_hls(camera.id)
-    return None, error or "stream_failed"
+    return None, error or "stream_failed", report
 
 
 async def camera_hls_start(request: Request) -> JSONResponse:
-    """Start an HLS session and wait until the playlist exists."""
+    """Start an HLS session and wait until the playlist exists.
+
+    The video handling that follows from the probed codec is tried first, the
+    other one second, because a stale codec makes the first attempt fail while
+    the second works. Every failed attempt is reported with the ffmpeg output,
+    so a black player stops being a silent ``stream_failed``.
+    """
     context = _ctx(request)
     camera = context.store.get(request.path_params["camera_id"])
     if camera is None:
@@ -805,24 +860,44 @@ async def camera_hls_start(request: Request) -> JSONResponse:
 
     session: HlsSession | None = None
     error: str | None = None
+    report: dict[str, Any] | None = None
     transport = camera.rtsp_transport
+    transcode = _hls_transcode_modes(camera)[0]
+    attempts: dict[str, str] = {}
+
     for candidate in _preview_transports(camera):
-        session, error = await _start_hls_session(context, camera, candidate)
+        for mode in _hls_transcode_modes(camera):
+            session, error, report = await _start_hls_session(
+                context, camera, candidate, mode
+            )
+            if session is not None:
+                transport = candidate
+                transcode = mode
+                break
+            attempts[f"{candidate}/{'encode' if mode else 'copy'}"] = (
+                error or "stream_failed"
+            )
         if session is not None:
-            transport = candidate
             break
 
     if session is None:
         if error == "ffmpeg_missing":
             return await _error(request, "ffmpeg_missing", 503)
-        _LOGGER.info("HLS preview of %s failed: %s", camera.id, error)
+        _LOGGER.info("HLS preview of %s failed: %s", camera.id, attempts)
         return JSONResponse(
-            {"ok": False, "error": "stream_failed", "detail": error},
+            {
+                "ok": False,
+                "error": "stream_failed",
+                "detail": error,
+                "attempts": attempts,
+                "report": report,
+            },
             status_code=502,
         )
     return _ok(
         mode="hls",
         transport=transport,
+        transcode=transcode,
         playlist=f"api/cameras/{camera.id}/hls/index.m3u8",
     )
 
@@ -883,6 +958,7 @@ async def camera_preview_detect(request: Request) -> JSONResponse:
 
     timeout = min(int(context.settings.test_timeout), PREVIEW_DETECT_TIMEOUT)
     attempts: dict[str, str] = {}
+    reports: dict[str, dict[str, Any]] = {}
 
     # UDP loses packets that only hurt when the stream is decoded, so TCP is tried
     # as well before the detection reports a failure.
@@ -908,7 +984,7 @@ async def camera_preview_detect(request: Request) -> JSONResponse:
             mjpeg_error,
         )
 
-        session, hls_error = await _start_hls_session(context, camera, transport)
+        session, hls_error, hls_report = await _start_hls_session(context, camera, transport)
         if session is not None:
             context.store.set_preview_mode(camera.id, "hls")
             _LOGGER.info("Preview of %s uses HLS over %s", camera.id, transport)
@@ -923,6 +999,8 @@ async def camera_preview_detect(request: Request) -> JSONResponse:
             )
 
         attempts[f"hls/{transport}"] = hls_error or "stream_failed"
+        if hls_report is not None:
+            reports[f"hls/{transport}"] = hls_report
 
     _LOGGER.info("No working preview mode for %s: %s", camera.id, attempts)
     return JSONResponse(
@@ -931,13 +1009,21 @@ async def camera_preview_detect(request: Request) -> JSONResponse:
             "error": "stream_failed",
             "detail": next(reversed(attempts.values()), None),
             "attempts": attempts,
+            "reports": reports,
         },
         status_code=502,
     )
 
 
 async def camera_hls_file(request: Request) -> Response:
-    """Serve a playlist or segment of a running HLS session."""
+    """Serve a playlist or segment of a running HLS session.
+
+    The file is read in one go and the response is built from what was read.
+    ffmpeg rewrites ``index.m3u8`` every second and deletes played segments, so
+    a response that merely announces the size measured a moment earlier can end
+    up shorter than it claims; h11 then aborts the connection with "Too little
+    data for declared Content-Length" and the player reports a dead stream.
+    """
     context = _ctx(request)
     camera_id = request.path_params["camera_id"]
     filename = request.path_params["filename"]
@@ -948,8 +1034,9 @@ async def camera_hls_file(request: Request) -> Response:
     if session is None:
         return await _error(request, "stream_failed", 409)
 
-    path = session.directory / filename
-    if not path.is_file():
+    try:
+        body = await asyncio.to_thread((session.directory / filename).read_bytes)
+    except OSError:
         return await _error(request, "not_found", 404)
 
     media_type = (
@@ -957,8 +1044,8 @@ async def camera_hls_file(request: Request) -> Response:
         if filename.endswith(".m3u8")
         else "video/mp2t"
     )
-    return FileResponse(
-        path,
+    return Response(
+        body,
         media_type=media_type,
         headers={"Cache-Control": "no-store, max-age=0"},
     )

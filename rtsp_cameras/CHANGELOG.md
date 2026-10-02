@@ -4,6 +4,57 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-10-02
+
+### Fixed
+
+- **The live preview of an H.265/HEVC camera stayed black and reported
+  `stream_failed`, although the camera and its stream were fine.** The transcoding HLS
+  path left the encoder on the default keyframe interval of libx264 (250 frames). An HLS
+  segment can only end on a keyframe, so at the configured `preview_fps` the first
+  segment lasted up to 50 seconds and the playlist carried no playable segment at all.
+  `preview_fps` now also sets the keyframe interval (`-g` and `-keyint_min` to
+  *fps × 1 second*, `-sc_threshold 0`), so every segment is one second long and the
+  preview starts playing.
+- **A preview mode is no longer declared working when nothing can be played.** A source
+  that opens but never delivers a frame was muxed into a single zero length segment
+  (`#EXTINF:0.000000`); the playlist check asks for a segment with a real duration now.
+  `POST /api/cameras/<id>/hls/start` and `POST /api/cameras/<id>/preview/detect` answer
+  with `report` (what ffmpeg printed) and `attempts` (mode and RTSP transport of every
+  try) instead of a bare `stream_failed`.
+- **A failed stream test names its cause instead of the shutdown noise of ffmpeg**
+  (`Task finished with error code: -22`, `Conversion failed!`): the last 40 lines of the
+  process are kept and the first line that carries a reason is reported. An ffmpeg that
+  keeps running without producing anything is reported as well - its output is read
+  while the process lives, so a camera that never delivers a picture no longer stays a
+  silent failure.
+- **The playlist and the segments of a preview are read before the response is built.**
+  ffmpeg rewrites `index.m3u8` every second while the response is on its way, so a
+  `Content-Length` taken from the file on disk could outgrow the body and h11 aborted
+  the connection with "Too little data for declared Content-Length" - a dead stream as
+  far as the player is concerned. The answers are also sent with
+  `Cache-Control: no-store`.
+- **A PTZ command whose URL carries the credentials as user information**
+  (`http://user:password@192.168.20.253/cgi-bin/ptz.cgi?...`, which is what a hand
+  written custom command usually looks like) ended in
+  `http.client.InvalidURL: nonnumeric port` and an HTTP 500. The credentials are moved
+  into an `Authorization: Basic` header before the request is sent. A command URL that
+  still cannot be sent is reported as `ptz_failed` (HTTP 502 with the reason) instead of
+  an unhandled exception, and it is masked in the panel
+  (`http://***:***@camera/...`) like every other command.
+
+### Changed
+
+- When the `codec` that ffprobe reported and the stream disagree (a camera that switched
+  between H.264 and H.265 keeps its first report), the HLS preview tries the other
+  handling (copy ↔ encode) before it gives up: an extra encode is cheaper than a preview
+  that never arrives. The answer of a working preview names the handling it used
+  (`transcode`).
+- The browser note "MJPEG does not arrive here" expires after ten minutes instead of
+  sending this browser to HLS for good, and the wait for the first MJPEG frame follows
+  the configured `test_timeout` (at least eight seconds): the add-on itself waits for
+  that frame before it answers, so the browser has to wait at least as long.
+
 ## [0.3.0] - 2026-09-30
 
 ### Added
