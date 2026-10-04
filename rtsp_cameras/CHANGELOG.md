@@ -4,6 +4,42 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-10-04
+
+### Fixed
+
+- **Choosing a vendor preset in the camera editor changes the commands now.** The
+  *vendor / command set* select only replaced the hint line under it, so the command
+  fields kept the commands of the preset that was selected before: a user who switched to
+  `Xiongmai DVRIP (TCP 34567)` still had the HTTP commands in the form, saved them, and
+  the camera never saw a DVRIP command. Picking a preset fills every command in now and
+  clears the actions that preset does not define, so no command of the old vendor
+  survives. *Fill commands from the profile* stays for the case that the address, the
+  credentials or the channel were changed afterwards, and the `custom` profile - which
+  defines no command at all - leaves the fields alone instead of throwing away a command
+  that was written by hand.
+- **The PTZ test mode asks DVRIP before the vendor CGIs.** Measured on a Xiongmai camera
+  (192.168.20.253): its own `/cgi-bin/ptz.cgi` answers `200 OK` for *every* code - for a
+  command name that does not exist as well - without moving anything, so the HTTP variant
+  won the test mode and was stored as the main PTZ handling although its `200 OK` proves
+  nothing. DVRIP is asked second now (ONVIF first), because it is the only variant whose
+  answer comes out of the device itself: the device has to accept the login **and** answer
+  the PTZ request. A stream URL of the Xiongmai shape asks its DVRIP variant before the
+  Xiongmai HTTP codes as well.
+
+### Verified
+
+- **The DVRIP client of 0.3.2 is right: a real device accepts it.** Against the camera of
+  the test set, the login with the credentials of the RTSP URL is answered with `Ret: 100`
+  and a wrong password with `login_failed_203`, and the PTZ request is answered with the
+  message id `1401` - header, framing, login types and the `XMMD5Encrypt` hash are all
+  correct. This particular device acknowledges **every** PTZ command with `Ret: 100`,
+  including a command name that does not exist, and stands still: still images taken from
+  Home Assistant before and after each of eleven candidates (six DVRIP variants, five HTTP
+  ones) show no movement at all. Its interface answers, its PTZ does not - which is a
+  property of the device, not of the protocol (`.smoke/dvrip-protocol.md` has the
+  measurements).
+
 ## [0.3.2] - 2026-10-02
 
 ### Fixed

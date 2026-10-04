@@ -162,8 +162,10 @@ exceptions). Check the codec in the camera tile of the add-on:
 **PTZ (pan, tilt, zoom)**
 
 A camera with PTZ is configured in the add-on panel: open the camera, expand *PTZ
-control*, tick *This camera supports PTZ*, pick the vendor preset and press *Fill
-commands from the profile*. The preset fills the HTTP commands of the camera - they
+control*, tick *This camera supports PTZ* and pick the vendor preset. The preset fills
+the HTTP commands of the camera right away - choosing another one replaces them, so no
+command of the previously selected vendor is left in the form - and *Fill commands from
+the profile* fills them in again after the credentials or the channel were changed. They
 stay editable, so unusual firmware can be handled too, and `{speed}`, `{preset}`,
 `{direction}` stay dynamic. Presets are entered one per line as `number=name`.
 
@@ -214,8 +216,8 @@ Nobody has to know the vendor of a camera. Open the camera, expand *PTZ control*
 use the *PTZ test mode* block: enter the address of the camera (an **IP is enough**,
 `http://` is added, an empty field means the host of the RTSP URL) and press *Test
 every PTZ variant*. The add-on then asks that address one variant after another -
-ONVIF, the vendor CGIs (Dahua/Amcrest, Hikvision, Axis, Foscam, Xiongmai) and DVRIP
-on TCP 34567 - and lists what each one answered:
+ONVIF, DVRIP on TCP 34567 and the vendor CGIs (Dahua/Amcrest, Hikvision, Axis, Foscam,
+Xiongmai) - and lists what each one answered:
 
 | Answer | Meaning |
 | --- | --- |
@@ -224,6 +226,15 @@ on TCP 34567 - and lists what each one answered:
 | not supported | the variant is not implemented (HTTP 404, a failure code in the body of a `200 OK`, or the web page of the device) |
 | no ONVIF profile token | the PTZ service exists, but the device published no media profile |
 | no answer (timeout), not reachable | the address did not answer within three seconds |
+
+The order of the test is the order of the evidence. ONVIF is asked first: a device that
+hands out a profile token has a PTZ service. DVRIP comes next, because it is the only
+variant whose answer is *given by the device itself* - it has to accept the login and
+answer the PTZ request out of its PTZ subsystem - while a `200 OK` from a vendor CGI can
+just as well come from a web server that knows nothing about PTZ. Measured on a
+Xiongmai camera: its own `/cgi-bin/ptz.cgi` answered `200` for every code, even for a
+command name that does not exist, and the camera did not move (see
+`.smoke/dvrip-protocol.md`). The vendor CGIs are asked last.
 
 **The test never moves a camera**: every HTTP and DVRIP variant is asked with its
 *stop* command, ONVIF only with read only queries (`GetConfigurations`,
@@ -237,11 +248,11 @@ in the `ptz_profile` attribute of the camera entity.
 
 **The stream URL is used as a hint**: its shape often names the family of a device. A
 Xiongmai URL (`…/user=admin&password=secret&channel=1&stream=0.sdp`) makes the test ask
-the Xiongmai variants first, `?channel=1&subtype=0` the Dahua one and
-`/Streaming/Channels/…` Hikvision. That matters, because several devices answer a foreign
-CGI with `200 OK` and `Error` in the body instead of refusing it - without the hint the
-commands of the wrong family would look like a camera that works. A variant whose answer
-consists of nothing but a failure word (like `Error`) is never stored.
+the Xiongmai variants first (DVRIP before the HTTP CGI), `?channel=1&subtype=0` the Dahua
+one and `/Streaming/Channels/…` Hikvision. That matters, because several devices answer a
+foreign CGI with `200 OK` and `Error` in the body instead of refusing it - without the
+hint the commands of the wrong family would look like a camera that works. A variant whose
+answer consists of nothing but a failure word (like `Error`) is never stored.
 
 Home Assistant gets:
 

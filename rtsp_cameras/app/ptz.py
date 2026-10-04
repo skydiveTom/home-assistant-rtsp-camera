@@ -68,16 +68,22 @@ MAX_RESPONSE_SNIPPET = 200
 PROBE_TIMEOUT = 3.0
 MAX_PROBE_TIMEOUT = 10.0
 #: Order of the test and of the preference: the first transport that answers wins.
-#: ONVIF first, because it is vendor neutral and works on almost every modern device,
-#: then the native command sets, then the DVRs that only speak DVRIP.
+#: ONVIF first, because it is vendor neutral and works on almost every modern device.
+#: DVRIP comes second, because its answer is the strongest one an HTTP CGI cannot
+#: give: the device has to accept a login *and* answer the PTZ request out of its PTZ
+#: subsystem, while a port 80 that is a web interface answers a foreign CGI path with
+#: ``200 OK`` just as happily. Measured on the Xiongmai camera of the test set: its own
+#: ``/cgi-bin/ptz.cgi`` answered ``200`` without moving anything, so the HTTP variant
+#: used to win the test and be published as the main handling (see
+#: ``.smoke/dvrip-protocol.md``). Then the vendor CGIs, then the Xiongmai HTTP codes.
 PROBE_ORDER = (
     "onvif",
+    "xiongmai_dvrip",
     "dahua",
     "hikvision",
     "axis",
     "foscam",
     "xiongmai",
-    "xiongmai_dvrip",
 )
 #: The shape of a stream URL names the family of a device often enough to be worth a
 #: hint: Xiongmai style URLs carry the credentials, the channel and the stream as path
@@ -87,7 +93,7 @@ PROBE_ORDER = (
 URL_PROFILE_HINTS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (
         re.compile(r"[?&/]user=[^&]*&password=|(?:^|[?&])stream=\d+(?:\.sdp)?", re.IGNORECASE),
-        ("xiongmai", "xiongmai_dvrip"),
+        ("xiongmai_dvrip", "xiongmai"),
     ),
     (re.compile(r"realmonitor|subtype=\d+", re.IGNORECASE), ("dahua",)),
     (re.compile(r"/streaming/channels/", re.IGNORECASE), ("hikvision",)),

@@ -978,7 +978,9 @@ def test_probe_base_url_accepts_what_a_user_types() -> None:
 
 def test_the_stream_url_names_the_family_of_a_device() -> None:
     """The shape of a stream URL is used as the hint for the PTZ test mode."""
-    assert preferred_profiles(RTSP_URL) == ("xiongmai", "xiongmai_dvrip")
+    # DVRIP is asked before the HTTP codes of the same family: the answer of the device
+    # proves more than a 200 OK of a web server (see PROBE_ORDER).
+    assert preferred_profiles(RTSP_URL) == ("xiongmai_dvrip", "xiongmai")
     assert preferred_profiles(
         "rtsp://admin:secret@192.168.1.64:554/cam/realmonitor?channel=1&subtype=0"
     ) == ("dahua",)
@@ -1053,8 +1055,8 @@ def test_probe_keeps_the_variant_that_answers(
 
     assert response.status_code == 200, response.text
     assert data["probe"]["ok"] is True
-    # ONVIF has no profile token here and the stream URL is the Xiongmai shape, so the
-    # hinted variant is asked before the other vendor CGIs and wins the test.
+    # ONVIF has no profile token here, DVRIP has no listener on the default port and the
+    # stream URL is the Xiongmai shape, so the hinted Xiongmai CGI wins the test.
     assert data["probe"]["profile"] == "xiongmai"
     assert data["applied"] is True
 
@@ -1080,6 +1082,37 @@ def test_probe_keeps_the_variant_that_answers(
     stops = [request for request in received() if request["query"].get("action") == "stop"]
     assert stops
     assert any(request["query"].get("code") == "DirectionUp" for request in stops)
+
+
+def test_probe_prefers_a_real_dvrip_answer_over_an_http_200(
+    client: TestClient, ptz_cam: str, dvrip_cam: int
+) -> None:
+    """A web server saying ``200 OK`` loses against the PTZ subsystem of the device.
+
+    The Xiongmai camera of the test set answers *every* command on its own
+    ``/cgi-bin/ptz.cgi`` with ``200 OK`` - even a command name that does not exist - and
+    does not move. The HTTP variant therefore used to win the test mode and was stored as
+    the main PTZ handling. DVRIP is asked first now: only it proves that a device
+    understood the command, because the device has to accept the login and answer the PTZ
+    request out of its PTZ subsystem.
+    """
+    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "xiongmai", "base_url": ptz_cam})
+
+    response = client.post(
+        "/api/ptz/probe",
+        json={"camera_id": camera["id"], "base_url": ptz_cam, "port": dvrip_cam, "timeout": 2},
+    )
+    data = response.json()
+
+    assert response.status_code == 200, response.text
+    statuses = {item["profile"]: item["status"] for item in data["probe"]["results"]}
+    assert statuses["xiongmai"] == PROBE_STATUS_OK
+    assert statuses["xiongmai_dvrip"] == PROBE_STATUS_OK
+    assert data["probe"]["profile"] == "xiongmai_dvrip"
+    assert data["applied"] is True
+    assert data["camera"]["ptz"]["profile"] == "xiongmai_dvrip"
+    assert data["camera"]["ptz"]["commands"]["left"].startswith("DVRIP ")
+    assert DvripCamera.received[-1]["payload"]["PTZControl"]["Command"] == "DirectionUp"
 
 
 def test_probe_prefers_onvif_when_the_token_is_there(
@@ -1269,14 +1302,16 @@ def test_probe_asks_every_variant_in_order(ptz_cam: str) -> None:
     assert report["ok"] is True
     assert report["profile"] == "dahua"
     assert report["tested"] == len(report["results"])
+    # ONVIF, then the transport whose answer comes out of the device itself (DVRIP), then
+    # the vendor CGIs in the order they are tried in.
     assert [item["profile"] for item in report["results"]] == [
         "onvif",
+        "xiongmai_dvrip",
         "dahua",
         "hikvision",
         "axis",
         "foscam",
         "xiongmai",
-        "xiongmai_dvrip",
     ]
     assert all(item["label"] for item in report["results"])
 
@@ -1284,17 +1319,19 @@ def test_probe_asks_every_variant_in_order(ptz_cam: str) -> None:
 def test_probe_asks_the_variant_of_the_stream_url_first(ptz_cam: str) -> None:
     """A URL that names the family of a device decides which variant is asked first.
 
-    The fake camera answers every command with "ok", so without the hint the second
-    entry of PROBE_ORDER (Dahua) would win - which is how the commands of the wrong
-    family ended up in a camera that does not understand them.
+    The fake camera answers every command with "ok", so without the hint the first
+    answering entry of PROBE_ORDER (Dahua) would win - which is how the commands of the
+    wrong family ended up in a camera that does not understand them. The Xiongmai URL asks
+    DVRIP before the Xiongmai HTTP codes; only the CGI of the same fake camera answers, so
+    it is the one that is stored.
     """
     report = asyncio.run(async_probe_ptz(ptz_cam, timeout=2, stream_url=RTSP_URL))
 
     assert report["profile"] == "xiongmai"
     assert [item["profile"] for item in report["results"]] == [
         "onvif",
-        "xiongmai",
         "xiongmai_dvrip",
+        "xiongmai",
         "dahua",
         "hikvision",
         "axis",

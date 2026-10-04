@@ -931,6 +931,11 @@
   function fillPtzFromProfile(quiet) {
     const profile = ptzProfile();
     if (!profile) return;
+    const templates = profile.commands || {};
+    /* A profile that defines no command at all (the custom one) cannot fill anything
+       in, so it leaves the fields alone instead of throwing away a command that was
+       written by hand. */
+    const replacesEverything = Object.keys(templates).length > 0;
     const base = document.getElementById('field-ptz-base').value.trim();
     const values = {
       base: base || 'http://' + t('ptz.your_camera'),
@@ -941,9 +946,11 @@
       token: document.getElementById('field-ptz-token').value.trim(),
     };
     ptzCommandNodes().forEach((input) => {
-      const template = (profile.commands || {})[input.dataset.ptzAction];
+      const template = templates[input.dataset.ptzAction];
       if (!template) {
-        input.value = '';
+        /* An action this profile does not have: it is cleared, so that no command of
+           the previously selected vendor survives in the form. */
+        if (replacesEverything) input.value = '';
         return;
       }
       input.value = template.replace(/\{(\w+)\}/g, (match, name) =>
@@ -1782,8 +1789,9 @@
     document.getElementById('btn-ptz-test').addEventListener('click', testPtz);
     document.getElementById('btn-ptz-detect').addEventListener('click', detectPtz);
     document.getElementById('field-ptz-profile').addEventListener('change', () => {
-      const profile = ptzProfile();
-      document.getElementById('ptz-profile-hint').textContent = (profile && profile.description) || '';
+      /* Picking a vendor preset has to change the commands as well: a user who chooses
+         another vendor expects its command set in the form, not only a new hint line. */
+      fillPtzFromProfile();
     });
     document.querySelectorAll('#ptz-pad [data-ptz]').forEach((button) => {
       const action = button.dataset.ptz;
