@@ -4,6 +4,44 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.7] - 2026-10-05
+
+### Fixed
+
+- **The stop of the bundled DVRIP profile was ignored while a move was running.** The
+  payload of 0.3.6, `{"Command":"Stop","Step":0,"Channel":1}`, is answered with `Ret: 100`
+  and it leaves a *standing* camera where it is, but a device of this family ignores it
+  while a `DirectionLeft`/`DirectionUp` sweep is running - the axis travels on to its end.
+  The DVRIP variant of the vendor app stops with the nested form below instead, with every
+  axis at level zero:
+
+  ```json
+  {"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":1}}}
+  ```
+
+  Measured on the DVR of the test set (192.168.20.253) with `.smoke/track.py balkon-2
+  stop-point` (fresh frames out of the stream, one sample every 0.5 s, speed 1, a full tilt
+  sweep of that device lasts about 5.2 s): a sweep that was stopped after 2.5 s ended after
+  **2.96 s** with the nested payload - the camera halted in the middle of the axis - but
+  after **5.16 s** without a stop and after **5.39 s** with the payload of 0.3.6, which is
+  no effect at all. A payload that carries `Name` is handed to the device unchanged (see
+  `dvrip.ptz_payload`), so the channel inside `Parameter` is the one of the camera.
+- **The same stop is used where a stored command set is upgraded.** A camera that was
+  configured before 0.3.7 keeps its commands in the camera file, so the new stop also
+  replaces the template of the stop of 0.3.5 (`{"Command":"{direction}","Step":0,...}`,
+  which the device read as a movement) and the one of 0.3.6
+  (`{"Command":"Stop","Step":0,...}`) instead of only a single one of them. A hand written
+  stop is left alone, as before.
+
+### Verified
+
+- **The stop was measured three ways on the device.** `.smoke/track.py <camera>
+  stop-same-direction|stop-guessed-up|stop-command|stop-point|no-stop|long-down` replays a
+  move and one variant of a stop for anyone who wants to see it again; `no-stop` and
+  `stop-point` are the two runs quoted above, and `stop-command` is the payload of 0.3.6.
+  The protocol notes of the harness, `.smoke/dvrip-protocol.md`, list the payloads and the
+  answers of the device.
+
 ## [0.3.6] - 2026-10-05
 
 ### Fixed
@@ -55,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never moved on its own: 25 s without a command left the picture at `mad` 2.8-3.0 and
   `tilt 0`.
 
-
+## [0.3.5] - 2026-10-05
 
 ### Fixed
 

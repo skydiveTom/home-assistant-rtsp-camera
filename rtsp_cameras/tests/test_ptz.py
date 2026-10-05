@@ -342,6 +342,15 @@ def test_explicit_ptz_credentials_win_over_the_stream_url() -> None:
     assert "pwd=top%20secret" in foscam["commands"]["up"]
 
 
+#: The stop the bundled Xiongmai profile builds: the ``POINT`` object of the vendor app
+#: with every axis at level zero. The short form of 0.3.6 is ignored while a move runs,
+#: which is what a sweep on the device showed (see the changelog of 0.3.7).
+DVRIP_STOP = (
+    'DVRIP {"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":'
+    '{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":1}}}'
+)
+
+
 def test_dvrip_profile_builds_the_payloads() -> None:
     """The DVRIP profile speaks the Xiongmai protocol on port 34567."""
     config = normalize_ptz({"profile": "xiongmai_dvrip", "speed": 5}, RTSP_URL)
@@ -357,10 +366,8 @@ def test_dvrip_profile_builds_the_payloads() -> None:
     # The stop names no direction: ``Step: 0`` with a direction drives that axis to its
     # zero position on this family, so a stop of the top position *is* the top position
     # (see ``test_a_stop_without_a_direction_is_not_guessed``).
-    assert build_command(config, "stop", direction="left") == (
-        'DVRIP {"Command":"Stop","Step":0,"Channel":1}'
-    )
-    assert build_command(config, "stop") == 'DVRIP {"Command":"Stop","Step":0,"Channel":1}'
+    assert build_command(config, "stop", direction="left") == DVRIP_STOP
+    assert build_command(config, "stop") == DVRIP_STOP
     assert build_command(config, "preset", preset="3") == (
         'DVRIP {"Command":"GotoPreset","Preset":3,"Channel":1}'
     )
@@ -426,7 +433,7 @@ def test_out_of_range_axis_speeds_fall_back() -> None:
 
 
 def test_a_stored_command_of_an_older_version_is_upgraded() -> None:
-    """A camera configured before 0.3.6 gets the fixed stop without a second fill in.
+    """A camera configured before 0.3.6 gets the fixed commands without a second fill in.
 
     The commands live in the camera file, so a fix inside a bundled template would never
     reach a camera that was set up earlier. A stored command that is *exactly* an old
@@ -447,13 +454,33 @@ def test_a_stored_command_of_an_older_version_is_upgraded() -> None:
     )
 
     assert config is not None
-    assert config["commands"]["stop"] == 'DVRIP {"Command":"Stop","Step":0,"Channel":1}'
+    assert config["commands"]["stop"] == DVRIP_STOP
     assert config["commands"]["down"] == (
         'DVRIP {"Command":"DirectionDown","Step":{speed_vertical},"Channel":1}'
     )
     assert config["commands"]["left"] == (
         'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":1,"Preset":7}'
     )
+
+
+def test_the_stop_of_previous_releases_is_replaced_as_well() -> None:
+    """The stop of 0.3.6 is one of the templates of this project too.
+
+    That release stored the short form ``{"Command":"Stop","Step":0}`` for exactly this
+    profile, and the device ignores it while a move is running (measured on 192.168.20.253,
+    see the changelog of 0.3.7), so a camera that was set up with it is moved over to the
+    ``POINT`` stop like one that still carries the guessed template of 0.3.5.
+    """
+    config = normalize_ptz(
+        {
+            "profile": "xiongmai_dvrip",
+            "commands": {"stop": 'DVRIP {"Command":"Stop","Step":0,"Channel":1}'},
+        },
+        RTSP_URL,
+    )
+
+    assert config is not None
+    assert config["commands"]["stop"] == DVRIP_STOP
 
 
 def test_a_stop_without_a_direction_is_not_guessed() -> None:

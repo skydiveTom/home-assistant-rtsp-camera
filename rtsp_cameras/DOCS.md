@@ -178,7 +178,7 @@ line as `number=name`.
 | Hikvision (ISAPI) | `PUT /ISAPI/PTZCtrl/channels/1/continuous` with an XML body |
 | Foscam | `/cgi-bin/CGIProxy.fcgi?cmd=ptzMoveUp…` |
 | ONVIF (SOAP) | `POST …/onvif/ptz_service` with a `ContinuousMove`, `Stop`, `GotoPreset` or `GotoHomePosition` envelope |
-| Xiongmai DVRIP | `DVRIP {"Command":"DirectionLeft","Step":…}` over **TCP 34567**, for DVRs without a web interface |
+| Xiongmai DVRIP | `DVRIP {"Command":"DirectionLeft","Step":…}` over **TCP 34567**, for DVRs without a web interface; its stop is the nested `POINT` payload of the vendor app |
 | Custom | your own `GET/POST/PUT url [body]` commands |
 
 **Credentials are taken from the stream URL** when the PTZ block does not define its
@@ -201,8 +201,20 @@ button and for `move_mode: Stop`. A stop that has no direction to name is **refu
 does not stop a camera, it moves it: on the Xiongmai DVR of the test set `Step: 0` with a
 direction drives that axis to its zero position, so the old fallback - the first code of
 the profile, `DirectionUp` - sent the camera to its top instead of standing still
-(measured, 0.3.5 and older). The bundled Xiongmai DVRIP profile stops with
-`{"Command":"Stop"}` and needs no direction at all.
+(measured, 0.3.5 and older). The bundled Xiongmai DVRIP profile stops with the nested
+payload of the vendor app, which needs no direction at all:
+
+```json
+{"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":1}}}
+```
+
+That shape matters: the plain `{"Command":"Stop","Step":0}` of 0.3.6 is answered with
+`Ret: 100`, but a device of this family **ignores** it while a `DirectionX` sweep is
+running and the axis travels on to its end. Measured on the DVR of the test set: a sweep
+that was stopped 2.5 s in ended after 2.96 s with the nested payload, after 5.39 s with the
+plain one and after 5.16 s with no stop at all (see the changelog of 0.3.7). A payload that
+carries `Name` is handed to the device unchanged (`dvrip.ptz_payload`), so the channel
+inside `Parameter` is the one of the camera.
 
 For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
 `GetProfiles` to the media service, takes the first profile token and fills the
@@ -256,7 +268,8 @@ command name that does not exist, and the camera did not move (see
 `.smoke/dvrip-protocol.md`). The vendor CGIs are asked last.
 
 **The test never moves a camera**: every HTTP and DVRIP variant is asked with its
-*stop* command, ONVIF only with read only queries (`GetConfigurations`,
+*stop* command (for a DVRIP device that is the nested `POINT` payload of 0.3.7, which halts
+a move without naming a direction), ONVIF only with read only queries (`GetConfigurations`,
 `GetCapabilities(PTZ)`, `GetProfiles`). The variant that answers becomes the **main PTZ
 handling** of the camera - profile, HTTP address, channel, DVRIP port, ONVIF profile
 token and the credentials that were used - and the form follows it, so the *Save*

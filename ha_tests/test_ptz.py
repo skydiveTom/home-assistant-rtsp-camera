@@ -538,8 +538,11 @@ async def test_hikvision_style_commands_send_a_body(hass, entry, monkeypatch):
 
 DVRIP_COMMANDS: dict[str, str] = {
     "left": 'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
-    # What the bundled profile publishes since 0.3.6: a stop that needs no direction.
-    "stop": 'DVRIP {"Command":"Stop","Step":0,"Channel":{channel}}',
+    # What the bundled profile publishes since 0.3.7: a stop that needs no direction, and
+    # the only shape that halts a move on this family. The channel inside ``Parameter`` is
+    # the one of the camera, because a payload with ``Name`` is passed through unchanged.
+    "stop": 'DVRIP {"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":'
+    '{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":{channel}}}}',
     "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
 }
 
@@ -595,8 +598,17 @@ async def test_dvrip_commands_go_through_the_tcp_client(hass, entry, monkeypatch
     assert move["short"]["Channel"] == 1
 
     stop = calls[1]
-    assert stop["short"]["Command"] == "Stop", "the stop of the bundled profile"
-    assert stop["short"]["Step"] == 0
+    # A payload that carries ``Name`` is handed to the device as it is: the nested stop of
+    # the profile keeps its name and its ``POINT`` object (see ``dvrip.ptz_payload``).
+    assert "Command" not in stop["short"], "the nested stop is not taken apart"
+    assert stop["short"]["Name"] == "OPPTZControl", "the stop of the bundled profile"
+    assert stop["short"]["OPPTZControl"]["Command"] == "Stop"
+    assert stop["short"]["OPPTZControl"]["Parameter"]["POINT"] == {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0,
+    }
 
 
 async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
@@ -622,8 +634,9 @@ async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
     )
 
     assert len(calls) == 1
-    assert calls[0]["Command"] == "Stop"
-    assert calls[0]["Step"] == 0
+    assert calls[0]["Name"] == "OPPTZControl"
+    assert calls[0]["OPPTZControl"]["Command"] == "Stop"
+    assert calls[0]["OPPTZControl"]["Parameter"]["Step"] == 0
 
 
 async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):

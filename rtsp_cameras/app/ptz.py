@@ -203,6 +203,28 @@ def _dvrip_direction(command: str, speed: str = "{speed}") -> str:
     return f'DVRIP {{"Command":"{command}","Step":{speed},"Channel":{{channel}}}}'
 
 
+def _dvrip_point_stop() -> str:
+    """Return the stop the vendor app of this family sends: the ``POINT`` of every axis.
+
+    A move of this protocol carries only a direction and a speed - the device drives the
+    axis on until something halts it - so a stop is the ``POINT`` object of the app with
+    every axis at level ``0``. It is the only form that *halts a sweep*, and it is written
+    by hand here because the short form can express neither the object nor the nested
+    request: a payload that carries ``Name`` is passed through unchanged (see
+    ``dvrip.ptz_payload``).
+
+    Measured on 192.168.20.253 (``balkon-2``, `.smoke/track.py ... stop-point`): a
+    ``DirectionDown`` of speed 1 travels the whole axis in 5.16 s, and with this stop sent
+    2.5 s into that move the picture stands still after 2.96 s - the sweep was cut in the
+    middle of the axis. The short form of 0.3.6 (``{"Command":"Stop","Step":0}``) and no
+    stop at all leave it untouched (5.39 s and 5.16 s). See the changelog of 0.3.7.
+    """
+    return (
+        'DVRIP {"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":'
+        '{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":{channel}}}}'
+    )
+
+
 #: Vendor presets. ``direction_codes`` translate our actions into the vendor codes
 #: used by the stop command and by the axis ``move=`` values.
 PTZ_PROFILES: dict[str, dict[str, Any]] = {
@@ -372,11 +394,14 @@ PTZ_PROFILES: dict[str, dict[str, Any]] = {
             "right": _dvrip_direction("DirectionRight", "{speed_horizontal}"),
             "zoom_in": _dvrip_direction("ZoomTile"),
             "zoom_out": _dvrip_direction("ZoomWide"),
-            # ``Step: 0`` with a direction is *not* a stop on this family: it drives the
-            # axis to its zero position, so "stop" with ``DirectionUp`` sends the camera
-            # to the top and a stop of the direction that was moving only ends because
-            # that axis ran into its limit. The device knows a real stop.
-            "stop": 'DVRIP {"Command":"Stop","Step":0,"Channel":{channel}}',
+            # A stop is a ``POINT`` of every axis at zero - the payload the vendor app
+            # sends. ``Step: 0`` with a direction is *not* a stop on this family: it
+            # drives that axis to its zero position, so a stop that says "up" sends the
+            # camera to the top (the defect of 0.3.5). The short form of 0.3.6
+            # (``{"Command":"Stop","Step":0}``) is acknowledged but ignored while a move
+            # runs: a sweep of a whole axis (5.16 s) took 5.39 s with it, which is as long
+            # as with no stop at all. Measured, see ``_dvrip_point_stop``.
+            "stop": _dvrip_point_stop(),
             "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
         },
         "direction_codes": {
@@ -390,18 +415,22 @@ PTZ_PROFILES: dict[str, dict[str, Any]] = {
     },
 }
 
-#: Templates this project shipped before, per profile and action. The commands of a
-#: camera are stored next to it, so a fix *inside* a bundled template would never reach
-#: a camera that was configured earlier. A stored command that matches one of these is
-#: therefore replaced by the current template of its profile (see the DVRIP stop of
-#: 0.3.6, which drove a camera to the top instead of stopping it).
-LEGACY_PROFILE_COMMANDS: dict[str, dict[str, str]] = {
+#: Templates this project shipped before, per profile and action - a tuple holds every
+#: earlier shape of an action. The commands of a camera are stored next to it, so a fix
+#: *inside* a bundled template would never reach a camera that was configured earlier. A
+#: stored command that matches one of these is therefore replaced by the current template
+#: of its profile: the DVRIP stop of 0.3.5 drove a camera to the top instead of stopping
+#: it, and the one of 0.3.6 was ignored while a move was running.
+LEGACY_PROFILE_COMMANDS: dict[str, dict[str, str | tuple[str, ...]]] = {
     "xiongmai_dvrip": {
         "up": 'DVRIP {"Command":"DirectionUp","Step":{speed},"Channel":{channel}}',
         "down": 'DVRIP {"Command":"DirectionDown","Step":{speed},"Channel":{channel}}',
         "left": 'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
         "right": 'DVRIP {"Command":"DirectionRight","Step":{speed},"Channel":{channel}}',
-        "stop": 'DVRIP {"Command":"{direction}","Step":0,"Channel":{channel}}',
+        "stop": (
+            'DVRIP {"Command":"{direction}","Step":0,"Channel":{channel}}',
+            'DVRIP {"Command":"Stop","Step":0,"Channel":{channel}}',
+        ),
     },
 }
 
@@ -679,7 +708,10 @@ def _upgrade_command(
     brings - speed, preset, direction - are still placeholders).
     """
     legacy = LEGACY_PROFILE_COMMANDS.get(profile, {}).get(action)
-    if legacy is None or command != fill(legacy, values):
+    if legacy is None:
+        return command
+    candidates = (legacy,) if isinstance(legacy, str) else legacy
+    if not any(command == fill(candidate, values) for candidate in candidates):
         return command
     return str(PTZ_PROFILES[profile]["commands"][action])
 
