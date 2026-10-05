@@ -22,7 +22,9 @@ FunSDK, read out of ``DVRIP_MSG_HEAD_T``, ``MNetSDK::CProtocolNetIP::InitMsg`` a
 Every command logs in, sends the command and disconnects again, which keeps the
 add-on stateless (the devices allow repeated logins). The PTZ payload uses the short
 form the add-on publishes (``Command``, ``Step``, ``Preset``, ``Channel``) and is
-expanded into the structure the devices expect.
+expanded into the structure the devices expect - the message name in front and the
+same name again as the key of the nested object, which is how the devices look the
+structure up. A hand written payload that already carries ``Name`` is sent as it is.
 """
 
 from __future__ import annotations
@@ -73,6 +75,18 @@ PTZ_TEMPLATE: dict[str, Any] = {
     "Tour": 0,
 }
 
+#: Name of the PTZ request. A device looks the structure up **by this name**, so the
+#: JSON carries it twice: as the value of ``Name`` and as the key of the nested object
+#: - ``{"Name": "OPPTZControl", "OPPTZControl": {...}}``, the same way the ``OPMonitor``
+#: request the SDK ships is built. ``MNetSDK::CProtocolNetIP::NewPTZControlPTL``
+#: (0xF1918C of ``libFunSDK.so``) loads the string once for each place (the
+#: ``adrp``/``add`` pair at 0xF197E8 and the one at 0xF1981C both point at 0x58D3A9),
+#: and the Java layer of that SDK keeps both as one constant,
+#: ``OPPTZControlBean.OPPTZCONTROL_JSONNAME = "OPPTZControl"``. A payload that nests
+#: the command under any other key - ``PTZControl``, which this file used to send - is
+#: answered with ``Ret: 100`` and then ignored: the device has no member of that name.
+PTZ_MESSAGE = "OPPTZControl"
+
 
 def hash_password(password: str) -> str:
     """Return the eight character hash the DVRIP login expects as ``PassWord``.
@@ -98,7 +112,14 @@ def login_payload(username: str, password: str, login_type: str) -> dict[str, An
 
 
 def ptz_payload(short: dict[str, Any], channel: int = 1) -> dict[str, Any]:
-    """Expand the short form published by the add-on into a DVRIP PTZ request."""
+    """Expand the short form published by the add-on into a DVRIP PTZ request.
+
+    A payload that carries ``Name`` is a hand written one - the shape of a request
+    captured from the vendor app - and is passed through unchanged, so a device whose
+    commands the built in profile does not know can still be driven.
+    """
+    if "Name" in short:
+        return {key: value for key, value in short.items() if key != "SessionID"}
     parameter = dict(PTZ_TEMPLATE)
     for key in ("Step", "Preset", "Pattern", "Tour", "MenuOpts"):
         if key in short:
@@ -108,8 +129,8 @@ def ptz_payload(short: dict[str, Any], channel: int = 1) -> dict[str, Any]:
     if "Tour" in command:
         parameter["Tour"] = 1
     return {
-        "Name": "OPPTZControl",
-        "PTZControl": {"Command": command, "Parameter": parameter},
+        "Name": PTZ_MESSAGE,
+        PTZ_MESSAGE: {"Command": command, "Parameter": parameter},
     }
 
 

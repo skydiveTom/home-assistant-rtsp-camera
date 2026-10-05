@@ -4,6 +4,31 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-10-05
+
+### Fixed
+
+- **The DVRIP PTZ request nested the command under a key no device knows, so a
+  Xiongmai camera acknowledged it and stood still.** The JSON of that family carries
+  the message name twice - `{"Name": "OPPTZControl", "OPPTZControl": {...}}` - because
+  the device looks the structure up by that name. In the vendor SDK the pair is one
+  string: `MNetSDK::CProtocolNetIP::NewPTZControlPTL` of `libFunSDK.so` loads
+  `OPPTZControl` once as the value of `Name` and once as the key of the nested object
+  (the `adrp`/`add` pairs at 0xF197E8 and 0xF1981C both point at 0x58D3A9), and the
+  Java layer keeps it as a single constant,
+  `OPPTZControlBean.OPPTZCONTROL_JSONNAME = "OPPTZControl"`. The payload of the add-on
+  nested it under `PTZControl` instead: the device knew the message `Name`, answered
+  `Ret: 100` and ignored the command, which is why PTZ worked in the vendor app and not
+  through the add-on. The nested key is the message name now - the same string in both
+  places.
+
+### Added
+
+- **A hand written payload is sent as it is.** A `custom` profile command whose JSON
+  already carries `Name` - the shape of a request captured from the vendor app - is
+  passed through unchanged, with only the session of the login filled in. That is the
+  way to drive a device whose commands the built in profile does not know.
+
 ## [0.3.3] - 2026-10-04
 
 ### Fixed

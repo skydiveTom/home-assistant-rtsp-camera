@@ -28,8 +28,10 @@ from app.dvrip import (
     MSG_LOGIN_RESPONSE,
     MSG_PTZ_REQUEST,
     MSG_PTZ_RESPONSE,
+    PTZ_MESSAGE,
     hash_password,
     pack,
+    ptz_payload,
     unpack,
 )
 from app.ptz import (
@@ -356,6 +358,47 @@ def test_dvrip_profile_builds_the_payloads() -> None:
     assert build_command(config, "preset", preset="3") == (
         'DVRIP {"Command":"GotoPreset","Preset":3,"Channel":1}'
     )
+
+
+def test_dvrip_names_the_nested_object_after_the_message() -> None:
+    """The device looks the structure up by the name the payload carries twice.
+
+    ``MNetSDK::CProtocolNetIP::NewPTZControlPTL`` of the vendor SDK (0xF1918C of
+    ``libFunSDK.so``) loads ``OPPTZControl`` for the value of ``Name`` *and* for the
+    key of the nested object (the ``adrp``/``add`` pairs at 0xF197E8 and 0xF1981C both
+    point at 0x58D3A9), and the Java layer of that SDK keeps it as one constant
+    (``OPPTZControlBean.OPPTZCONTROL_JSONNAME``). ``PTZControl`` - what this code sent
+    before - is no member of a device, so the device answered ``Ret: 100`` and stayed
+    still, which is exactly what the live camera on 192.168.20.253 did.
+    """
+    payload = ptz_payload({"Command": "DirectionLeft", "Step": 5, "Channel": 1})
+
+    assert set(payload) == {"Name", PTZ_MESSAGE}, "the name is the only key next to Name"
+    assert payload["Name"] == PTZ_MESSAGE == "OPPTZControl"
+    assert payload["OPPTZControl"]["Command"] == "DirectionLeft"
+    assert payload["OPPTZControl"]["Parameter"]["Channel"] == 0
+    assert payload["OPPTZControl"]["Parameter"]["Step"] == 5
+
+
+def test_dvrip_sends_a_hand_written_payload_unchanged() -> None:
+    """A payload captured from the vendor app is what a custom profile is for."""
+    captured = {
+        "Name": "OPPTZControl",
+        "OPPTZControl": {
+            "Command": "DirectionLeft",
+            "Parameter": {"Channel": 1, "Step": 4},
+        },
+        # the real session of the login is filled in by the client, never by hand
+        "SessionID": "0x0000000001",
+    }
+
+    assert ptz_payload(dict(captured)) == {
+        "Name": "OPPTZControl",
+        "OPPTZControl": {
+            "Command": "DirectionLeft",
+            "Parameter": {"Channel": 1, "Step": 4},
+        },
+    }
 
 
 def test_onvif_profile_builds_soap_commands() -> None:
@@ -854,9 +897,9 @@ def test_dvrip_login_and_ptz_reach_the_dvr(dvrip_cam: int) -> None:
     sent = DvripCamera.received[0]
     assert sent["message_id"] == MSG_PTZ_REQUEST
     assert sent["payload"]["Name"] == "OPPTZControl"
-    assert sent["payload"]["PTZControl"]["Command"] == "DirectionLeft"
-    assert sent["payload"]["PTZControl"]["Parameter"]["Step"] == 6
-    assert sent["payload"]["PTZControl"]["Parameter"]["Channel"] == 0
+    assert sent["payload"]["OPPTZControl"]["Command"] == "DirectionLeft"
+    assert sent["payload"]["OPPTZControl"]["Parameter"]["Step"] == 6
+    assert sent["payload"]["OPPTZControl"]["Parameter"]["Channel"] == 0
     assert sent["payload"]["SessionID"] == f"0x{DVRIP_SESSION:08X}"
 
 
@@ -1112,7 +1155,7 @@ def test_probe_prefers_a_real_dvrip_answer_over_an_http_200(
     assert data["applied"] is True
     assert data["camera"]["ptz"]["profile"] == "xiongmai_dvrip"
     assert data["camera"]["ptz"]["commands"]["left"].startswith("DVRIP ")
-    assert DvripCamera.received[-1]["payload"]["PTZControl"]["Command"] == "DirectionUp"
+    assert DvripCamera.received[-1]["payload"]["OPPTZControl"]["Command"] == "DirectionUp"
 
 
 def test_probe_prefers_onvif_when_the_token_is_there(
@@ -1259,7 +1302,7 @@ def test_probe_finds_a_dvrip_port(client: TestClient, dvrip_cam: int) -> None:
     assert data["camera"]["ptz"]["profile"] == "xiongmai_dvrip"
     assert data["camera"]["ptz"]["port"] == dvrip_cam
     assert DvripCamera.login["UserName"] == "user"
-    assert DvripCamera.received[0]["payload"]["PTZControl"]["Command"] == "DirectionUp"
+    assert DvripCamera.received[0]["payload"]["OPPTZControl"]["Command"] == "DirectionUp"
 
 
 def test_probe_finds_the_variant_a_xiongmai_url_points_at(
