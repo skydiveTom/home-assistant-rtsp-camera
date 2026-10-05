@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the command is held and prints the frame to frame difference, so a payload can be
   judged without watching the camera.
 
+### Verified
+
+- **The camera pans through the add-on now, and stops again.** With 0.3.5 on the device
+  (`balkon-2`, 192.168.20.253) the built in profile moves it - fresh frames of its stream,
+  0.7 s apart, differ by 48 to 54 grey levels while the command is held, against 7.4 to 8
+  with the camera still - and `Step: 0` brings that difference back to 8. The same was
+  measured through the `rtsp_cameras.ptz` service of the integration, so the buttons of
+  the dashboard, the service and the panel of the add-on all move the camera.
+- **Both defects were needed, and both are in the payload.** The 2x2 matrix over the key
+  of the nested object and the value of `Preset` is in `.smoke/dvrip-protocol.md`: only
+  `OPPTZControl` together with `Preset: 0` moves the camera, which is why 0.3.4 alone (the
+  key) was not enough.
+
 ## [0.3.4] - 2026-10-05
 
 ### Fixed
