@@ -133,6 +133,39 @@ def test_addon_output_is_understood_by_the_integration(
     assert cameras["front-door"].url == "rtsp://user:pass@camera.local/stream1"
 
 
+def test_ptz_config_reads_the_speed_of_both_axes(models: ModuleType) -> None:
+    """The speeds of the arrows survive the way from the add-on into Home Assistant."""
+    config = models.PtzConfig.from_dict(
+        {
+            "enabled": True,
+            "profile": "xiongmai_dvrip",
+            "speed": 4,
+            "speed_vertical": 2,
+            "speed_horizontal": 7,
+            "commands": {"down": 'DVRIP {"Command":"DirectionDown","Step":{speed_vertical}}'},
+        }
+    )
+
+    assert config is not None
+    assert config.axis_speed(False) == 2
+    assert config.axis_speed(True) == 7
+
+
+def test_ptz_config_without_axis_speeds_uses_the_general_one(models: ModuleType) -> None:
+    """A camera file without the new fields behaves as it did before."""
+    config = models.PtzConfig.from_dict(
+        {
+            "enabled": True,
+            "speed": 6,
+            "commands": {"down": "GET {base}/ptz?arg2={speed_vertical}"},
+        }
+    )
+
+    assert config is not None
+    assert config.axis_speed(False) == 6
+    assert config.axis_speed(True) == 6
+
+
 def test_add_camera_link_points_to_the_documentation(
     integration_const: ModuleType, models: ModuleType
 ) -> None:

@@ -8,6 +8,7 @@ session, so no sockets are used (the CI harness blocks them).
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +116,19 @@ def entry_fixture(hass: HomeAssistant) -> MockConfigEntry:
     )
     entry.add_to_hass(hass)
     return entry
+
+
+@pytest.fixture(autouse=True)
+def clean_axis_memory() -> Iterator[None]:
+    """Start every test without a remembered axis.
+
+    The integration keeps the axis of the last move per camera, so a stop without a
+    direction can name it. That memory lives in the module, which would let one test
+    depend on the next.
+    """
+    ptz_module._LAST_DIRECTION.clear()
+    yield
+    ptz_module._LAST_DIRECTION.clear()
 
 
 async def setup_camera(
@@ -234,10 +248,18 @@ async def test_service_uses_the_speed_and_the_onvif_duration(hass, entry, monkey
 
 
 async def test_service_move_mode_stop_does_not_move(hass, entry, monkeypatch):
-    """move_mode: Stop only stops the camera."""
+    """move_mode: Stop stops what was moved and never sends a move of its own."""
     await setup_camera(hass, entry)
     session = FakeSession()
     use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "LEFT", "continuous_duration": 0},
+        blocking=True,
+    )
+    session.requests.clear()
 
     await hass.services.async_call(
         DOMAIN,
@@ -248,6 +270,104 @@ async def test_service_move_mode_stop_does_not_move(hass, entry, monkeypatch):
 
     assert len(session.requests) == 1
     assert "action=stop" in session.requests[0]["url"]
+    assert "code=Left" in session.requests[0]["url"], "the axis that was moved"
+
+
+async def test_a_stop_without_a_known_axis_is_refused(hass, entry, monkeypatch):
+    """A stop that has no axis to name is refused instead of answered with a guess.
+
+    Nothing was moved (and Home Assistant was restarted, in the worst case), so the
+    direction of the stop is unknown. Filling in one - what the integration did until
+    0.3.6 - does not stop a camera, it moves it: on a Xiongmai device every direction is
+    a zero position and a stop that says "up" drives the camera to its top.
+    """
+    await setup_camera(hass, entry)
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            DOMAIN,
+            "ptz",
+            {"entity_id": "camera.front_door", "move_mode": "Stop"},
+            blocking=True,
+        )
+
+    assert session.requests == [], "no command is sent, not even a wrong one"
+
+
+async def test_the_stop_button_stops_the_axis_that_moved(hass, entry, monkeypatch):
+    """The PTZ stop button of a dashboard names the axis of the last move."""
+    await setup_camera(hass, entry)
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+    session.requests.clear()
+
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.front_door_ptz_stop"}, blocking=True
+    )
+
+    assert len(session.requests) == 1, "a stop and nothing else"
+    assert "action=stop" in session.requests[0]["url"]
+    assert "code=Up" in session.requests[0]["url"]
+
+
+async def test_the_speed_of_each_axis_reaches_the_command(hass, entry, monkeypatch):
+    """Both arrows can be tuned apart, and a speed of a call counts for both axes."""
+    await setup_camera(
+        hass,
+        entry,
+        speed=4,
+        speed_vertical=2,
+        speed_horizontal=7,
+        commands={
+            "up": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=Up&arg2={speed_vertical}",
+            "left": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=Left"
+            "&arg2={speed_horizontal}",
+            "stop": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=stop&code={direction}",
+        },
+        stop_codes={"up": "Up", "left": "Left"},
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+    assert "arg2=2" in session.requests[0]["url"], "the tilt reads the vertical speed"
+
+    session.requests.clear()
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "LEFT", "continuous_duration": 0},
+        blocking=True,
+    )
+    assert "arg2=7" in session.requests[0]["url"], "the pan reads the horizontal speed"
+
+    session.requests.clear()
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {
+            "entity_id": "camera.front_door",
+            "pan": "LEFT",
+            "speed": 1,
+            "continuous_duration": 0,
+        },
+        blocking=True,
+    )
+    assert "arg2=8" in session.requests[0]["url"], "a speed of the call wins over both axes"
 
 
 async def test_service_goes_to_a_preset(hass, entry, monkeypatch):
@@ -418,7 +538,8 @@ async def test_hikvision_style_commands_send_a_body(hass, entry, monkeypatch):
 
 DVRIP_COMMANDS: dict[str, str] = {
     "left": 'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
-    "stop": 'DVRIP {"Command":"{direction}","Step":0,"Channel":{channel}}',
+    # What the bundled profile publishes since 0.3.6: a stop that needs no direction.
+    "stop": 'DVRIP {"Command":"Stop","Step":0,"Channel":{channel}}',
     "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
 }
 
@@ -474,12 +595,16 @@ async def test_dvrip_commands_go_through_the_tcp_client(hass, entry, monkeypatch
     assert move["short"]["Channel"] == 1
 
     stop = calls[1]
-    assert stop["short"]["Command"] == "DirectionLeft", "the stop tells the direction"
+    assert stop["short"]["Command"] == "Stop", "the stop of the bundled profile"
     assert stop["short"]["Step"] == 0
 
 
-async def test_dvrip_stop_carries_the_direction(hass, entry, monkeypatch):
-    """The stop tells the DVR which direction to halt."""
+async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
+    """A stop of the bundled profile works on its own - it names no direction.
+
+    The stop is the only one that may be sent without knowing which axis is moving, which
+    is what a dashboard needs after a restart of Home Assistant.
+    """
     calls: list[dict[str, Any]] = []
 
     async def fake_send(host, port, username, password, short):  # noqa: ANN001
@@ -492,11 +617,13 @@ async def test_dvrip_stop_carries_the_direction(hass, entry, monkeypatch):
     await hass.services.async_call(
         DOMAIN,
         "ptz",
-        {"entity_id": "camera.front_door", "action": "stop", "move_mode": "Stop"},
+        {"entity_id": "camera.front_door", "action": "stop"},
         blocking=True,
     )
 
-    assert calls[0]["Command"] == "DirectionUp" or calls[0]["Step"] == 0
+    assert len(calls) == 1
+    assert calls[0]["Command"] == "Stop"
+    assert calls[0]["Step"] == 0
 
 
 async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):

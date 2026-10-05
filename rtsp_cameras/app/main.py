@@ -54,10 +54,12 @@ from .models import (
 )
 from .ptz import (
     DEFAULT_DVRIP_PORT,
+    DIRECTION_ACTIONS,
     MAX_PROBE_TIMEOUT,
     PROBE_TIMEOUT,
     async_discover_onvif_token,
     async_probe_ptz,
+    needs_direction,
     normalize_action,
     probe_base_url,
     profile_list,
@@ -117,6 +119,10 @@ class AppContext:
     translations: Translations
     templates: Jinja2Templates
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
+    #: Which way each camera was moved last, so a stop without a direction can name the
+    #: axis that is moving. Guessing costs: a Xiongmai device sends a camera to its top
+    #: position when a stop says "up" (see ``build_command``).
+    ptz_directions: dict[str, str] = field(default_factory=dict)
     started_at: float = field(default_factory=time.monotonic)
 
 
@@ -392,7 +398,9 @@ async def camera_ptz(request: Request) -> JSONResponse:
     """Move a PTZ capable camera.
 
     The panel sends the action it wants ("left", "zoom_in", "preset", ...) together
-    with an optional speed, direction (for "stop"), preset and seconds.
+    with an optional speed, direction (for "stop"), preset and seconds. A stop may also
+    leave the direction out: the axis that was moved last is then stopped, because a
+    guessed direction does not stop a camera, it moves it (see ``build_command``).
     """
     context = _ctx(request)
     camera = context.store.get(request.path_params["camera_id"])
@@ -406,15 +414,27 @@ async def camera_ptz(request: Request) -> JSONResponse:
     if action is None:
         return await _error(request, "ptz_action_required", 400)
 
+    direction = str(body.get("direction") or "").strip() or None
+    if action in DIRECTION_ACTIONS:
+        context.ptz_directions[camera.id] = action
+    elif action == "stop" and direction is None:
+        direction = context.ptz_directions.get(camera.id)
+        if direction is None and needs_direction(camera.ptz, action):
+            return await _error(request, "ptz_direction_required", 400)
+
     result = await ptz_run(
         camera.ptz,
         action,
         speed=_optional_int(body.get("speed")),
+        speed_horizontal=_optional_int(body.get("speed_horizontal")),
+        speed_vertical=_optional_int(body.get("speed_vertical")),
         preset=body.get("preset"),
-        direction=str(body.get("direction") or "").strip() or None,
+        direction=direction,
         seconds=_optional_float(body.get("seconds")),
     )
     if not result.ok:
+        if result.detail == "direction_required":
+            return await _error(request, "ptz_direction_required", 400)
         _LOGGER.info("PTZ %s of %s failed: %s", action, camera.id, result.detail)
         return JSONResponse(
             {"ok": False, "error": "ptz_failed", "detail": result.detail, "ptz": result.to_dict()},

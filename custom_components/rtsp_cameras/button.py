@@ -19,7 +19,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import ADD_CAMERA_URL, DOMAIN, MANUFACTURER
 from .coordinator import RtspCamerasCoordinator
 from .models import RtspCameraDefinition
-from .ptz import async_execute
+from .ptz import async_execute, last_direction
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,4 +170,8 @@ class PtzButton(CoordinatorEntity[RtspCamerasCoordinator], ButtonEntity):
         if self._preset_id is not None:
             await async_execute(self.hass, config, "preset", preset=self._preset_id)
             return
-        await async_execute(self.hass, config, "stop")
+        # The axis that was moved last is the one a stop has to name: a stop without a
+        # direction is refused rather than answered with a guessed one (see ``ptz``).
+        await async_execute(
+            self.hass, config, "stop", direction=last_direction(self._definition.id)
+        )

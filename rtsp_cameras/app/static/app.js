@@ -990,6 +990,10 @@
     document.getElementById('field-ptz-base').value = (ptz && ptz.base_url) || '';
     document.getElementById('field-ptz-channel').value = (ptz && ptz.channel) || 1;
     document.getElementById('field-ptz-speed').value = (ptz && ptz.speed) || 4;
+    document.getElementById('field-ptz-speed-vertical').value =
+      (ptz && (ptz.speed_vertical || ptz.speed)) || 4;
+    document.getElementById('field-ptz-speed-horizontal').value =
+      (ptz && (ptz.speed_horizontal || ptz.speed)) || 4;
     document.getElementById('field-ptz-port').value = (ptz && ptz.port) || 34567;
     document.getElementById('field-ptz-token').value = (ptz && ptz.token) || '';
     document.getElementById('field-ptz-username').value = '';
@@ -1025,6 +1029,9 @@
       base_url: document.getElementById('field-ptz-base').value.trim(),
       channel: Number(document.getElementById('field-ptz-channel').value) || 1,
       speed: Number(document.getElementById('field-ptz-speed').value) || 4,
+      speed_vertical: Number(document.getElementById('field-ptz-speed-vertical').value) || 4,
+      speed_horizontal:
+        Number(document.getElementById('field-ptz-speed-horizontal').value) || 4,
       port: Number(document.getElementById('field-ptz-port').value) || 34567,
       token: document.getElementById('field-ptz-token').value.trim(),
       username: document.getElementById('field-ptz-username').value.trim(),
@@ -1247,7 +1254,9 @@
       return;
     }
     pad.hidden = false;
-    document.getElementById('ptz-speed-input').value = ptz.speed || 4;
+    document.getElementById('ptz-speed-vertical').value = ptz.speed_vertical || ptz.speed || 4;
+    document.getElementById('ptz-speed-horizontal').value =
+      ptz.speed_horizontal || ptz.speed || 4;
     document.getElementById('ptz-error').hidden = true;
     const enabled = ptz.actions || [];
     document.querySelectorAll('#ptz-pad [data-ptz]').forEach((button) => {
@@ -1265,11 +1274,24 @@
     document.getElementById('btn-ptz-preset').disabled = presets.length === 0;
   }
 
+  // Which speed field belongs to the arrows of an axis: the tilt (up/down) and the pan
+  // (left/right) can be tuned on their own. Zoom and presets use the general speed of
+  // the camera.
+  const PTZ_AXIS_SPEED = {
+    up: 'vertical',
+    down: 'vertical',
+    left: 'horizontal',
+    right: 'horizontal',
+  };
+
   async function sendPtz(action, extra) {
     const cameraId = state.preview.cameraId;
     if (!cameraId) return false;
-    const speed = Number(document.getElementById('ptz-speed-input').value) || undefined;
-    const body = Object.assign({ action, speed }, extra || {});
+    const axis = PTZ_AXIS_SPEED[action];
+    const field = axis ? document.getElementById('ptz-speed-' + axis) : null;
+    const speed = field ? Number(field.value) : 0;
+    const body = Object.assign({ action }, extra || {});
+    if (speed) body['speed_' + axis] = speed;
     try {
       await api('api/cameras/' + cameraId + '/ptz', { method: 'POST', body });
       state.ptzDirection = action === 'stop' ? null : action;

@@ -195,6 +195,14 @@
               <input type="number" id="field-ptz-speed" min="1" max="8" step="1" value="4">
             </label>
             <label class="field">
+              <span class="field__label" data-i18n="ptz.speed_vertical"></span>
+              <input type="number" id="field-ptz-speed-vertical" min="1" max="8" step="1" value="4">
+            </label>
+            <label class="field">
+              <span class="field__label" data-i18n="ptz.speed_horizontal"></span>
+              <input type="number" id="field-ptz-speed-horizontal" min="1" max="8" step="1" value="4">
+            </label>
+            <label class="field">
               <span class="field__label" data-i18n="ptz.base_url"></span>
               <input type="text" id="field-ptz-base" autocomplete="off" spellcheck="false">
             </label>
@@ -216,6 +224,7 @@
             </label>
           </div>
           <p class="note note--tight" data-i18n="ptz.base_hint"></p>
+          <p class="note note--tight" data-i18n="ptz.speed_axis_hint"></p>
 
           <div class="ptz__test">
             <p class="ptz__test-title" data-i18n="ptz.test_mode"></p>
@@ -354,8 +363,12 @@
             <span data-i18n="ptz.go_preset"></span>
           </button>
           <label class="field field--tight">
-            <span class="field__label" data-i18n="ptz.speed"></span>
-            <input type="number" id="ptz-speed-input" min="1" max="8" step="1" value="4">
+            <span class="field__label" data-i18n="ptz.speed_vertical"></span>
+            <input type="number" id="ptz-speed-vertical" min="1" max="8" step="1" value="4">
+          </label>
+          <label class="field field--tight">
+            <span class="field__label" data-i18n="ptz.speed_horizontal"></span>
+            <input type="number" id="ptz-speed-horizontal" min="1" max="8" step="1" value="4">
           </label>
           <p class="note note--tight" data-i18n="preview.ptz_hint"></p>
         </div>

@@ -204,7 +204,10 @@
     "status_unsupported": "not supported",
     "status_timeout": "no answer (timeout)",
     "status_unreachable": "not reachable",
-    "status_error": "error"
+    "status_error": "error",
+    "speed_vertical": "Speed up/down (1-8)",
+    "speed_horizontal": "Speed left/right (1-8)",
+    "speed_axis_hint": "The arrows send the speed of their own axis - the tilt reads the vertical one, the pan the horizontal one. Zoom and presets use the general speed."
   },
   "errors": {
     "ptz_not_configured": "This camera has no PTZ configuration",
@@ -231,7 +234,8 @@
     "update_check_failed": "The version could not be checked, try again in a moment",
     "update_failed": "The add-on update could not be started",
     "ptz_base_url_required": "Enter the HTTP address of the camera first",
-    "ptz_onvif_failed": "ONVIF did not answer"
+    "ptz_onvif_failed": "ONVIF did not answer",
+    "ptz_direction_required": "The stop does not know which way the camera moves - send the arrow of the movement"
   },
   "common": {
     "close": "Close",

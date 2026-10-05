@@ -44,6 +44,9 @@
     },
     "ptz_no_target": {
       "message": "Select at least one camera."
+    },
+    "ptz_direction_required": {
+      "message": "The camera needs to know which axis to stop - send the arrow of the movement, or use a stop command without a direction."
     }
   },
   "config": {

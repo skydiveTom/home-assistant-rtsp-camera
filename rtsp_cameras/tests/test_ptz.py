@@ -35,6 +35,7 @@ from app.dvrip import (
     unpack,
 )
 from app.ptz import (
+    DEFAULT_SPEED,
     PROBE_STATUS_AUTH,
     PROBE_STATUS_NO_TOKEN,
     PROBE_STATUS_OK,
@@ -47,6 +48,7 @@ from app.ptz import (
     async_send,
     build_command,
     configured_actions,
+    needs_direction,
     normalize_ptz,
     preferred_profiles,
     probe_base_url,
@@ -352,12 +354,124 @@ def test_dvrip_profile_builds_the_payloads() -> None:
     assert build_command(config, "left", speed=7) == (
         'DVRIP {"Command":"DirectionLeft","Step":7,"Channel":1}'
     )
+    # The stop names no direction: ``Step: 0`` with a direction drives that axis to its
+    # zero position on this family, so a stop of the top position *is* the top position
+    # (see ``test_a_stop_without_a_direction_is_not_guessed``).
     assert build_command(config, "stop", direction="left") == (
-        'DVRIP {"Command":"DirectionLeft","Step":0,"Channel":1}'
+        'DVRIP {"Command":"Stop","Step":0,"Channel":1}'
     )
+    assert build_command(config, "stop") == 'DVRIP {"Command":"Stop","Step":0,"Channel":1}'
     assert build_command(config, "preset", preset="3") == (
         'DVRIP {"Command":"GotoPreset","Preset":3,"Channel":1}'
     )
+
+
+def test_axis_speeds_default_to_the_general_speed() -> None:
+    """A camera without per axis speeds moves exactly as it did before."""
+    config = normalize_ptz({"profile": "xiongmai_dvrip", "speed": 6}, RTSP_URL)
+
+    assert config is not None
+    assert config["speed_horizontal"] == 6
+    assert config["speed_vertical"] == 6
+    assert '"Step":6' in str(build_command(config, "up"))
+    assert '"Step":6' in str(build_command(config, "left"))
+
+
+def test_axis_speeds_are_stored_and_used_by_the_arrows() -> None:
+    """Both arrows can be tuned apart: the tilt reads the vertical speed, the pan the
+    horizontal one, and anything else the general speed."""
+    config = normalize_ptz(
+        {
+            "profile": "xiongmai_dvrip",
+            "speed": 4,
+            "speed_vertical": 1,
+            "speed_horizontal": 8,
+        },
+        RTSP_URL,
+    )
+
+    assert config is not None
+    assert '"Step":1' in str(build_command(config, "down"))
+    assert '"Step":1' in str(build_command(config, "up"))
+    assert '"Step":8' in str(build_command(config, "left"))
+    assert '"Step":8' in str(build_command(config, "right"))
+    assert '"Step":4' in str(build_command(config, "zoom_in"))
+    # A speed of the call is the speed of that whole move, so it wins over both axes.
+    assert '"Step":2' in str(build_command(config, "down", speed=2))
+    assert '"Step":2' in str(build_command(config, "left", speed=2))
+    # An explicit per axis value of the call wins over the stored one.
+    assert '"Step":3' in str(build_command(config, "down", speed_vertical=3))
+    assert '"Step":6' in str(build_command(config, "left", speed_horizontal=6))
+
+
+def test_out_of_range_axis_speeds_fall_back() -> None:
+    """Whatever a file says, the camera gets a speed of the 1..8 the panel offers.
+
+    An unusable value falls back to the default speed, exactly like an unusable general
+    speed; an empty one takes the general speed of the camera.
+    """
+    config = normalize_ptz(
+        {
+            "profile": "xiongmai_dvrip",
+            "speed": 3,
+            "speed_vertical": 99,
+            "speed_horizontal": "",
+        },
+        RTSP_URL,
+    )
+
+    assert config is not None
+    assert config["speed_vertical"] == DEFAULT_SPEED
+    assert config["speed_horizontal"] == 3
+
+
+def test_a_stored_command_of_an_older_version_is_upgraded() -> None:
+    """A camera configured before 0.3.6 gets the fixed stop without a second fill in.
+
+    The commands live in the camera file, so a fix inside a bundled template would never
+    reach a camera that was set up earlier. A stored command that is *exactly* an old
+    template of this project is therefore replaced - a hand written one is not.
+    """
+    config = normalize_ptz(
+        {
+            "profile": "xiongmai_dvrip",
+            "speed": 5,
+            "commands": {
+                "stop": 'DVRIP {"Command":"{direction}","Step":0,"Channel":1}',
+                "down": 'DVRIP {"Command":"DirectionDown","Step":{speed},"Channel":1}',
+                "left": 'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":1,'
+                '"Preset":7}',
+            },
+        },
+        RTSP_URL,
+    )
+
+    assert config is not None
+    assert config["commands"]["stop"] == 'DVRIP {"Command":"Stop","Step":0,"Channel":1}'
+    assert config["commands"]["down"] == (
+        'DVRIP {"Command":"DirectionDown","Step":{speed_vertical},"Channel":1}'
+    )
+    assert config["commands"]["left"] == (
+        'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":1,"Preset":7}'
+    )
+
+
+def test_a_stop_without_a_direction_is_not_guessed() -> None:
+    """A stop that cannot name its axis is refused instead of moving the camera.
+
+    Dahua and the Xiongmai HTTP CGI need the direction of the movement on their stop
+    command. Filling in the first code of the profile - what this project did until
+    0.3.6 - is not a stop: on a Xiongmai device every direction *is* a zero position, so
+    a stop that says "up" drove the camera to its top instead of standing still
+    (measured on 192.168.20.253, see the changelog of 0.3.6).
+    """
+    config = normalize_ptz({"profile": "xiongmai", "speed": 5}, RTSP_URL)
+
+    assert config is not None
+    assert build_command(config, "stop", direction="left") is not None
+    assert build_command(config, "stop") is None
+    assert needs_direction(config, "stop") is True
+    assert needs_direction(config, "left") is False
 
 
 def test_dvrip_names_the_nested_object_after_the_message() -> None:
@@ -638,6 +752,69 @@ def test_ptz_endpoint_stops_with_the_moved_direction(client: TestClient, ptz_cam
     stop = received()[-1]
     assert stop["query"]["action"] == "stop"
     assert stop["query"]["code"] == "DirectionRight"
+
+
+def test_ptz_endpoint_remembers_the_axis_a_stop_has_to_name(
+    client: TestClient, ptz_cam: str
+) -> None:
+    """A stop without a direction stops what was moved last, not a guessed axis."""
+    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "xiongmai", "base_url": ptz_cam})
+
+    client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "down"})
+    response = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "stop"})
+
+    assert response.status_code == 200, response.text
+    stop = received()[-1]
+    assert stop["query"]["action"] == "stop"
+    assert stop["query"]["code"] == "DirectionDown"
+
+
+def test_ptz_endpoint_refuses_a_stop_without_any_direction(
+    client: TestClient, ptz_cam: str
+) -> None:
+    """A stop that has no axis to name is refused instead of answered with a guess.
+
+    Nothing was moved yet, so the axis of the movement is unknown - and picking one is
+    not an option: on a Xiongmai device a stop that says "up" drives the camera to its
+    top (see ``test_a_stop_without_a_direction_is_not_guessed``).
+    """
+    camera = add_camera(client, url=RTSP_URL, ptz={"profile": "xiongmai", "base_url": ptz_cam})
+
+    response = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "stop"})
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "ptz_direction_required"
+
+
+def test_ptz_endpoint_sends_the_speed_of_the_axis(client: TestClient, ptz_cam: str) -> None:
+    """The panel sends the speed of the arrow that was pressed."""
+    camera = add_camera(
+        client,
+        url=RTSP_URL,
+        ptz={
+            "profile": "custom",
+            "base_url": ptz_cam,
+            "speed": 4,
+            "speed_vertical": 2,
+            "speed_horizontal": 7,
+            "commands": {
+                "down": "GET {base}/cgi-bin/ptz.cgi?action=start&code=Down&arg2={speed_vertical}",
+                "left": "GET {base}/cgi-bin/ptz.cgi?action=start&code=Left&arg2={speed_horizontal}",
+            },
+        },
+    )
+
+    down = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "down"})
+    left = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "left"})
+    override = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "left", "speed_horizontal": 5}
+    )
+
+    assert down.status_code == 200, down.text
+    assert left.status_code == 200, left.text
+    assert down.json()["ptz"]["command"].endswith("arg2=2")
+    assert left.json()["ptz"]["command"].endswith("arg2=7")
+    assert override.json()["ptz"]["command"].endswith("arg2=5")
 
 
 def test_ptz_endpoint_sends_a_body(client: TestClient, ptz_cam: str) -> None:
@@ -1138,10 +1315,12 @@ def test_probe_keeps_the_variant_that_answers(
     published = json.loads(Path(settings.published_file).read_text(encoding="utf-8"))
     assert published["cameras"][0]["ptz"]["profile"] == "xiongmai"
 
-    # The probe really sent the stop command of the variant that won the test.
+    # The probe really sent the stop command of the variant that won the test. The
+    # direction is part of the stop of the Xiongmai HTTP CGI, the probe names one so
+    # that the request is a valid stop.
     stops = [request for request in received() if request["query"].get("action") == "stop"]
     assert stops
-    assert any(request["query"].get("code") == "DirectionUp" for request in stops)
+    assert any(request["query"].get("code") == "DirectionLeft" for request in stops)
 
 
 def test_probe_prefers_a_real_dvrip_answer_over_an_http_200(
@@ -1172,7 +1351,8 @@ def test_probe_prefers_a_real_dvrip_answer_over_an_http_200(
     assert data["applied"] is True
     assert data["camera"]["ptz"]["profile"] == "xiongmai_dvrip"
     assert data["camera"]["ptz"]["commands"]["left"].startswith("DVRIP ")
-    assert DvripCamera.received[-1]["payload"]["OPPTZControl"]["Command"] == "DirectionUp"
+    # The stop of this profile needs no direction: the device stops where it is.
+    assert DvripCamera.received[-1]["payload"]["OPPTZControl"]["Command"] == "Stop"
 
 
 def test_probe_prefers_onvif_when_the_token_is_there(
@@ -1319,7 +1499,7 @@ def test_probe_finds_a_dvrip_port(client: TestClient, dvrip_cam: int) -> None:
     assert data["camera"]["ptz"]["profile"] == "xiongmai_dvrip"
     assert data["camera"]["ptz"]["port"] == dvrip_cam
     assert DvripCamera.login["UserName"] == "user"
-    assert DvripCamera.received[0]["payload"]["OPPTZControl"]["Command"] == "DirectionUp"
+    assert DvripCamera.received[0]["payload"]["OPPTZControl"]["Command"] == "Stop"
 
 
 def test_probe_finds_the_variant_a_xiongmai_url_points_at(

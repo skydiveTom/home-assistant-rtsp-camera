@@ -34,7 +34,10 @@
     },
     "ptz_preset_missing": {"message": "Gib die Nummer des Presets an."},
     "ptz_unknown_camera": {"message": "{entity_id} ist keine Kamera von RTSP Camera Manager."},
-    "ptz_no_target": {"message": "Wähle mindestens eine Kamera."}
+    "ptz_no_target": {"message": "Wähle mindestens eine Kamera."},
+    "ptz_direction_required": {
+      "message": "Die Kamera muss wissen, welche Achse zu stoppen ist - den Pfeil der Bewegung senden oder einen Stopp-Befehl ohne Richtung verwenden."
+    }
   },
   "config": {
     "step": {

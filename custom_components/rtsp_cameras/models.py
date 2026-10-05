@@ -50,6 +50,10 @@ class PtzConfig:
 
     profile: str = "custom"
     speed: int = 4
+    #: Speed of the pan (left/right) and of the tilt (up/down); 0 when the camera only
+    #: sets a general speed.
+    speed_horizontal: int = 0
+    speed_vertical: int = 0
     commands: Mapping[str, str] = field(default_factory=dict)
     stop_codes: Mapping[str, str] = field(default_factory=dict)
     presets: tuple[tuple[str, str], ...] = ()
@@ -64,6 +68,10 @@ class PtzConfig:
     def enabled(self) -> bool:
         """Return True when the camera can be moved."""
         return bool(self.commands)
+
+    def axis_speed(self, horizontal: bool) -> int:
+        """Return the speed of one axis, falling back to the general speed."""
+        return (self.speed_horizontal if horizontal else self.speed_vertical) or self.speed
 
     @property
     def actions(self) -> tuple[str, ...]:
@@ -111,6 +119,8 @@ class PtzConfig:
         return cls(
             profile=str(data.get("profile") or "custom").strip() or "custom",
             speed=_positive_int(data.get("speed"), PTZ_DEFAULT_SPEED),
+            speed_horizontal=_positive_int(data.get("speed_horizontal"), 0),
+            speed_vertical=_positive_int(data.get("speed_vertical"), 0),
             commands=commands,
             stop_codes=stop_codes,
             presets=tuple(presets),

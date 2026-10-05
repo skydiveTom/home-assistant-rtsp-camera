@@ -91,11 +91,59 @@ class PtzOutcome:
         return self.error is None
 
 
+#: Which way each camera was moved last, keyed by camera id. A stop that does not say
+#: which axis it should stop uses this memory instead of a guess: a guessed direction
+#: does not stop a camera, it moves it - a Xiongmai device drives to its top position
+#: when a stop says "up" (measured, see the changelog of 0.3.6). The panel of the add-on
+#: keeps the same memory for itself.
+_LAST_DIRECTION: dict[str, str] = {}
+
+
+def remember_direction(camera_id: str, action: str) -> None:
+    """Remember which axis a camera was moved along."""
+    if camera_id and action:
+        _LAST_DIRECTION[camera_id] = action
+
+
+def last_direction(camera_id: str) -> str | None:
+    """Return the axis a camera was moved along last, when it is known."""
+    return _LAST_DIRECTION.get(camera_id) if camera_id else None
+
+
+def needs_direction(config: PtzConfig, action: str) -> bool:
+    """Return True when the command of an action asks for the ``{direction}`` value."""
+    return "{direction}" in str(config.commands.get(action) or "")
+
+
+def _speeds(
+    config: PtzConfig,
+    speed: int | None,
+    speed_horizontal: int | None,
+    speed_vertical: int | None,
+) -> dict[str, int]:
+    """Return the general speed and the speed of both axes of one command.
+
+    A speed that a call passes is the speed of that whole move, so it drives both axes -
+    an automation that asks for a slow move has to get a slow camera. The per axis speeds
+    of the camera only fill in what the call leaves open.
+    """
+    general = speed if speed is not None else config.speed
+    horizontal = speed_horizontal
+    if horizontal is None:
+        horizontal = speed if speed is not None else config.axis_speed(True)
+    vertical = speed_vertical
+    if vertical is None:
+        vertical = speed if speed is not None else config.axis_speed(False)
+    return {"speed": general, "speed_horizontal": horizontal, "speed_vertical": vertical}
+
+
 def render(
     config: PtzConfig,
     action: str,
     *,
     speed: int | None = None,
+    speed_horizontal: int | None = None,
+    speed_vertical: int | None = None,
     preset: str | None = None,
     direction: str | None = None,
     seconds: float | None = None,
@@ -105,15 +153,15 @@ def render(
     if not template:
         return None
 
-    values: dict[str, Any] = {"speed": speed if speed is not None else config.speed}
+    values: dict[str, Any] = _speeds(config, speed, speed_horizontal, speed_vertical)
     if preset is not None:
         values["preset"] = str(preset)
     if direction:
         values["direction"] = str(config.stop_codes.get(direction, direction))
     elif "{direction}" in template:
-        # A plain stop from an automation is still valid: the first code of the
-        # profile (usually "up") stops that axis.
-        values["direction"] = str(next(iter(config.stop_codes.values()), "up"))
+        # A stop that does not name the axis it should stop is refused instead of being
+        # answered with a guess, see ``_LAST_DIRECTION`` above.
+        return None
     if seconds is not None:
         values["seconds"] = f"{float(seconds):g}"
     # These are already filled in by the add-on; they are repeated here so hand
@@ -215,6 +263,8 @@ async def async_execute(
     action: str,
     *,
     speed: int | None = None,
+    speed_horizontal: int | None = None,
+    speed_vertical: int | None = None,
     preset: str | None = None,
     direction: str | None = None,
     seconds: float | None = None,
@@ -227,9 +277,23 @@ async def async_execute(
         )
 
     command = render(
-        config, action, speed=speed, preset=preset, direction=direction, seconds=seconds
+        config,
+        action,
+        speed=speed,
+        speed_horizontal=speed_horizontal,
+        speed_vertical=speed_vertical,
+        preset=preset,
+        direction=direction,
+        seconds=seconds,
     )
     if command is None:
+        if action == "stop" and needs_direction(config, action):
+            # The camera needs a direction to stop, and the caller did not say which
+            # axis is moving (see ``last_direction`` for the memory that answers it).
+            raise HomeAssistantError(
+                translation_domain="rtsp_cameras",
+                translation_key="ptz_direction_required",
+            )
         raise HomeAssistantError(
             translation_domain="rtsp_cameras",
             translation_key="ptz_action_unsupported",

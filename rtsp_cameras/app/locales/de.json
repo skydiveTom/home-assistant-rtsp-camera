@@ -204,7 +204,10 @@
     "status_unsupported": "nicht unterstützt",
     "status_timeout": "keine Antwort (Timeout)",
     "status_unreachable": "nicht erreichbar",
-    "status_error": "Fehler"
+    "status_error": "Fehler",
+    "speed_vertical": "Geschwindigkeit hoch/runter (1-8)",
+    "speed_horizontal": "Geschwindigkeit links/rechts (1-8)",
+    "speed_axis_hint": "Die Pfeile senden die Geschwindigkeit ihrer eigenen Achse - die Neigung (hoch/runter) nimmt die vertikale, das Schwenken (links/rechts) die horizontale. Zoom und Presets nutzen die allgemeine Geschwindigkeit."
   },
   "errors": {
     "ptz_not_configured": "Für diese Kamera ist kein PTZ eingerichtet",
@@ -231,7 +234,8 @@
     "update_check_failed": "Die Version konnte nicht geprüft werden, bitte gleich erneut versuchen",
     "update_failed": "Die Aktualisierung des Add-ons konnte nicht gestartet werden",
     "ptz_base_url_required": "Zuerst die HTTP-Adresse der Kamera eintragen",
-    "ptz_onvif_failed": "ONVIF hat nicht geantwortet"
+    "ptz_onvif_failed": "ONVIF hat nicht geantwortet",
+    "ptz_direction_required": "Der Stopp kennt die Bewegungsrichtung nicht - den Pfeil der Bewegung senden"
   },
   "common": {
     "close": "Schließen",

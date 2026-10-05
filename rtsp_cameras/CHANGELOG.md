@@ -4,7 +4,58 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.5] - 2026-10-05
+## [0.3.6] - 2026-10-05
+
+### Fixed
+
+- **A stop drove the camera to the very top instead of stopping it.** The direction of a
+  stop was taken from the *first* code of the profile whenever the caller did not pass
+  one, and for Xiongmai that is `up`: the payload became
+  `{"Command":"DirectionUp","Step":0,...}`. On the DVR of the test set (192.168.20.253)
+  that is not a stop but a movement - `Step: 0` with a direction drives that axis to its
+  zero position, and the zero position of "up" is the top. Measured with the scratch
+  tracking tool `.smoke/track.py` (fresh frames of the stream, the grey row profile of the
+  picture, one sample every 2.5 s): after 7 s of `DirectionDown` the tilt
+  read `+24 +24 +24` (the camera tilting down); the stop that named `DirectionUp` turned
+  that into `-24 -24` and the camera settled **at the top** again (`mad` 1.1, the noise of
+  a still camera), while the stop that names the moving direction (`DirectionDown`) and
+  the device's own `{"Command":"Stop","Step":0}` both left it where it was (`tilt 0`,
+  `mad` 2.1 for the next 7 s). Nothing about that is the camera: after 12 s of `down`,
+  which is far past its bottom limit, it stays about 75 grey levels away from the top view
+  for 20 s instead of travelling back. Two changes follow from it: a stop that does not name
+  the axis that is moving is **refused** (`ptz_direction_required`) instead of guessed,
+  and the axis of the last move is remembered - the *PTZ stop* button of a dashboard, the
+  stop button of the panel and `move_mode: Stop` therefore stop what is moving. The
+  bundled Xiongmai DVRIP profile stops with `{"Command":"Stop","Step":0,...}`, which needs
+  no direction at all (it stops a pan as well: `mad` 30 and 22 while panning, 2.5 right
+  after the stop).
+- **A command set that was stored earlier keeps an old template.** The commands of a
+  camera live in the camera file, so a fix inside a bundled template would never reach a
+  camera that was configured before it. A stored command that is exactly an old template
+  of this project is now replaced by the current one; hand written commands stay
+  untouched.
+
+### Added
+
+- **The two arrows can move at their own speed.** The PTZ block gained *Speed up/down*
+  and *Speed left/right* next to the general speed (both default to it, so a camera that
+  does not set them moves exactly as before). The panel shows both fields in the camera
+  editor and in the preview pad, and the pad sends the speed of the arrow it belongs to;
+  the placeholders `{speed_vertical}` and `{speed_horizontal}` make the same available to
+  hand written commands, and the bundled Xiongmai DVRIP profile uses them for its tilt and
+  its pan commands. A `speed` that a `rtsp_cameras.ptz` call passes still counts for both
+  axes, because such a call asks for the speed of the whole move.
+
+### Verified
+
+- **The stop was measured three ways on the device.** `.smoke/track.py <camera>
+  stop-same-direction|stop-guessed-up|stop-command|no-stop` replays a move and one variant
+  of a stop for anyone who wants to see it again; the scenarios `stop-guessed-up` (the old
+  payload) and `stop-command` (the new one) are the two runs quoted above. The camera
+  never moved on its own: 25 s without a command left the picture at `mad` 2.8-3.0 and
+  `tilt 0`.
+
+
 
 ### Fixed
 

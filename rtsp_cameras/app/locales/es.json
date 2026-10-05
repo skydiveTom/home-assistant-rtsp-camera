@@ -204,7 +204,10 @@
     "status_unsupported": "no soportado",
     "status_timeout": "sin respuesta (timeout)",
     "status_unreachable": "no accesible",
-    "status_error": "error"
+    "status_error": "error",
+    "speed_vertical": "Velocidad arriba/abajo (1-8)",
+    "speed_horizontal": "Velocidad izquierda/derecha (1-8)",
+    "speed_axis_hint": "Las flechas envían la velocidad de su propio eje: la inclinación (arriba/abajo) usa la vertical y el giro (izquierda/derecha) la horizontal. El zoom y los presets usan la velocidad general."
   },
   "errors": {
     "ptz_not_configured": "Esta cámara no tiene PTZ configurado",
@@ -231,7 +234,8 @@
     "update_check_failed": "No se pudo comprobar la versión, inténtalo de nuevo en un momento",
     "update_failed": "No se pudo iniciar la actualización del complemento",
     "ptz_base_url_required": "Primero indica la dirección HTTP de la cámara",
-    "ptz_onvif_failed": "ONVIF no respondió"
+    "ptz_onvif_failed": "ONVIF no respondió",
+    "ptz_direction_required": "La parada no sabe hacia dónde se mueve la cámara: envía la flecha del movimiento"
   },
   "common": {
     "close": "Cerrar",

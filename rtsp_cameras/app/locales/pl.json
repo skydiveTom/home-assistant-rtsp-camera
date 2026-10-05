@@ -204,7 +204,10 @@
     "status_unsupported": "nieobsługiwany",
     "status_timeout": "brak odpowiedzi (timeout)",
     "status_unreachable": "nieosiągalny",
-    "status_error": "błąd"
+    "status_error": "błąd",
+    "speed_vertical": "Prędkość w górę/w dół (1-8)",
+    "speed_horizontal": "Prędkość w lewo/w prawo (1-8)",
+    "speed_axis_hint": "Strzałki wysyłają prędkość swojej osi — przechył (góra/dół) bierze pionową, obrót (lewo/prawo) poziomą. Zoom i presety używają prędkości ogólnej."
   },
   "errors": {
     "ptz_not_configured": "Ta kamera nie ma skonfigurowanego PTZ",
@@ -231,7 +234,8 @@
     "update_check_failed": "Nie udało się sprawdzić wersji, spróbuj ponownie za chwilę",
     "update_failed": "Nie udało się rozpocząć aktualizacji dodatku",
     "ptz_base_url_required": "Najpierw wpisz adres HTTP kamery",
-    "ptz_onvif_failed": "ONVIF nie odpowiedział"
+    "ptz_onvif_failed": "ONVIF nie odpowiedział",
+    "ptz_direction_required": "Stop nie wie, w którą stronę kamera się rusza — wyślij strzałkę ruchu"
   },
   "common": {
     "close": "Zamknij",

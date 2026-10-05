@@ -44,6 +44,9 @@
     },
     "ptz_no_target": {
       "message": "Wybierz co najmniej jedną kamerę."
+    },
+    "ptz_direction_required": {
+      "message": "Kamera musi wiedzieć, którą oś zatrzymać — wyślij strzałkę ruchu albo użyj komendy stopu bez kierunku."
     }
   },
   "config": {

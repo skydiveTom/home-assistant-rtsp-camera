@@ -193,9 +193,14 @@ def dvrip_command(**payload: Any) -> str:
     return "DVRIP " + json.dumps(payload, separators=(",", ":"))
 
 
-def _dvrip_direction(command: str) -> str:
-    """Return a DVRIP move command that runs until it is stopped."""
-    return f'DVRIP {{"Command":"{command}","Step":{{speed}},"Channel":{{channel}}}}'
+def _dvrip_direction(command: str, speed: str = "{speed}") -> str:
+    """Return a DVRIP move command that runs until it is stopped.
+
+    The ``Step`` of a move is the speed of **its axis**: the tilt reads
+    ``{speed_vertical}`` and the pan ``{speed_horizontal}``, so both arrows of the panel
+    can be tuned on their own. Zoom and any other action keeps the plain ``{speed}``.
+    """
+    return f'DVRIP {{"Command":"{command}","Step":{speed},"Channel":{{channel}}}}'
 
 
 #: Vendor presets. ``direction_codes`` translate our actions into the vendor codes
@@ -361,13 +366,17 @@ PTZ_PROFILES: dict[str, dict[str, Any]] = {
         "description": "DVRs and NVRs without a web interface; speaks the binary DVRIP "
         "protocol on port 34567 (the login of the RTSP URL is reused).",
         "commands": {
-            "up": _dvrip_direction("DirectionUp"),
-            "down": _dvrip_direction("DirectionDown"),
-            "left": _dvrip_direction("DirectionLeft"),
-            "right": _dvrip_direction("DirectionRight"),
+            "up": _dvrip_direction("DirectionUp", "{speed_vertical}"),
+            "down": _dvrip_direction("DirectionDown", "{speed_vertical}"),
+            "left": _dvrip_direction("DirectionLeft", "{speed_horizontal}"),
+            "right": _dvrip_direction("DirectionRight", "{speed_horizontal}"),
             "zoom_in": _dvrip_direction("ZoomTile"),
             "zoom_out": _dvrip_direction("ZoomWide"),
-            "stop": 'DVRIP {"Command":"{direction}","Step":0,"Channel":{channel}}',
+            # ``Step: 0`` with a direction is *not* a stop on this family: it drives the
+            # axis to its zero position, so "stop" with ``DirectionUp`` sends the camera
+            # to the top and a stop of the direction that was moving only ends because
+            # that axis ran into its limit. The device knows a real stop.
+            "stop": 'DVRIP {"Command":"Stop","Step":0,"Channel":{channel}}',
             "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
         },
         "direction_codes": {
@@ -380,6 +389,22 @@ PTZ_PROFILES: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+#: Templates this project shipped before, per profile and action. The commands of a
+#: camera are stored next to it, so a fix *inside* a bundled template would never reach
+#: a camera that was configured earlier. A stored command that matches one of these is
+#: therefore replaced by the current template of its profile (see the DVRIP stop of
+#: 0.3.6, which drove a camera to the top instead of stopping it).
+LEGACY_PROFILE_COMMANDS: dict[str, dict[str, str]] = {
+    "xiongmai_dvrip": {
+        "up": 'DVRIP {"Command":"DirectionUp","Step":{speed},"Channel":{channel}}',
+        "down": 'DVRIP {"Command":"DirectionDown","Step":{speed},"Channel":{channel}}',
+        "left": 'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
+        "right": 'DVRIP {"Command":"DirectionRight","Step":{speed},"Channel":{channel}}',
+        "stop": 'DVRIP {"Command":"{direction}","Step":0,"Channel":{channel}}',
+    },
+}
+
 
 _ACTION_ALIASES = {
     "zoom-in": "zoom_in",
@@ -540,6 +565,13 @@ def _speed(value: Any) -> int:
     return speed if 1 <= speed <= MAX_SPEED else DEFAULT_SPEED
 
 
+def _axis_speed(value: Any, fallback: int) -> int:
+    """Return the speed of one axis, falling back to the general speed."""
+    if value is None or str(value).strip() == "":
+        return _speed(fallback)
+    return _speed(value)
+
+
 def _clean_command(value: Any) -> str:
     """Return a validated command string or an empty string."""
     command = " ".join(str(value or "").split())
@@ -637,6 +669,21 @@ def _hinted_first(profiles: Iterable[str], stream_url: str) -> list[str]:
     return hinted + [profile for profile in rest if profile not in hinted]
 
 
+def _upgrade_command(
+    profile: str, action: str, command: str, values: Mapping[str, Any]
+) -> str:
+    """Return the current template when a stored command is an old one of this project.
+
+    The comparison runs against the *filled* text, because that is what a stored camera
+    carries (its channel, port and credentials are already in it, the values that a call
+    brings - speed, preset, direction - are still placeholders).
+    """
+    legacy = LEGACY_PROFILE_COMMANDS.get(profile, {}).get(action)
+    if legacy is None or command != fill(legacy, values):
+        return command
+    return str(PTZ_PROFILES[profile]["commands"][action])
+
+
 def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
     """Validate the PTZ block of a camera and fill in its defaults.
 
@@ -660,6 +707,8 @@ def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
         _channels(raw.get("channel")) if raw.get("channel") is not None else None
     ) or url_channel or DEFAULT_CHANNEL
     speed = _speed(raw.get("speed"))
+    speed_horizontal = _axis_speed(raw.get("speed_horizontal"), speed)
+    speed_vertical = _axis_speed(raw.get("speed_vertical"), speed)
     port = _positive_port(raw.get("port"), DEFAULT_DVRIP_PORT)
     token = str(raw.get("token") or "").strip()
 
@@ -679,7 +728,7 @@ def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
             profile_commands.get(action)
         )
         if command:
-            commands[action] = fill(command, values)
+            commands[action] = fill(_upgrade_command(profile, action, command, values), values)
 
     if not commands:
         return None
@@ -690,6 +739,8 @@ def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
         "base_url": base,
         "channel": channel,
         "speed": speed,
+        "speed_horizontal": speed_horizontal,
+        "speed_vertical": speed_vertical,
         "port": port,
         "token": token,
         "username": username,
@@ -715,11 +766,39 @@ def parse_command(command: str) -> tuple[str, str, bytes | None]:
     return method.upper(), url, body.encode("utf-8") if body else None
 
 
+def _axis_speed_values(
+    config: Mapping[str, Any],
+    speed: int | None,
+    speed_horizontal: int | None,
+    speed_vertical: int | None,
+) -> dict[str, Any]:
+    """Return the speeds that a command is filled with.
+
+    A speed that a call passes is the speed of that whole move, so it drives both axes -
+    an automation that says "move slowly" has to get a slow camera. The per axis speeds
+    of the camera only fill in what the call leaves open.
+    """
+    general = _speed(speed if speed is not None else config.get("speed"))
+    horizontal = speed_horizontal
+    if horizontal is None:
+        horizontal = speed if speed is not None else config.get("speed_horizontal")
+    vertical = speed_vertical
+    if vertical is None:
+        vertical = speed if speed is not None else config.get("speed_vertical")
+    return {
+        "speed": general,
+        "speed_horizontal": _axis_speed(horizontal, general),
+        "speed_vertical": _axis_speed(vertical, general),
+    }
+
+
 def build_command(
     config: Mapping[str, Any],
     action: str,
     *,
     speed: int | None = None,
+    speed_horizontal: int | None = None,
+    speed_vertical: int | None = None,
     preset: str | None = None,
     direction: str | None = None,
     seconds: float | None = None,
@@ -730,23 +809,30 @@ def build_command(
     if not template:
         return None
 
-    values: dict[str, Any] = {
-        "speed": _speed(speed if speed is not None else config.get("speed")),
-    }
+    values: dict[str, Any] = _axis_speed_values(
+        config, speed, speed_horizontal, speed_vertical
+    )
     if preset is not None:
         values["preset"] = str(preset)
     if direction:
         codes = config.get("stop_codes") or {}
         values["direction"] = str(codes.get(direction, direction))
     elif "{direction}" in template:
-        # A stop without a direction (a plain "stop" from an automation) still has
-        # to be a valid command: the first code of the profile is used, which stops
-        # that axis - vendors like Dahua and Xiongmai need a direction here.
-        codes = config.get("stop_codes") or {}
-        values["direction"] = str(next(iter(codes.values()), "DirectionUp"))
+        # A stop that does not name the axis it should stop cannot be answered with a
+        # guess: on a Xiongmai device every direction is its own zero position, so a
+        # stop that says "up" drives the camera to the top instead of stopping it
+        # (measured, see the changelog of 0.3.6). The caller knows which axis it moved
+        # and passes it; the bundled DVRIP stop needs no direction at all.
+        return None
     if seconds is not None:
         values["seconds"] = f"{float(seconds):g}"
     return fill(template, values)
+
+
+def needs_direction(config: Mapping[str, Any] | None, action: str) -> bool:
+    """Return True when the command of an action asks for the ``{direction}`` value."""
+    commands = (config or {}).get("commands") or {}
+    return "{direction}" in str(commands.get(action) or "")
 
 
 def configured_actions(config: Mapping[str, Any] | None) -> list[str]:
@@ -905,16 +991,30 @@ async def async_run(
     action: str,
     *,
     speed: int | None = None,
+    speed_horizontal: int | None = None,
+    speed_vertical: int | None = None,
     preset: str | None = None,
     direction: str | None = None,
     seconds: float | None = None,
 ) -> PtzResult:
     """Build and send the command of an action."""
     command = build_command(
-        config, action, speed=speed, preset=preset, direction=direction, seconds=seconds
+        config,
+        action,
+        speed=speed,
+        speed_horizontal=speed_horizontal,
+        speed_vertical=speed_vertical,
+        preset=preset,
+        direction=direction,
+        seconds=seconds,
     )
     if command is None:
-        return PtzResult(ok=False, action=action, command="", detail="no_command_configured")
+        detail = (
+            "direction_required"
+            if action == "stop" and needs_direction(config, action)
+            else "no_command_configured"
+        )
+        return PtzResult(ok=False, action=action, command="", detail=detail)
 
     host = urlsplit(str(config.get("base_url") or "")).hostname or ""
     status, error, snippet = await async_send_detail(
@@ -1013,6 +1113,8 @@ def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "base_url": config.get("base_url"),
         "channel": config.get("channel"),
         "speed": config.get("speed"),
+        "speed_horizontal": config.get("speed_horizontal"),
+        "speed_vertical": config.get("speed_vertical"),
         "port": config.get("port"),
         "token": config.get("token"),
         "has_credentials": bool(config.get("username")),
@@ -1097,7 +1199,11 @@ async def _probe_profile(
         },
         stream_url,
     )
-    command = build_command(config, "stop") if config else None
+    # The probe asks with the *stop* command, and a stop that needs a direction gets one:
+    # a camera that is not moving ignores a stop of an axis, which keeps the probe free
+    # of movement (a Xiongmai device would instead answer a *stop of the top position*
+    # by driving there, which is why its profile stops without a direction).
+    command = build_command(config, "stop", direction="left") if config else None
     if not command:
         return PtzProbeResult(
             profile=profile,

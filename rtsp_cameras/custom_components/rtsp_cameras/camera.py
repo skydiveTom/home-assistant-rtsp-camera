@@ -39,6 +39,7 @@ from .coordinator import RtspCamerasCoordinator
 from .models import PtzConfig, RtspCameraDefinition, redact_url
 from .ptz import async_execute as ptz_async_execute
 from .ptz import async_move as ptz_async_move
+from .ptz import last_direction, remember_direction
 from .services import default_duration, resolve_action, resolve_duration, resolve_speed
 
 _LOGGER = logging.getLogger(__name__)
@@ -316,12 +317,26 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
             return
 
         if action in PTZ_DIRECTIONS:
+            remember_direction(self._definition.id, action)
             await ptz_async_move(
                 self.hass,
                 config,  # type: ignore[arg-type]
                 action,
                 speed=speed,
                 duration=duration if duration is not None else default_duration(),
+            )
+            return
+
+        if action == "stop":
+            # A stop stops the axis that was moved last: a direction that has to be
+            # guessed is no direction - a Xiongmai camera drives to its top position
+            # when a stop tells it "up" (see ``ptz.last_direction``).
+            await ptz_async_execute(
+                self.hass,
+                config,
+                action,
+                speed=speed,
+                direction=last_direction(self._definition.id),
             )
             return
 

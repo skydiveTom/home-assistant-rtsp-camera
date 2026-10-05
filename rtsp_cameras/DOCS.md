@@ -166,8 +166,9 @@ control*, tick *This camera supports PTZ* and pick the vendor preset. The preset
 the HTTP commands of the camera right away - choosing another one replaces them, so no
 command of the previously selected vendor is left in the form - and *Fill commands from
 the profile* fills them in again after the credentials or the channel were changed. They
-stay editable, so unusual firmware can be handled too, and `{speed}`, `{preset}`,
-`{direction}` stay dynamic. Presets are entered one per line as `number=name`.
+stay editable, so unusual firmware can be handled too, and `{speed}`, `{speed_vertical}`,
+`{speed_horizontal}`, `{preset}`, `{direction}` stay dynamic. Presets are entered one per
+line as `number=name`.
 
 | Preset | Commands used |
 | --- | --- |
@@ -184,6 +185,24 @@ stay editable, so unusual firmware can be handled too, and `{speed}`, `{preset}`
 own - both `rtsp://user:pass@host/…` and the query style of many DVRs
 (`…/user=admin&password=secret&channel=1&stream=0.sdp`) are understood, including the
 channel. Only cameras with a different PTZ login need the fields filled in.
+
+**The arrows move at their own speed.** *Speed* (1-8) is the speed of the whole camera,
+*Speed up/down* is the speed of the tilt and *Speed left/right* that of the pan. Both
+default to the general speed, so a camera configured before these fields existed moves as
+it always did, and the two speed fields of the preview pad send what they show for the
+arrows they belong to. In a command the values are `{speed_vertical}` and
+`{speed_horizontal}`; a command that only knows `{speed}` keeps working, and a `speed`
+that a service call passes to `rtsp_cameras.ptz` counts for both axes.
+
+**A stop stops.** Which direction a stop has to name is the axis that was moved last -
+the panel remembers it per camera, and the integration does the same for the *PTZ stop*
+button and for `move_mode: Stop`. A stop that has no direction to name is **refused**
+(`ptz_direction_required`) instead of answered with a guess, because a guessed direction
+does not stop a camera, it moves it: on the Xiongmai DVR of the test set `Step: 0` with a
+direction drives that axis to its zero position, so the old fallback - the first code of
+the profile, `DirectionUp` - sent the camera to its top instead of standing still
+(measured, 0.3.5 and older). The bundled Xiongmai DVRIP profile stops with
+`{"Command":"Stop"}` and needs no direction at all.
 
 For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
 `GetProfiles` to the media service, takes the first profile token and fills the
@@ -259,7 +278,8 @@ Home Assistant gets:
 - `rtsp_cameras.ptz` - move with the **same fields as `onvif.ptz`** (`pan`, `tilt`,
   `zoom`, `speed` 0.01-1, `continuous_duration`, `preset`, `move_mode`), plus
   `action` for the plain actions (`left`, `zoom_in`, `home`, …). A direction moves
-  for `continuous_duration` seconds (default 0.5) and is stopped automatically.
+  for `continuous_duration` seconds (default 0.5) and is stopped automatically, and a
+  stop without a direction stops the axis that was moved last (see *A stop stops* above).
 - `rtsp_cameras.ptz_home` - go to the home position.
 - A **button per preset** (and one *PTZ stop*) on the camera device, so a dashboard
   can jump to a view with one tap.
@@ -274,7 +294,7 @@ data:
 ```
 
 The preview window of the add-on shows a PTZ pad; hold an arrow to move, release to
-stop.
+stop. The two speed fields next to it set the speed of the tilt and of the pan.
 
 **Brand assets (the icon in Home Assistant)**
 
