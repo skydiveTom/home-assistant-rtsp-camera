@@ -59,12 +59,20 @@ LOGIN_RETRY_CODES = (102, 103)
 #: letters, lower case letters.
 HASH_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-#: The devices expect this structure with the PTZ command inside.
+#: The devices expect this structure with the PTZ command inside. ``Preset`` is a number
+#: of 0 and up: a negative one - the ``-1`` of 0.3.4 and older - makes a device drop the
+#: whole command and answer ``Ret: 100`` without moving. Measured on the Xiongmai camera
+#: of the test set (192.168.20.253), with the nested key of ``PTZ_MESSAGE`` in place and
+#: fresh frames out of the stream while the command was held: ``Preset: -1`` left every
+#: frame unchanged, ``Preset: 0`` panned the camera - a mean difference of 47 to 54 grey
+#: levels between two frames 0.7 s apart, against 7.3 to 7.9 for a still camera. The Java
+#: bean of the vendor SDK (``OPPTZControlBean$Parameter``) carries an ``int Preset`` as
+#: well, whose default is 0.
 PTZ_TEMPLATE: dict[str, Any] = {
     "AUX": {"Number": 0, "Status": "On"},
     "MenuOpts": "Enter",
     "Pattern": "Start",
-    "Preset": -1,
+    "Preset": 0,
     "Step": 1,
     "Tour": 0,
 }

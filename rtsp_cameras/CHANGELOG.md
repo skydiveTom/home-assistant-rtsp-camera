@@ -4,6 +4,31 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-10-05
+
+### Fixed
+
+- **The PTZ payload sent a negative preset, which made the camera ignore every
+  command.** `Preset` is a number of 0 and up; the `-1` of the template made the device
+  in question answer `Ret: 100` and do nothing at all. Measured on the Xiongmai camera
+  of the test set, with the nested key of 0.3.4 in place and with fresh frames taken out
+  of the stream *while* the command was held (the frame cache of Home Assistant had
+  hidden the movement before): `Preset: -1` left all seven frames unchanged, `Preset: 0`
+  panned the camera - a mean difference of 47 to 54 grey levels between two frames 0.7 s
+  apart, against 7.3 to 7.9 for a camera that stands still - and the stop command
+  brought it back to 8. The same 2x2 matrix over the key of the nested object and the
+  value of `Preset` shows that both were needed: only `OPPTZControl` *and* `Preset: 0`
+  moved the camera. The Java bean of the vendor SDK (`OPPTZControlBean$Parameter`)
+  carries an `int Preset` as well, whose default is 0.
+
+### Added
+
+- **A hand written payload can be checked against the live device.** The scratch tool
+  `.smoke/live_ptz_*.ps1` of the repository sends a built in profile or a payload that
+  was written by hand, takes fresh frames from the snapshot endpoint of the add-on while
+  the command is held and prints the frame to frame difference, so a payload can be
+  judged without watching the camera.
+
 ## [0.3.4] - 2026-10-05
 
 ### Fixed

@@ -380,6 +380,23 @@ def test_dvrip_names_the_nested_object_after_the_message() -> None:
     assert payload["OPPTZControl"]["Parameter"]["Step"] == 5
 
 
+def test_dvrip_never_sends_a_negative_preset() -> None:
+    """A negative Preset makes a device drop the command; the template uses 0.
+
+    Measured on the live camera (192.168.20.253) with the nested key of ``PTZ_MESSAGE``
+    in place and fresh frames of the stream while the command was held: ``Preset: -1``
+    left every frame unchanged, ``Preset: 0`` panned the camera (a mean difference of
+    47..54 grey levels between two frames 0.7 s apart, against 7.3..7.9 for a still
+    camera). ``OPPTZControlBean$Parameter`` of the vendor SDK carries an ``int Preset``
+    as well, whose default is 0.
+    """
+    payload = ptz_payload({"Command": "DirectionLeft", "Step": 5, "Channel": 1})
+    assert payload["OPPTZControl"]["Parameter"]["Preset"] == 0
+
+    preset = ptz_payload({"Command": "GotoPreset", "Preset": 3, "Channel": 1})
+    assert preset["OPPTZControl"]["Parameter"]["Preset"] == 3
+
+
 def test_dvrip_sends_a_hand_written_payload_unchanged() -> None:
     """A payload captured from the vendor app is what a custom profile is for."""
     captured = {
