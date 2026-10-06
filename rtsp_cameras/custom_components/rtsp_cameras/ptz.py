@@ -192,6 +192,31 @@ def is_dvrip(command: str) -> bool:
     return command.strip().upper().startswith("DVRIP ")
 
 
+#: The method word that separates the payloads of one DVRIP command.
+DVRIP_STEP = " DVRIP "
+
+
+def dvrip_payloads(rest: str) -> list[dict[str, Any]] | None:
+    """Return the JSON payloads of a DVRIP body, in the order they have to be sent.
+
+    ``rest`` is everything behind the ``DVRIP`` method of a command. A command may carry
+    more than one payload: the moves of the ``xiongmai_dvrip`` profile store the position
+    they start from first, and the stop of that profile is the ``GotoPreset`` that returns
+    to it. Returns ``None`` when a part is not a JSON object, so a caller can report the
+    invalid payload it was given.
+    """
+    payloads: list[dict[str, Any]] = []
+    for part in rest.split(DVRIP_STEP):
+        try:
+            payload = json.loads(part.strip())
+        except ValueError:
+            return None
+        if not isinstance(payload, dict) or not payload:
+            return None
+        payloads.append(payload)
+    return payloads or None
+
+
 async def async_send(
     hass: HomeAssistant, command: str, config: PtzConfig | None = None
 ) -> PtzOutcome:
@@ -233,23 +258,33 @@ async def async_send(
 
 
 async def _async_send_dvrip(command: str, config: PtzConfig | None) -> PtzOutcome:
-    """Send a DVRIP command with the credentials of the camera."""
+    """Send the DVRIP payloads of a command with the credentials of the camera.
+
+    A command may carry more than one payload, and they are sent in that order: the moves
+    of the ``xiongmai_dvrip`` profile store the position they start from first, which is
+    what their stop returns to. Each payload goes over its own connection, and the first
+    one that fails ends the sequence.
+    """
     from .dvrip import DEFAULT_PORT
     from .dvrip import async_send as dvrip_send
 
-    _method, payload, _body = parse_command(command)
-    try:
-        short: dict[str, Any] = json.loads(payload)
-    except ValueError as err:
-        return PtzOutcome(action=command, url="dvrip", error=f"invalid_payload: {err}")
+    _method, payload, body = parse_command(command)
+    rest = payload if body is None else f"{payload} {body.decode('utf-8', 'replace')}"
+    payloads = dvrip_payloads(rest)
+    if payloads is None:
+        return PtzOutcome(action=command, url="dvrip", error="invalid_payload")
 
     host = (config.host if config else "") or ""
     port = (config.port if config else DEFAULT_PORT) or DEFAULT_PORT
     username = (config.username if config else "") or ""
     password = (config.password if config else "") or ""
+    ok, error = True, None
     try:
         async with asyncio.timeout(PTZ_TIMEOUT_SECONDS):
-            ok, error = await dvrip_send(host, port, username, password, short)
+            for one in payloads:
+                ok, error = await dvrip_send(host, port, username, password, one)
+                if not ok:
+                    break
     except TimeoutError:
         return PtzOutcome(action=command, url="dvrip", error="timeout")
     if not ok:

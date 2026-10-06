@@ -537,12 +537,16 @@ async def test_hikvision_style_commands_send_a_body(hass, entry, monkeypatch):
 
 
 DVRIP_COMMANDS: dict[str, str] = {
-    "left": 'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
-    # What the bundled profile publishes since 0.3.7: a stop that needs no direction, and
-    # the only shape that halts a move on this family. The channel inside ``Parameter`` is
-    # the one of the camera, because a payload with ``Name`` is passed through unchanged.
-    "stop": 'DVRIP {"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":'
-    '{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":{channel}}}}',
+    # What the bundled profile publishes since 0.3.8: the move stores the position it
+    # starts from first, and the stop is the return to that preset. No payload of this
+    # family halts a running axis - a ``Stop`` of any shape is acknowledged and the axis
+    # travels on, and the ``POINT`` object of 0.3.7 is refused with ``Ret: 118`` - so a
+    # command carries two payloads and the sender sends them in order.
+    "left": 'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+    'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
+    # ``GotoPreset`` is also the only stop that names no direction, which is what a
+    # dashboard needs after a restart of Home Assistant.
+    "stop": 'DVRIP {"Command":"GotoPreset","Preset":200,"Channel":{channel}}',
     "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
 }
 
@@ -586,36 +590,36 @@ async def test_dvrip_commands_go_through_the_tcp_client(hass, entry, monkeypatch
     )
 
     assert session.requests == [], "no HTTP request for a DVRIP camera"
-    assert len(calls) == 2, "the move and its automatic stop"
+    assert len(calls) == 3, "the store, the move and the automatic stop"
 
-    move = calls[0]
-    assert move["host"] == "10.0.0.5"
-    assert move["port"] == 34567
-    assert move["username"] == "admin"
-    assert move["password"] == "secret"
+    store = calls[0]
+    assert store["host"] == "10.0.0.5"
+    assert store["port"] == 34567
+    assert store["username"] == "admin"
+    assert store["password"] == "secret"
+    assert store["short"]["Command"] == "SetPreset", "the move stores where it starts"
+    assert store["short"]["Preset"] == 200, "the slot the profile reserves for the stop"
+    assert store["short"]["Channel"] == 1
+
+    move = calls[1]
     assert move["short"]["Command"] == "DirectionLeft"
     assert move["short"]["Step"] == 6, "0.75 of the camera scale (1-8)"
     assert move["short"]["Channel"] == 1
 
-    stop = calls[1]
-    # A payload that carries ``Name`` is handed to the device as it is: the nested stop of
-    # the profile keeps its name and its ``POINT`` object (see ``dvrip.ptz_payload``).
-    assert "Command" not in stop["short"], "the nested stop is not taken apart"
-    assert stop["short"]["Name"] == "OPPTZControl", "the stop of the bundled profile"
-    assert stop["short"]["OPPTZControl"]["Command"] == "Stop"
-    assert stop["short"]["OPPTZControl"]["Parameter"]["POINT"] == {
-        "bottom": 0,
-        "left": 0,
-        "right": 0,
-        "top": 0,
-    }
+    stop = calls[2]
+    # The stop is the return to the stored position: it carries no ``Name`` and is expanded
+    # by ``dvrip.ptz_payload`` like any other short payload of the profile.
+    assert stop["short"]["Command"] == "GotoPreset", "the stop of the bundled profile"
+    assert stop["short"]["Preset"] == 200, "back to the position the move stored"
+    assert stop["short"]["Channel"] == 1
 
 
 async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
     """A stop of the bundled profile works on its own - it names no direction.
 
     The stop is the only one that may be sent without knowing which axis is moving, which
-    is what a dashboard needs after a restart of Home Assistant.
+    is what a dashboard needs after a restart of Home Assistant: it returns to the preset
+    the last move stored, whatever the camera did in between.
     """
     calls: list[dict[str, Any]] = []
 
@@ -634,9 +638,8 @@ async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
     )
 
     assert len(calls) == 1
-    assert calls[0]["Name"] == "OPPTZControl"
-    assert calls[0]["OPPTZControl"]["Command"] == "Stop"
-    assert calls[0]["OPPTZControl"]["Parameter"]["Step"] == 0
+    assert calls[0]["Command"] == "GotoPreset"
+    assert calls[0]["Preset"] == 200
 
 
 async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):

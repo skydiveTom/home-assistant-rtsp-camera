@@ -178,7 +178,7 @@ line as `number=name`.
 | Hikvision (ISAPI) | `PUT /ISAPI/PTZCtrl/channels/1/continuous` with an XML body |
 | Foscam | `/cgi-bin/CGIProxy.fcgi?cmd=ptzMoveUp…` |
 | ONVIF (SOAP) | `POST …/onvif/ptz_service` with a `ContinuousMove`, `Stop`, `GotoPreset` or `GotoHomePosition` envelope |
-| Xiongmai DVRIP | `DVRIP {"Command":"DirectionLeft","Step":…}` over **TCP 34567**, for DVRs without a web interface; its stop is the nested `POINT` payload of the vendor app |
+| Xiongmai DVRIP | `DVRIP {"Command":"DirectionLeft","Step":…}` over **TCP 34567**, for DVRs without a web interface; a move stores the position it starts from, its stop returns to it |
 | Custom | your own `GET/POST/PUT url [body]` commands |
 
 **Credentials are taken from the stream URL** when the PTZ block does not define its
@@ -194,27 +194,35 @@ arrows they belong to. In a command the values are `{speed_vertical}` and
 `{speed_horizontal}`; a command that only knows `{speed}` keeps working, and a `speed`
 that a service call passes to `rtsp_cameras.ptz` counts for both axes.
 
-**A stop stops.** Which direction a stop has to name is the axis that was moved last -
-the panel remembers it per camera, and the integration does the same for the *PTZ stop*
-button and for `move_mode: Stop`. A stop that has no direction to name is **refused**
-(`ptz_direction_required`) instead of answered with a guess, because a guessed direction
-does not stop a camera, it moves it: on the Xiongmai DVR of the test set `Step: 0` with a
-direction drives that axis to its zero position, so the old fallback - the first code of
-the profile, `DirectionUp` - sent the camera to its top instead of standing still
-(measured, 0.3.5 and older). The bundled Xiongmai DVRIP profile stops with the nested
-payload of the vendor app, which needs no direction at all:
+**A stop stops, as far as the camera allows it.** Which direction a stop has to name is the
+axis that was moved last - the panel remembers it per camera, and the integration does the
+same for the *PTZ stop* button and for `move_mode: Stop`. A stop that has no direction to
+name is **refused** (`ptz_direction_required`) instead of answered with a guess, because a
+guessed direction does not stop a camera, it moves it: on the Xiongmai DVR of the test set
+`Step: 0` with a direction drives that axis to its zero position, so the old fallback - the
+first code of the profile, `DirectionUp` - sent the camera to its top instead of standing
+still (measured, 0.3.5 and older).
 
-```json
-{"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":1}}}
+The bundled **Xiongmai DVRIP** profile cannot stop where it stands: a move of that family
+runs to the end of its axis, and *no* payload of the device halts it half way - a `Stop` of
+any shape is acknowledged with `Ret: 100` and travelled on, `Step: 0` with a direction
+drives the axis to its zero position, and the nested `POINT` object of the vendor app is
+refused with `Ret: 118` (that is what the panel showed of 0.3.7). Its stop is a **return**
+instead: every move of that profile stores the position it starts from in a preset slot of
+its own - `Preset: 200`, far above the presets the add-on offers - and its stop is the
+`GotoPreset` of that slot, which drives the camera back, a running sweep included:
+
+```
+DVRIP {"Command":"SetPreset","Preset":200,"Channel":1} DVRIP {"Command":"DirectionLeft","Step":5,"Channel":1}
+DVRIP {"Command":"GotoPreset","Preset":200,"Channel":1}
 ```
 
-That shape matters: the plain `{"Command":"Stop","Step":0}` of 0.3.6 is answered with
-`Ret: 100`, but a device of this family **ignores** it while a `DirectionX` sweep is
-running and the axis travels on to its end. Measured on the DVR of the test set: a sweep
-that was stopped 2.5 s in ended after 2.96 s with the nested payload, after 5.39 s with the
-plain one and after 5.16 s with no stop at all (see the changelog of 0.3.7). A payload that
-carries `Name` is handed to the device unchanged (`dvrip.ptz_payload`), so the channel
-inside `Parameter` is the one of the camera.
+One command may carry more than one DVRIP payload, and they are sent in that order. Measured
+on the camera of the test set (192.168.20.253, `.smoke/session_probe.py`, one DVRIP
+connection for park, sweep and stop): every other stop left it at its bottom limit, the
+`GotoPreset` brought it back to the position its move started from. A camera that stored the
+commands of an older release is moved over to this pair automatically - the moves as well,
+because without the store there would be nothing to return to. See the changelog of 0.3.8.
 
 For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
 `GetProfiles` to the media service, takes the first profile token and fills the
@@ -268,8 +276,8 @@ command name that does not exist, and the camera did not move (see
 `.smoke/dvrip-protocol.md`). The vendor CGIs are asked last.
 
 **The test never moves a camera**: every HTTP and DVRIP variant is asked with its
-*stop* command (for a DVRIP device that is the nested `POINT` payload of 0.3.7, which halts
-a move without naming a direction), ONVIF only with read only queries (`GetConfigurations`,
+*stop* command (for a DVRIP device that is the `GotoPreset` of the slot the moves store,
+which needs no direction), ONVIF only with read only queries (`GetConfigurations`,
 `GetCapabilities(PTZ)`, `GetProfiles`). The variant that answers becomes the **main PTZ
 handling** of the camera - profile, HTTP address, channel, DVRIP port, ONVIF profile
 token and the credentials that were used - and the form follows it, so the *Save*

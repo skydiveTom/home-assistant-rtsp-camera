@@ -4,6 +4,51 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.8] - 2026-10-05
+
+### Fixed
+
+- **The stop of the bundled DVRIP profile is a *return* now, because the device has no stop
+  at all.** The `POINT` payload of 0.3.7 was measured again, this time on a *moving* axis
+  with one DVRIP connection for park, sweep and stop (`.smoke/session_probe.py`), and it
+  does not halt a sweep: this device answers it with `Ret: 118` - the `Parameter` of a
+  payload is 0 based and carried the channel of the camera - and where the body *is*
+  accepted (`Channel: 0`) the axis travels on. So does every other shape: a `Stop` of any
+  kind (with `Step: 0`, with the whole parameter set of the SDK, without a parameter at
+  all, with `AUX` off) is acknowledged with `Ret: 100` and ignored, `DirectionX` with
+  `Step: 0` drives that axis to its zero position instead of halting it, and a `ZoomTile`
+  of another axis does not touch it either. The reason is in the vendor SDK itself: its PTZ
+  JSON builder references the fourteen moves and the keys of the parameter object and *no*
+  "Stop" at all - the flag that stands for one is an argument of its API (`bStop`) - and
+  the reference library of the family has no stop either. Every one of those runs ended at
+  the bottom limit of the camera (`vs top` 59 to 70).
+
+  What does end a sweep is a **preset**. A move of this profile therefore stores the
+  position it starts from first, and its stop is the `GotoPreset` of that slot - a DVRIP
+  command may carry several payloads now, and they are sent in that order:
+
+  ```
+  DVRIP {"Command":"SetPreset","Preset":200,"Channel":1} DVRIP {"Command":"DirectionLeft","Step":5,"Channel":1}
+  DVRIP {"Command":"GotoPreset","Preset":200,"Channel":1}
+  ```
+
+  Measured on the camera of the test set (192.168.20.253, `balkon-2`): every other stop
+  left the camera at its bottom limit, this pair brought it back to its parked position
+  (`vs top` 2.9 to 5.5) - whether the slot was written right before the sweep or by an
+  earlier run. The slot is `200`, far above the presets the add-on offers: `SetPreset` of
+  that slot was accepted and worked, a slot that no run ever wrote answers in 0.1 s and
+  moves nothing at all, and `ClearPreset` releases one again.
+- **A camera that stored the commands of an older release is moved over to that pair**, its
+  moves included - without the store a stop has nothing to return to. The shapes of 0.3.5
+  to 0.3.7 are listed in `LEGACY_PROFILE_COMMANDS`, so nothing has to be configured by hand
+  again.
+
+### Changed
+
+- A DVRIP command of a camera may carry more than one payload, separated by the method
+  word, and the add-on as well as the integration send them in the order they are written.
+  A hand written command with a single payload is unchanged.
+
 ## [0.3.7] - 2026-10-05
 
 ### Fixed

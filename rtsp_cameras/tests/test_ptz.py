@@ -342,13 +342,14 @@ def test_explicit_ptz_credentials_win_over_the_stream_url() -> None:
     assert "pwd=top%20secret" in foscam["commands"]["up"]
 
 
-#: The stop the bundled Xiongmai profile builds: the ``POINT`` object of the vendor app
-#: with every axis at level zero. The short form of 0.3.6 is ignored while a move runs,
-#: which is what a sweep on the device showed (see the changelog of 0.3.7).
-DVRIP_STOP = (
-    'DVRIP {"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":'
-    '{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":1}}}'
-)
+#: The stop the bundled Xiongmai profile builds: a return to the preset a move stored.
+#:
+#: No payload of this family halts a moving axis - a ``Stop`` of any shape is acknowledged
+#: and travelled on, ``Step: 0`` with a direction drives the axis to its *zero position*,
+#: and the ``POINT`` object of the vendor app was refused with ``Ret: 118`` (the defect of
+#: 0.3.7). The ``GotoPreset`` of the slot that the moves write does end a sweep; measured
+#: on the device, see the changelog of 0.3.8 and ``.smoke/dvrip-protocol.md``.
+DVRIP_STOP = 'DVRIP {"Command":"GotoPreset","Preset":200,"Channel":1}'
 
 
 def test_dvrip_profile_builds_the_payloads() -> None:
@@ -357,15 +358,18 @@ def test_dvrip_profile_builds_the_payloads() -> None:
 
     assert config is not None
     assert config["port"] == 34567
+    # A move stores the position it starts from first, because the stop is the return to
+    # it: one template carries both commands, and the sender sends them in that order.
     assert build_command(config, "left") == (
+        'DVRIP {"Command":"SetPreset","Preset":200,"Channel":1} '
         'DVRIP {"Command":"DirectionLeft","Step":5,"Channel":1}'
     )
     assert build_command(config, "left", speed=7) == (
+        'DVRIP {"Command":"SetPreset","Preset":200,"Channel":1} '
         'DVRIP {"Command":"DirectionLeft","Step":7,"Channel":1}'
     )
-    # The stop names no direction: ``Step: 0`` with a direction drives that axis to its
-    # zero position on this family, so a stop of the top position *is* the top position
-    # (see ``test_a_stop_without_a_direction_is_not_guessed``).
+    # The stop names no direction: it is the return to the stored position, so it is the
+    # same command for every axis (see ``test_a_stop_without_a_direction_is_not_guessed``).
     assert build_command(config, "stop", direction="left") == DVRIP_STOP
     assert build_command(config, "stop") == DVRIP_STOP
     assert build_command(config, "preset", preset="3") == (
@@ -456,31 +460,35 @@ def test_a_stored_command_of_an_older_version_is_upgraded() -> None:
     assert config is not None
     assert config["commands"]["stop"] == DVRIP_STOP
     assert config["commands"]["down"] == (
+        'DVRIP {"Command":"SetPreset","Preset":200,"Channel":1} '
         'DVRIP {"Command":"DirectionDown","Step":{speed_vertical},"Channel":1}'
     )
+    # A command this project never shipped is left alone.
     assert config["commands"]["left"] == (
         'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":1,"Preset":7}'
     )
 
 
 def test_the_stop_of_previous_releases_is_replaced_as_well() -> None:
-    """The stop of 0.3.6 is one of the templates of this project too.
+    """The stops of 0.3.6 and 0.3.7 are templates of this project too.
 
-    That release stored the short form ``{"Command":"Stop","Step":0}`` for exactly this
-    profile, and the device ignores it while a move is running (measured on 192.168.20.253,
-    see the changelog of 0.3.7), so a camera that was set up with it is moved over to the
-    ``POINT`` stop like one that still carries the guessed template of 0.3.5.
+    The short form ``{"Command":"Stop","Step":0}`` of 0.3.6 is ignored while a move runs,
+    and the ``POINT`` object of 0.3.7 is refused with ``Ret: 118`` (both measured on
+    192.168.20.253, see the changelogs), so a camera that stored either of them is moved
+    over to the ``GotoPreset`` return like one that still carries the guessed template of
+    0.3.5.
     """
-    config = normalize_ptz(
-        {
-            "profile": "xiongmai_dvrip",
-            "commands": {"stop": 'DVRIP {"Command":"Stop","Step":0,"Channel":1}'},
-        },
-        RTSP_URL,
-    )
+    for stop in (
+        'DVRIP {"Command":"Stop","Step":0,"Channel":1}',
+        'DVRIP {"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":'
+        '{"POINT":{"bottom":0,"left":0,"right":0,"top":0},"Step":0,"Channel":1}}}',
+    ):
+        config = normalize_ptz(
+            {"profile": "xiongmai_dvrip", "commands": {"stop": stop}}, RTSP_URL
+        )
 
-    assert config is not None
-    assert config["commands"]["stop"] == DVRIP_STOP
+        assert config is not None
+        assert config["commands"]["stop"] == DVRIP_STOP
 
 
 def test_a_stop_without_a_direction_is_not_guessed() -> None:
@@ -1114,14 +1122,57 @@ def test_dvrip_login_and_ptz_reach_the_dvr(dvrip_cam: int) -> None:
     assert DvripCamera.login["LoginType"] == "DVRIP-Web"
     assert DvripCamera.login["PassWord"] == hash_password("secret")
 
-    assert len(DvripCamera.received) == 1
-    sent = DvripCamera.received[0]
+    # A move of the bundled profile stores the position it starts from first: two commands
+    # over two connections, and the store goes out before the move.
+    assert len(DvripCamera.received) == 2
+    store = DvripCamera.received[0]
+    assert store["message_id"] == MSG_PTZ_REQUEST
+    assert store["payload"]["Name"] == "OPPTZControl"
+    assert store["payload"]["OPPTZControl"]["Command"] == "SetPreset"
+    assert store["payload"]["OPPTZControl"]["Parameter"]["Preset"] == 200
+    assert store["payload"]["OPPTZControl"]["Parameter"]["Channel"] == 0
+    assert store["payload"]["SessionID"] == f"0x{DVRIP_SESSION:08X}"
+
+    sent = DvripCamera.received[1]
     assert sent["message_id"] == MSG_PTZ_REQUEST
     assert sent["payload"]["Name"] == "OPPTZControl"
     assert sent["payload"]["OPPTZControl"]["Command"] == "DirectionLeft"
     assert sent["payload"]["OPPTZControl"]["Parameter"]["Step"] == 6
     assert sent["payload"]["OPPTZControl"]["Parameter"]["Channel"] == 0
     assert sent["payload"]["SessionID"] == f"0x{DVRIP_SESSION:08X}"
+
+
+def test_dvrip_stop_returns_to_the_stored_preset(dvrip_cam: int) -> None:
+    """The stop of the bundled profile is the ``GotoPreset`` of the slot a move wrote.
+
+    This family has no payload that halts a moving axis, so the stop of its profile is the
+    return to the position the move stored - one command, no direction, measured on the
+    device (see the changelog of 0.3.8).
+    """
+    url = "rtsp://admin:secret@127.0.0.1:554/user=admin&password=secret&channel=1&stream=0.sdp"
+    config = normalize_ptz({"profile": "xiongmai_dvrip", "port": dvrip_cam}, url)
+    assert config is not None
+
+    command = build_command(config, "stop", direction="left")
+    assert command is not None
+    host = urlsplit(config["base_url"]).hostname
+    status, error = asyncio.run(
+        async_send(
+            command,
+            host=host or "",
+            port=dvrip_cam,
+            username=str(config["username"]),
+            password=str(config["password"]),
+        )
+    )
+
+    assert error is None, error
+    assert status == LOGIN_OK
+    assert len(DvripCamera.received) == 1
+    sent = DvripCamera.received[0]
+    assert sent["payload"]["OPPTZControl"]["Command"] == "GotoPreset"
+    assert sent["payload"]["OPPTZControl"]["Parameter"]["Preset"] == 200
+    assert sent["payload"]["OPPTZControl"]["Parameter"]["Channel"] == 0
 
 
 def test_dvrip_reports_a_refused_login(dvrip_cam: int) -> None:
@@ -1378,8 +1429,9 @@ def test_probe_prefers_a_real_dvrip_answer_over_an_http_200(
     assert data["applied"] is True
     assert data["camera"]["ptz"]["profile"] == "xiongmai_dvrip"
     assert data["camera"]["ptz"]["commands"]["left"].startswith("DVRIP ")
-    # The stop of this profile needs no direction: the device stops where it is.
-    assert DvripCamera.received[-1]["payload"]["OPPTZControl"]["Command"] == "Stop"
+    # The stop of this profile needs no direction: it is the return to the preset that the
+    # move of the probe stored.
+    assert DvripCamera.received[-1]["payload"]["OPPTZControl"]["Command"] == "GotoPreset"
 
 
 def test_probe_prefers_onvif_when_the_token_is_there(
@@ -1526,7 +1578,7 @@ def test_probe_finds_a_dvrip_port(client: TestClient, dvrip_cam: int) -> None:
     assert data["camera"]["ptz"]["profile"] == "xiongmai_dvrip"
     assert data["camera"]["ptz"]["port"] == dvrip_cam
     assert DvripCamera.login["UserName"] == "user"
-    assert DvripCamera.received[0]["payload"]["OPPTZControl"]["Command"] == "Stop"
+    assert DvripCamera.received[0]["payload"]["OPPTZControl"]["Command"] == "GotoPreset"
 
 
 def test_probe_finds_the_variant_a_xiongmai_url_points_at(
