@@ -58,6 +58,13 @@ PTZ_DIRECTIONS = {"up": "up", "down": "down", "left": "left", "right": "right"}
 PTZ_DEFAULT_SPEED = 4
 PTZ_MAX_SPEED = 8
 PTZ_TIMEOUT_SECONDS = 8
+#: How long the DVRIP transport may take to *answer*. A vendor CGI answers within a
+#: second, but this family replies to a ``GotoPreset`` - the stop of the bundled profile,
+#: which has to drag the camera back - only once the axis arrived: measured on the device
+#: of the test set 10 to 16 s after the command, where every shorter deadline reports a
+#: command that works as a failure (see the changelog of 0.3.8).
+DVRIP_TIMEOUT_SECONDS = 25
+
 #: Port of the Xiongmai DVRIP protocol (PTZ for DVRs without a web interface).
 DEFAULT_DVRIP_PORT = 34567
 #: Seconds a continuous move runs when the caller does not say it (ONVIF uses 0.5).

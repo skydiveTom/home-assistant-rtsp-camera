@@ -4,6 +4,22 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9] - 2026-10-06
+
+### Fixed
+
+- **A DVRIP command is no longer reported as a failure while the camera obeys it.** The
+  device of the test set answers the `GotoPreset` that ends a move - the stop of the bundled
+  profile, which drags the camera back - only once the axis arrived: **10 to 16 s** after the
+  command (measured with a fresh frame every 2.5 s, `.smoke/diag_dvrip_seq.py` and
+  `.smoke/diag_ptz_move.py`). The deadline of the transport was the one of a vendor CGI
+  (`COMMAND_TIMEOUT` 6 s in the add-on, `PTZ_TIMEOUT_SECONDS` 8 s in the integration), so the
+  panel answered `502 timeout` and `rtsp_cameras.ptz` raised an error on *every* move,
+  although the camera travelled and came back. DVRIP now has its own deadline
+  (`DVRIP_TIMEOUT` / `DVRIP_TIMEOUT_SECONDS`, 25 s). A vendor CGI keeps the short one - it
+  answers within a second - and the PTZ test mode keeps it as well: it asks the *stop* of a
+  slot that is usually empty, which the device answers at once.
+
 ## [0.3.8] - 2026-10-05
 
 ### Fixed

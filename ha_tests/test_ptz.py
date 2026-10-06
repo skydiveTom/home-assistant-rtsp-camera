@@ -22,6 +22,8 @@ from custom_components.rtsp_cameras.const import (
     CONF_CAMERAS_FILE,
     CONF_SCAN_INTERVAL,
     DOMAIN,
+    DVRIP_TIMEOUT_SECONDS,
+    PTZ_TIMEOUT_SECONDS,
 )
 
 CAMERAS_FILE = "rtsp_cameras/cameras.json"
@@ -555,7 +557,7 @@ async def test_dvrip_commands_go_through_the_tcp_client(hass, entry, monkeypatch
     """A DVRIP command is sent over TCP 34567, not over HTTP."""
     calls: list[dict[str, Any]] = []
 
-    async def fake_send(host, port, username, password, short):  # noqa: ANN001
+    async def fake_send(host, port, username, password, short, timeout=None):  # noqa: ANN001
         calls.append(
             {
                 "host": host,
@@ -623,7 +625,7 @@ async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
     """
     calls: list[dict[str, Any]] = []
 
-    async def fake_send(host, port, username, password, short):  # noqa: ANN001
+    async def fake_send(host, port, username, password, short, timeout=None):  # noqa: ANN001
         calls.append(short)
         return True, None
 
@@ -645,7 +647,7 @@ async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
 async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):
     """A refused DVRIP login raises a readable error."""
 
-    async def fake_send(host, port, username, password, short):  # noqa: ANN001
+    async def fake_send(host, port, username, password, short, timeout=None):  # noqa: ANN001
         return False, "login_failed_101"
 
     monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
@@ -655,6 +657,31 @@ async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):
         await hass.services.async_call(
             DOMAIN, "ptz", {"entity_id": "camera.front_door", "action": "left"}, blocking=True
         )
+
+
+async def test_dvrip_waits_longer_than_a_vendor_cgi(hass, entry, monkeypatch):
+    """The DVRIP transport gets the long deadline of this family.
+
+    The device of the test set answers the ``GotoPreset`` that ends a move - the stop of the
+    bundled profile, which drags the camera back - only once the axis arrived: measured 10
+    to 16 s after the command. With the deadline of a vendor CGI that working command was
+    reported as a failure and the camera stayed where it was.
+    """
+    timeouts: list[float | None] = []
+
+    async def fake_send(host, port, username, password, short, timeout=None):  # noqa: ANN001
+        timeouts.append(timeout)
+        return True, None
+
+    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
+    await setup_camera(hass, entry, commands=DVRIP_COMMANDS, stop_codes={"left": "DirectionLeft"})
+
+    await hass.services.async_call(
+        DOMAIN, "ptz", {"entity_id": "camera.front_door", "action": "left"}, blocking=True
+    )
+
+    assert timeouts == [DVRIP_TIMEOUT_SECONDS] * 3, "the store, the move and the stop"
+    assert DVRIP_TIMEOUT_SECONDS > PTZ_TIMEOUT_SECONDS, "a CGI keeps its short deadline"
 
 
 async def test_onvif_commands_use_soap(hass, entry, monkeypatch):

@@ -59,6 +59,14 @@ DEFAULT_SPEED = 4
 DEFAULT_CHANNEL = 1
 DEFAULT_DVRIP_PORT = 34567
 COMMAND_TIMEOUT = 6.0
+#: The DVRIP transport of the Xiongmai family answers a ``GotoPreset`` - the stop of the
+#: bundled profile, which drags the camera back to the preset a move stored - only once the
+#: axis arrived. Measured on the device of the test set: 10 to 16 s after the command,
+#: where the timeout of a vendor CGI (``COMMAND_TIMEOUT``) reports a command that works as
+#: a failure and the camera stays where it was. The test mode keeps its short deadline: it
+#: asks a *stop* of a slot that is usually empty, and an empty slot is answered at once.
+DVRIP_TIMEOUT = 25.0
+
 ONVIF_DISCOVERY_TIMEOUT = 8.0
 MAX_RESPONSE_SNIPPET = 200
 
@@ -1127,8 +1135,13 @@ async def async_run(
         return PtzResult(ok=False, action=action, command="", detail=detail)
 
     host = urlsplit(str(config.get("base_url") or "")).hostname or ""
+    # The DVRIP transport of this family answers a ``GotoPreset`` - the stop of the bundled
+    # profile - only once the axis arrived, which is much later than any vendor CGI. It
+    # therefore gets its own deadline, see ``DVRIP_TIMEOUT``.
+    method, _url, _body = parse_command(command)
     status, error, snippet = await async_send_detail(
         command,
+        DVRIP_TIMEOUT if method == "DVRIP" else COMMAND_TIMEOUT,
         host=host,
         port=_positive_port(config.get("port"), DEFAULT_DVRIP_PORT),
         username=str(config.get("username") or ""),

@@ -35,7 +35,9 @@ from app.dvrip import (
     unpack,
 )
 from app.ptz import (
+    COMMAND_TIMEOUT,
     DEFAULT_SPEED,
+    DVRIP_TIMEOUT,
     PROBE_STATUS_AUTH,
     PROBE_STATUS_NO_TOKEN,
     PROBE_STATUS_OK,
@@ -45,6 +47,7 @@ from app.ptz import (
     PTZ_PROFILES,
     _probe_outcome,
     async_probe_ptz,
+    async_run,
     async_send,
     build_command,
     configured_actions,
@@ -1192,6 +1195,35 @@ def test_dvrip_reports_a_refused_login(dvrip_cam: int) -> None:
     assert [login["LoginType"] for login in DvripCamera.logins] == ["DVRIP-Web"], (
         "a refused password is not worth another login type"
     )
+
+
+def test_dvrip_gets_the_long_deadline_of_this_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A DVRIP command waits longer than a vendor CGI, an HTTP command keeps its deadline.
+
+    The device of the test set answers the ``GotoPreset`` that ends a move - the stop of the
+    bundled profile, which drags the camera back - only once the axis arrived: measured 10 to
+    16 s after the command. A deadline of ``COMMAND_TIMEOUT`` reported that working command
+    as a failure, so the transport gets ``DVRIP_TIMEOUT`` (see the changelog of 0.3.9).
+    """
+    seen: list[float] = []
+
+    async def fake_send_detail(command: str, timeout: float = 0.0, **_kwargs: Any) -> tuple:
+        seen.append(timeout)
+        return LOGIN_OK, None, ""
+
+    monkeypatch.setattr("app.ptz.async_send_detail", fake_send_detail)
+
+    dvrip = normalize_ptz({"profile": "xiongmai_dvrip", "port": 34567}, RTSP_URL)
+    assert dvrip is not None
+    assert asyncio.run(async_run(dvrip, "stop")).ok
+    assert seen == [DVRIP_TIMEOUT]
+
+    seen.clear()
+    cgi = normalize_ptz({"profile": "dahua"}, RTSP_URL)
+    assert cgi is not None
+    assert asyncio.run(async_run(cgi, "left")).ok
+    assert seen == [COMMAND_TIMEOUT], "a vendor CGI is answered at once"
+    assert DVRIP_TIMEOUT > COMMAND_TIMEOUT
 
 
 def test_dvrip_login_hash_matches_the_sdk() -> None:

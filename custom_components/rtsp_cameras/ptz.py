@@ -25,7 +25,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import PTZ_TIMEOUT_SECONDS
+from .const import DVRIP_TIMEOUT_SECONDS, PTZ_TIMEOUT_SECONDS
 from .models import PtzConfig
 
 _LOGGER = logging.getLogger(__name__)
@@ -264,6 +264,10 @@ async def _async_send_dvrip(command: str, config: PtzConfig | None) -> PtzOutcom
     of the ``xiongmai_dvrip`` profile store the position they start from first, which is
     what their stop returns to. Each payload goes over its own connection, and the first
     one that fails ends the sequence.
+
+    The deadline is the long one of this transport (``DVRIP_TIMEOUT_SECONDS``): the device
+    answers the ``GotoPreset`` that ends a move only once the axis arrived - measured 10 to
+    16 s - and a shorter one would report a working command as a failure.
     """
     from .dvrip import DEFAULT_PORT
     from .dvrip import async_send as dvrip_send
@@ -280,9 +284,11 @@ async def _async_send_dvrip(command: str, config: PtzConfig | None) -> PtzOutcom
     password = (config.password if config else "") or ""
     ok, error = True, None
     try:
-        async with asyncio.timeout(PTZ_TIMEOUT_SECONDS):
+        async with asyncio.timeout(DVRIP_TIMEOUT_SECONDS):
             for one in payloads:
-                ok, error = await dvrip_send(host, port, username, password, one)
+                ok, error = await dvrip_send(
+                    host, port, username, password, one, timeout=DVRIP_TIMEOUT_SECONDS
+                )
                 if not ok:
                     break
     except TimeoutError:

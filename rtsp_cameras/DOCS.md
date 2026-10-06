@@ -224,6 +224,12 @@ connection for park, sweep and stop): every other stop left it at its bottom lim
 commands of an older release is moved over to this pair automatically - the moves as well,
 because without the store there would be nothing to return to. See the changelog of 0.3.8.
 
+The answer of a `GotoPreset` arrives **late**: the device replies only once the axis
+arrived, measured 10 to 16 s after the command on the camera of the test set. The DVRIP
+transport therefore has a deadline of its own (25 s), where a vendor CGI keeps the short
+one - it answers within a second - so a stop that drags the camera back keeps its caller
+(this service call, the panel, an automation) busy that long. See the changelog of 0.3.9.
+
 For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
 `GetProfiles` to the media service, takes the first profile token and fills the
 commands with it. For **DVRIP** the port field (default 34567) is used; the add-on logs
