@@ -162,7 +162,7 @@
     "command_hint": "GET/POST/PUT adres [treść]",
     "presets": "Presety (jedna linia: numer=nazwa)",
     "presets_hint": "Presety pojawiają się w podglądzie oraz jako przyciski w Home Assistant.",
-    "hold_hint": "W podglądzie przytrzymaj strzałkę, aby jechać — puszczenie zatrzymuje kamerę.",
+    "hold_hint": "W podglądzie przytrzymaj strzałkę, aby jechać — puszczenie zatrzymuje kamerę tam, gdzie jest (to urządzenie najpierw zjeżdża do końca osi).",
     "test": "Test PTZ (wyśle stop)",
     "testing": "Wysyłam komendę stop ...",
     "test_ok": "PTZ odpowiada",

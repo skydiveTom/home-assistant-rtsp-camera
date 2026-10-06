@@ -201,16 +201,25 @@ def dvrip_command(**payload: Any) -> str:
     return "DVRIP " + json.dumps(payload, separators=(",", ":"))
 
 
-#: The preset slot the bundled DVRIP profile uses to end a move.
+#: The preset slot the stop of the bundled DVRIP profile captures the position into.
 #:
-#: This family has no payload that halts a moving axis - the vendor SDK knows nothing but
-#: the moves (see ``.smoke/dvrip-protocol.md``) - but a preset does end one: ``SetPreset``
-#: writes where the camera stands and ``GotoPreset`` drags it back there, a running sweep
-#: included. The slot sits far above the presets the add-on offers (``MAX_PRESETS``),
-#: because every move overwrites whatever it held: slot 200 of the test device answered
-#: and brought the camera back, a slot no run ever wrote does nothing at all, and a slot
-#: is released again with ``ClearPreset``.
-DVRIP_STOP_PRESET = 200
+#: This family cannot halt a moving axis, and the vendor SDK has no payload that tries: a
+#: ``DirectionX`` command drives the axis to its limit, and every command that arrives on
+#: the way is served *after* that (see ``.smoke/dvrip-protocol.md``). What the device does
+#: have is a *position*: ``SetPreset`` is served immediately - a running axis included -
+#: and stores where the axis **is** at that moment, and ``GotoPreset`` drives the camera
+#: back to a stored position. The stop is therefore a capture: it writes the position of
+#: the release into this slot and returns to it. Held for half a second, one second and
+#: three seconds, the tilt of ``balkon-2`` of the test set came to rest at ``vs top`` 1.9,
+#: 7.7 and 32.1 - where 0 is the parked top and 59 to 75 the bottom limit, the numbers of
+#: ``.smoke/jog_probe.py`` (``hold-tap``, ``hold-1s``, ``hold-3s``). An arrow therefore
+#: moves the camera as long as it is held, and the camera stands where it was released
+#: (behind the travel to the limit that this device always performs).
+#:
+#: The slot sits far above the presets the add-on offers (``MAX_PRESETS``): slot 201 of
+#: the test device answered, a slot no run ever wrote does nothing at all, and a slot is
+#: released again with ``ClearPreset``.
+DVRIP_STOP_PRESET = 201
 
 #: The method word that one payload of a DVRIP command follows: the parts of a command
 #: are split at it (see :func:`dvrip_payloads`), and a template writes it between two
@@ -222,10 +231,9 @@ def dvrip_payloads(rest: str) -> list[dict[str, Any]] | None:
     """Return the JSON payloads of a DVRIP body, in the order they have to be sent.
 
     ``rest`` is everything behind the ``DVRIP`` method of a command. A command may carry
-    more than one payload: the moves of the bundled profile store the position they start
-    from first, and the stop of that profile is the ``GotoPreset`` that returns to it.
-    Returns ``None`` when a part is not a JSON object, so a caller can report the invalid
-    payload it was given.
+    more than one payload: the stop of the bundled profile captures the position of the
+    release first and returns to it afterwards. Returns ``None`` when a part is not a JSON
+    object, so a caller can report the invalid payload it was given.
     """
     payloads: list[dict[str, Any]] = []
     for part in rest.split(DVRIP_STEP):
@@ -244,27 +252,27 @@ def _dvrip_store(preset: int = DVRIP_STOP_PRESET) -> str:
     return f'DVRIP {{"Command":"SetPreset","Preset":{preset},"Channel":{{channel}}}}'
 
 
+def _dvrip_goto(preset: int) -> str:
+    """Return the DVRIP command that drives the camera to a stored position."""
+    return f'DVRIP {{"Command":"GotoPreset","Preset":{preset},"Channel":{{channel}}}}'
+
+
 def _dvrip_move(command: str, speed: str = "{speed}") -> str:
-    """Return a DVRIP move that stores the position it starts from first.
+    """Return a DVRIP move of one axis.
 
     The ``Step`` of a move is the speed of **its axis**: the tilt reads
     ``{speed_vertical}`` and the pan ``{speed_horizontal}``, so both arrows of the panel
     can be tuned on their own. Zoom and any other action keeps the plain ``{speed}``.
 
-    Two commands travel in one template, because the stop of this family is a return to a
-    preset: without the store there would be nothing to return to. A DVRIP command may
-    carry a second one behind its payload (see :func:`dvrip_payloads`), and the sender
-    sends them in that order.
+    The move carries nothing but the direction: it is the *stop* that stores a position
+    since 0.3.10 (see :func:`_dvrip_capture_stop`), so a move does not have to remember
+    where it started any more.
     """
-    # One template carries both commands: the store of the position, then the move itself.
-    # The parts of a command are split at the method word (``DVRIP_STEP``), which is why
-    # the move repeats it.
-    move = f'DVRIP {{"Command":"{command}","Step":{speed},"Channel":{{channel}}}}'
-    return f"{_dvrip_store()} {move}"
+    return f'DVRIP {{"Command":"{command}","Step":{speed},"Channel":{{channel}}}}'
 
 
-def _dvrip_return_stop(preset: int = DVRIP_STOP_PRESET) -> str:
-    """Return the stop of the bundled DVRIP profile: a return to the stored position.
+def _dvrip_capture_stop(preset: int = DVRIP_STOP_PRESET) -> str:
+    """Return the stop of the bundled DVRIP profile: store the position, return to it.
 
     A move of this protocol drives the axis to its limit - it is not a hold that ends with
     the commands - and no payload of this device halts it half way:
@@ -275,15 +283,22 @@ def _dvrip_return_stop(preset: int = DVRIP_STOP_PRESET) -> str:
       ``DirectionUp`` the zero position is the top - the defect of 0.3.5,
     * the ``POINT`` object of the vendor app is refused with ``Ret: 118`` when it carries
       the channel of the camera inside ``Parameter`` (that object is 0 based) and is
-      ignored where it *is* accepted - the defect of 0.3.7.
+      ignored where it *is* accepted - the defect of 0.3.7,
+    * an empty command name, which the JSON builder of the vendor SDK builds for a command
+      id it does not know, is accepted and ignored as well (``.smoke/jog_probe.py``,
+      ``stop-empty``), and so is ``StopTour`` (``stop-tour``).
 
-    What does end a sweep is the preset that :func:`_dvrip_move` writes before it:
-    ``GotoPreset`` drives the camera back to it, a running move included. Measured on
-    192.168.20.253 (``balkon-2``) with ``.smoke/session_probe.py``: every other stop left
-    the camera at its bottom limit (``vs top`` 59 to 70), this one brought it back to the
-    parked position (``vs top`` 2.9 to 5.5). See ``.smoke/dvrip-protocol.md``.
+    What the device *does* have is a position, and the two payloads of this stop use it:
+    the ``SetPreset`` is served immediately - measured on a running axis, answered in
+    0.3 s - and stores where the camera stands at that moment, the ``GotoPreset`` that
+    follows drags the camera back there. A released arrow therefore ends where the camera
+    was when it was released, and the *length* of the arrow press decides the distance:
+    half a second, one second and three seconds of a hold ended at ``vs top`` 1.9, 7.7 and
+    32.1 on the tilt of the test device (see ``.smoke/jog_probe.py``). The travel to the
+    limit in between is what this device does with a move and cannot be avoided - a
+    command that arrives while an axis moves is served *after* it.
     """
-    return f'DVRIP {{"Command":"GotoPreset","Preset":{preset},"Channel":{{channel}}}}'
+    return f"{_dvrip_store(preset)} {_dvrip_goto(preset)}"
 
 
 #: Vendor presets. ``direction_codes`` translate our actions into the vendor codes
@@ -455,11 +470,11 @@ PTZ_PROFILES: dict[str, dict[str, Any]] = {
             "right": _dvrip_move("DirectionRight", "{speed_horizontal}"),
             "zoom_in": _dvrip_move("ZoomTile"),
             "zoom_out": _dvrip_move("ZoomWide"),
-            # A stop is a *return*: every move of this profile stores the position it
-            # starts from first (``_dvrip_move``), and this brings the camera back to it.
-            # Every other shape was measured on the device and does not halt an axis at
-            # all - see ``_dvrip_return_stop``.
-            "stop": _dvrip_return_stop(),
+            # A stop is a *capture*: it writes the position the camera has when it is sent
+            # into a preset of its own and returns to it (see ``_dvrip_capture_stop``).
+            # Every other shape of a stop was measured on the device and does not halt a
+            # moving axis at all.
+            "stop": _dvrip_capture_stop(),
             "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
         },
         "direction_codes": {
@@ -478,30 +493,57 @@ PTZ_PROFILES: dict[str, dict[str, Any]] = {
 #: *inside* a bundled template would never reach a camera that was configured earlier. A
 #: stored command that matches one of these is therefore replaced by the current template
 #: of its profile: the DVRIP stop of 0.3.5 drove a camera to the top instead of stopping
-#: it, the one of 0.3.6 was ignored while a move was running, and the one of 0.3.7 was
-#: refused by the device. The moves are listed as well, because the profile stores the
-#: position a move starts from now - without that store its stop has nothing to return to.
+#: it, the one of 0.3.6 was ignored while a move was running, the one of 0.3.7 was refused
+#: by the device, and the one of 0.3.8/0.3.9 returned a released arrow to the position of
+#: the *press* instead of the position of the release. The moves are listed as well,
+#: because the profile carried a ``SetPreset`` in front of every move up to 0.3.9, which
+#: its stop needed and the current one does not.
 LEGACY_PROFILE_COMMANDS: dict[str, dict[str, str | tuple[str, ...]]] = {
     "xiongmai_dvrip": {
         "up": (
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"DirectionUp","Step":{speed},"Channel":{channel}}',
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"DirectionUp","Step":{speed_vertical},"Channel":{channel}}',
             'DVRIP {"Command":"DirectionUp","Step":{speed},"Channel":{channel}}',
             'DVRIP {"Command":"DirectionUp","Step":{speed_vertical},"Channel":{channel}}',
         ),
         "down": (
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"DirectionDown","Step":{speed},"Channel":{channel}}',
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"DirectionDown","Step":{speed_vertical},"Channel":{channel}}',
             'DVRIP {"Command":"DirectionDown","Step":{speed},"Channel":{channel}}',
             'DVRIP {"Command":"DirectionDown","Step":{speed_vertical},"Channel":{channel}}',
         ),
         "left": (
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"DirectionLeft","Step":{speed_horizontal},"Channel":{channel}}',
             'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
             'DVRIP {"Command":"DirectionLeft","Step":{speed_horizontal},"Channel":{channel}}',
         ),
         "right": (
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"DirectionRight","Step":{speed},"Channel":{channel}}',
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"DirectionRight","Step":{speed_horizontal},"Channel":{channel}}',
             'DVRIP {"Command":"DirectionRight","Step":{speed},"Channel":{channel}}',
             'DVRIP {"Command":"DirectionRight","Step":{speed_horizontal},"Channel":{channel}}',
         ),
-        "zoom_in": 'DVRIP {"Command":"ZoomTile","Step":{speed},"Channel":{channel}}',
-        "zoom_out": 'DVRIP {"Command":"ZoomWide","Step":{speed},"Channel":{channel}}',
+        "zoom_in": (
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"ZoomTile","Step":{speed},"Channel":{channel}}',
+            'DVRIP {"Command":"ZoomTile","Step":{speed},"Channel":{channel}}',
+        ),
+        "zoom_out": (
+            'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
+            'DVRIP {"Command":"ZoomWide","Step":{speed},"Channel":{channel}}',
+            'DVRIP {"Command":"ZoomWide","Step":{speed},"Channel":{channel}}',
+        ),
         "stop": (
+            'DVRIP {"Command":"GotoPreset","Preset":200,"Channel":{channel}}',
             'DVRIP {"Command":"{direction}","Step":0,"Channel":{channel}}',
             'DVRIP {"Command":"Stop","Step":0,"Channel":{channel}}',
             'DVRIP {"Name":"OPPTZControl","OPPTZControl":{"Command":"Stop","Parameter":'

@@ -539,16 +539,17 @@ async def test_hikvision_style_commands_send_a_body(hass, entry, monkeypatch):
 
 
 DVRIP_COMMANDS: dict[str, str] = {
-    # What the bundled profile publishes since 0.3.8: the move stores the position it
-    # starts from first, and the stop is the return to that preset. No payload of this
-    # family halts a running axis - a ``Stop`` of any shape is acknowledged and the axis
-    # travels on, and the ``POINT`` object of 0.3.7 is refused with ``Ret: 118`` - so a
-    # command carries two payloads and the sender sends them in order.
-    "left": 'DVRIP {"Command":"SetPreset","Preset":200,"Channel":{channel}} '
-    'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
-    # ``GotoPreset`` is also the only stop that names no direction, which is what a
-    # dashboard needs after a restart of Home Assistant.
-    "stop": 'DVRIP {"Command":"GotoPreset","Preset":200,"Channel":{channel}}',
+    # What the bundled profile publishes since 0.3.10: a move carries the direction and the
+    # speed of its axis and nothing else, and the stop is a *capture* - it stores the
+    # position it is sent at and returns to it. No payload of this family halts a running
+    # axis (a ``Stop`` of any shape is acknowledged and the axis travels on, the ``POINT``
+    # object of 0.3.7 is refused with ``Ret: 118``), so a command may carry two payloads
+    # and the sender sends them in order.
+    "left": 'DVRIP {"Command":"DirectionLeft","Step":{speed},"Channel":{channel}}',
+    # The stop names no direction, which is what a dashboard needs after a restart of Home
+    # Assistant, and it ends where the camera stands when it is sent.
+    "stop": 'DVRIP {"Command":"SetPreset","Preset":201,"Channel":{channel}} '
+    'DVRIP {"Command":"GotoPreset","Preset":201,"Channel":{channel}}',
     "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
 }
 
@@ -592,27 +593,28 @@ async def test_dvrip_commands_go_through_the_tcp_client(hass, entry, monkeypatch
     )
 
     assert session.requests == [], "no HTTP request for a DVRIP camera"
-    assert len(calls) == 3, "the store, the move and the automatic stop"
+    assert len(calls) == 3, "the move and the two payloads of the automatic stop"
 
-    store = calls[0]
-    assert store["host"] == "10.0.0.5"
-    assert store["port"] == 34567
-    assert store["username"] == "admin"
-    assert store["password"] == "secret"
-    assert store["short"]["Command"] == "SetPreset", "the move stores where it starts"
-    assert store["short"]["Preset"] == 200, "the slot the profile reserves for the stop"
-    assert store["short"]["Channel"] == 1
-
-    move = calls[1]
+    move = calls[0]
+    assert move["host"] == "10.0.0.5"
+    assert move["port"] == 34567
+    assert move["username"] == "admin"
+    assert move["password"] == "secret"
     assert move["short"]["Command"] == "DirectionLeft"
     assert move["short"]["Step"] == 6, "0.75 of the camera scale (1-8)"
     assert move["short"]["Channel"] == 1
 
+    # The stop is a *capture*: it stores the position it is sent at - the position of the
+    # release - and returns to it. A dashboard that moves and stops therefore decides the
+    # distance with the pause between its two commands.
+    store = calls[1]
+    assert store["short"]["Command"] == "SetPreset", "the stop stores where the camera is"
+    assert store["short"]["Preset"] == 201, "the slot the profile reserves for the stop"
+    assert store["short"]["Channel"] == 1
+
     stop = calls[2]
-    # The stop is the return to the stored position: it carries no ``Name`` and is expanded
-    # by ``dvrip.ptz_payload`` like any other short payload of the profile.
     assert stop["short"]["Command"] == "GotoPreset", "the stop of the bundled profile"
-    assert stop["short"]["Preset"] == 200, "back to the position the move stored"
+    assert stop["short"]["Preset"] == 201, "back to the position of the release"
     assert stop["short"]["Channel"] == 1
 
 
@@ -620,8 +622,8 @@ async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
     """A stop of the bundled profile works on its own - it names no direction.
 
     The stop is the only one that may be sent without knowing which axis is moving, which
-    is what a dashboard needs after a restart of Home Assistant: it returns to the preset
-    the last move stored, whatever the camera did in between.
+    is what a dashboard needs after a restart of Home Assistant: it stores the position the
+    camera has at that moment and returns to it, whatever the camera did before.
     """
     calls: list[dict[str, Any]] = []
 
@@ -639,9 +641,11 @@ async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
         blocking=True,
     )
 
-    assert len(calls) == 1
-    assert calls[0]["Command"] == "GotoPreset"
-    assert calls[0]["Preset"] == 200
+    assert len(calls) == 2, "the capture of the position and the return to it"
+    assert calls[0]["Command"] == "SetPreset"
+    assert calls[0]["Preset"] == 201
+    assert calls[1]["Command"] == "GotoPreset"
+    assert calls[1]["Preset"] == 201
 
 
 async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):
@@ -662,10 +666,10 @@ async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):
 async def test_dvrip_waits_longer_than_a_vendor_cgi(hass, entry, monkeypatch):
     """The DVRIP transport gets the long deadline of this family.
 
-    The device of the test set answers the ``GotoPreset`` that ends a move - the stop of the
-    bundled profile, which drags the camera back - only once the axis arrived: measured 10
-    to 16 s after the command. With the deadline of a vendor CGI that working command was
-    reported as a failure and the camera stayed where it was.
+    The device of the test set answers the ``GotoPreset`` of the stop - which drags the
+    camera back to the position it stored - only once the axis arrived: measured 10 to 16 s
+    after the command. With the deadline of a vendor CGI that working command was reported
+    as a failure and the camera stayed where it was.
     """
     timeouts: list[float | None] = []
 
@@ -680,7 +684,7 @@ async def test_dvrip_waits_longer_than_a_vendor_cgi(hass, entry, monkeypatch):
         DOMAIN, "ptz", {"entity_id": "camera.front_door", "action": "left"}, blocking=True
     )
 
-    assert timeouts == [DVRIP_TIMEOUT_SECONDS] * 3, "the store, the move and the stop"
+    assert timeouts == [DVRIP_TIMEOUT_SECONDS] * 3, "the move and the two payloads of the stop"
     assert DVRIP_TIMEOUT_SECONDS > PTZ_TIMEOUT_SECONDS, "a CGI keeps its short deadline"
 
 

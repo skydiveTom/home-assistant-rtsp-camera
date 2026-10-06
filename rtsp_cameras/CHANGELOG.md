@@ -4,6 +4,47 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.10] - 2026-10-06
+
+### Fixed
+
+- **An arrow now moves the camera for as long as it is held.** The stop of the bundled DVRIP
+  profile returned the camera to the position of the *press*, so every arrow of the panel
+  looked like "run to the limit and come back": a released key brought the camera to where
+  it stood when it was pressed, whatever the length of the press. The stop of this family is
+  a **capture** now - `SetPreset` of the release, then `GotoPreset` of that slot - because
+  the device serves a `SetPreset` immediately, a running axis included (answered in 0.3 s),
+  and stores where the camera **is** at that moment. A released arrow therefore ends where
+  the camera stood when the key came up. Held for half a second, one second and three
+  seconds, the tilt of the camera of the test set came to rest at `vs top` **1.9**, **7.7**
+  and **32.1** (measured with the new `.smoke/jog_probe.py`; 0 is the parked top, 59 to 75
+  the bottom limit of that camera). A move carries its direction and the speed of its axis
+  and nothing else, and a camera that stored the commands of an older release - a move with
+  its `SetPreset`, the `Stop` of 0.3.6, the `POINT` payload of 0.3.7 or the `GotoPreset` of
+  0.3.8/0.3.9 - is moved over to the pair of 0.3.10 automatically.
+- **The two shapes of a stop that had never been tried do nothing either**: an empty command
+  name - what the JSON builder of the vendor SDK builds for a command id it does not know -
+  and `StopTour` are acknowledged with `Ret: 100` and ignored, like every other shape of a
+  stop before them (`.smoke/jog_probe.py`, `stop-empty` and `stop-tour`). The travel to the
+  limit between a press and its release is what this device does with a move; the *position*
+  an arrow ends at follows the press now.
+
+### Changed
+
+- The moves of the bundled DVRIP profile are one payload again - the `SetPreset` they
+  carried belongs to the stop now - so a pressed arrow sends one command instead of two.
+
+### Notes
+
+- The vendor SDK was asked once more, because the question "which payload halts an axis"
+  ended in a binary: `MNetSDK::CProtocolNetIP::NewPTZControlPTL` (0xF1918C) of
+  `libFunSDK.so` switches over exactly the fourteen moves, and a command id of 0 or above 14
+  builds an **empty** command name - which the device ignores, measured as `stop-empty`. The
+  `bStop` flag of the API is not part of the payload at all: it lands in the `Step` field of
+  the parameter object (`FUN_DevPTZControl`, which the Java layer exposes as
+  `DevPTZControl`), and that API has no stop of its own. `.smoke/sdk_callers.py` is new - it
+  lists the call sites of a function - and the whole reading is in `.smoke/dvrip-protocol.md`.
+
 ## [0.3.9] - 2026-10-06
 
 ### Fixed

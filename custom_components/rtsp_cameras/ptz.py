@@ -200,10 +200,9 @@ def dvrip_payloads(rest: str) -> list[dict[str, Any]] | None:
     """Return the JSON payloads of a DVRIP body, in the order they have to be sent.
 
     ``rest`` is everything behind the ``DVRIP`` method of a command. A command may carry
-    more than one payload: the moves of the ``xiongmai_dvrip`` profile store the position
-    they start from first, and the stop of that profile is the ``GotoPreset`` that returns
-    to it. Returns ``None`` when a part is not a JSON object, so a caller can report the
-    invalid payload it was given.
+    more than one payload: the stop of the ``xiongmai_dvrip`` profile captures the position
+    of the release first and returns to it afterwards. Returns ``None`` when a part is not a
+    JSON object, so a caller can report the invalid payload it was given.
     """
     payloads: list[dict[str, Any]] = []
     for part in rest.split(DVRIP_STEP):
@@ -260,13 +259,13 @@ async def async_send(
 async def _async_send_dvrip(command: str, config: PtzConfig | None) -> PtzOutcome:
     """Send the DVRIP payloads of a command with the credentials of the camera.
 
-    A command may carry more than one payload, and they are sent in that order: the moves
-    of the ``xiongmai_dvrip`` profile store the position they start from first, which is
-    what their stop returns to. Each payload goes over its own connection, and the first
-    one that fails ends the sequence.
+    A command may carry more than one payload, and they are sent in that order: the stop of
+    the ``xiongmai_dvrip`` profile captures the position it is sent at first and returns to
+    it afterwards. Each payload goes over its own connection, and the first one that fails
+    ends the sequence.
 
     The deadline is the long one of this transport (``DVRIP_TIMEOUT_SECONDS``): the device
-    answers the ``GotoPreset`` that ends a move only once the axis arrived - measured 10 to
+    answers the ``GotoPreset`` of that stop only once the axis arrived - measured 10 to
     16 s - and a shorter one would report a working command as a failure.
     """
     from .dvrip import DEFAULT_PORT

@@ -162,7 +162,7 @@
     "command_hint": "GET/POST/PUT url [body]",
     "presets": "Presets (one line each: number=name)",
     "presets_hint": "Presets show up in the preview and as buttons in Home Assistant.",
-    "hold_hint": "In the preview a held arrow keeps moving - releasing stops the camera.",
+    "hold_hint": "In the preview a held arrow keeps moving - releasing stops the camera where it is (this device always travels to its end first).",
     "test": "Test PTZ (sends stop)",
     "testing": "Sending the stop command ...",
     "test_ok": "The camera answers",

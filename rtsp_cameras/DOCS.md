@@ -178,7 +178,7 @@ line as `number=name`.
 | Hikvision (ISAPI) | `PUT /ISAPI/PTZCtrl/channels/1/continuous` with an XML body |
 | Foscam | `/cgi-bin/CGIProxy.fcgi?cmd=ptzMoveUp…` |
 | ONVIF (SOAP) | `POST …/onvif/ptz_service` with a `ContinuousMove`, `Stop`, `GotoPreset` or `GotoHomePosition` envelope |
-| Xiongmai DVRIP | `DVRIP {"Command":"DirectionLeft","Step":…}` over **TCP 34567**, for DVRs without a web interface; a move stores the position it starts from, its stop returns to it |
+| Xiongmai DVRIP | `DVRIP {"Command":"DirectionLeft","Step":…}` over **TCP 34567**, for DVRs without a web interface; a held arrow moves the camera and its stop returns to the position of the release |
 | Custom | your own `GET/POST/PUT url [body]` commands |
 
 **Credentials are taken from the stream URL** when the PTZ block does not define its
@@ -206,23 +206,36 @@ still (measured, 0.3.5 and older).
 The bundled **Xiongmai DVRIP** profile cannot stop where it stands: a move of that family
 runs to the end of its axis, and *no* payload of the device halts it half way - a `Stop` of
 any shape is acknowledged with `Ret: 100` and travelled on, `Step: 0` with a direction
-drives the axis to its zero position, and the nested `POINT` object of the vendor app is
-refused with `Ret: 118` (that is what the panel showed of 0.3.7). Its stop is a **return**
-instead: every move of that profile stores the position it starts from in a preset slot of
-its own - `Preset: 200`, far above the presets the add-on offers - and its stop is the
-`GotoPreset` of that slot, which drives the camera back, a running sweep included:
+drives the axis to its zero position, the nested `POINT` object of the vendor app is
+refused with `Ret: 118` (that is what the panel showed of 0.3.7), and an empty command name
+or a `StopTour` is ignored (measured with `.smoke/jog_probe.py`). What the device *does*
+have is a position, and the profile uses it: its stop is a **capture**. The first payload
+writes where the camera stands at that moment into a preset slot of its own - `Preset: 201`,
+far above the presets the add-on offers - and the device serves it immediately, a running
+axis included. The second payload drags the camera back to that position:
 
 ```
-DVRIP {"Command":"SetPreset","Preset":200,"Channel":1} DVRIP {"Command":"DirectionLeft","Step":5,"Channel":1}
-DVRIP {"Command":"GotoPreset","Preset":200,"Channel":1}
+DVRIP {"Command":"SetPreset","Preset":201,"Channel":1} DVRIP {"Command":"GotoPreset","Preset":201,"Channel":1}
 ```
 
-One command may carry more than one DVRIP payload, and they are sent in that order. Measured
-on the camera of the test set (192.168.20.253, `.smoke/session_probe.py`, one DVRIP
-connection for park, sweep and stop): every other stop left it at its bottom limit, the
-`GotoPreset` brought it back to the position its move started from. A camera that stored the
-commands of an older release is moved over to this pair automatically - the moves as well,
-because without the store there would be nothing to return to. See the changelog of 0.3.8.
+One command may carry more than one DVRIP payload, and they are sent in that order. A held
+arrow therefore moves the camera for as long as it is held and comes to rest where it stood
+when the key was released. The travel to the limit in between is what this device does with
+a move and cannot be avoided - a command that arrives while an axis moves is served *after*
+it - but the *position* the camera ends at follows the length of the press. Measured on the
+tilt of the camera of the test set (192.168.20.253, `.smoke/jog_probe.py`, the `vs top`
+column of its frames: 0 is the parked top, 59 to 75 the bottom limit):
+
+| how long the arrow was held | where the camera came to rest |
+| --- | --- |
+| 0.5 s | `vs top` 1.9 |
+| 1.4 s | `vs top` 7.7 |
+| 3.4 s | `vs top` 32.1 |
+
+A move carries its direction and the speed of its axis and nothing else since 0.3.10, and a
+camera that stored the commands of an older release - a move with its `SetPreset`, the
+`Stop` of 0.3.6, the `POINT` payload of 0.3.7 or the `GotoPreset` of 0.3.8/0.3.9 - is moved
+over to this pair automatically. See the changelog of 0.3.10.
 
 The answer of a `GotoPreset` arrives **late**: the device replies only once the axis
 arrived, measured 10 to 16 s after the command on the camera of the test set. The DVRIP
@@ -282,8 +295,9 @@ command name that does not exist, and the camera did not move (see
 `.smoke/dvrip-protocol.md`). The vendor CGIs are asked last.
 
 **The test never moves a camera**: every HTTP and DVRIP variant is asked with its
-*stop* command (for a DVRIP device that is the `GotoPreset` of the slot the moves store,
-which needs no direction), ONVIF only with read only queries (`GetConfigurations`,
+*stop* command (for a DVRIP device that is the capture of the position it is sent at and
+the return to it, which needs no direction), ONVIF only with read only queries
+(`GetConfigurations`,
 `GetCapabilities(PTZ)`, `GetProfiles`). The variant that answers becomes the **main PTZ
 handling** of the camera - profile, HTTP address, channel, DVRIP port, ONVIF profile
 token and the credentials that were used - and the form follows it, so the *Save*
@@ -305,8 +319,10 @@ Home Assistant gets:
 - `rtsp_cameras.ptz` - move with the **same fields as `onvif.ptz`** (`pan`, `tilt`,
   `zoom`, `speed` 0.01-1, `continuous_duration`, `preset`, `move_mode`), plus
   `action` for the plain actions (`left`, `zoom_in`, `home`, …). A direction moves
-  for `continuous_duration` seconds (default 0.5) and is stopped automatically, and a
-  stop without a direction stops the axis that was moved last (see *A stop stops* above).
+  for `continuous_duration` seconds (default 0.5) and is stopped automatically - on a
+  camera whose stop is a return (see *A stop stops* above) that time decides the
+  **distance** the camera travels - and a stop without a direction stops the axis that was
+  moved last.
 - `rtsp_cameras.ptz_home` - go to the home position.
 - A **button per preset** (and one *PTZ stop*) on the camera device, so a dashboard
   can jump to a view with one tap.

@@ -162,7 +162,7 @@
     "command_hint": "GET/POST/PUT url [cuerpo]",
     "presets": "Presets (una línea por preset: número=nombre)",
     "presets_hint": "Los presets aparecen en la vista previa y como botones en Home Assistant.",
-    "hold_hint": "En la vista previa, mantén una flecha para mover; al soltar la cámara se detiene.",
+    "hold_hint": "En la vista previa, mantén una flecha para mover; al soltar la cámara se detiene donde está (este dispositivo siempre recorre hasta su tope).",
     "test": "Probar PTZ (envía stop)",
     "testing": "Enviando el comando stop ...",
     "test_ok": "La cámara responde",

@@ -162,7 +162,7 @@
     "command_hint": "GET/POST/PUT url [body]",
     "presets": "Presets (je Zeile: Nummer=Name)",
     "presets_hint": "Presets erscheinen in der Vorschau und als Tasten in Home Assistant.",
-    "hold_hint": "In der Vorschau fährt ein gehaltener Pfeil weiter - loslassen stoppt die Kamera.",
+    "hold_hint": "In der Vorschau fährt ein gehaltener Pfeil weiter - loslassen stoppt die Kamera dort, wo sie steht (dieses Gerät fährt vorher immer bis an sein Ende).",
     "test": "PTZ testen (sendet Stop)",
     "testing": "Stop-Befehl wird gesendet ...",
     "test_ok": "Die Kamera antwortet",
