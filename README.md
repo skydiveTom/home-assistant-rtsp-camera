@@ -56,8 +56,11 @@ exactly one place — the add-on panel.
   from the RTSP URL**, so they are never typed twice. The **PTZ test mode** finds the
   right variant for you: enter the IP of the camera (or nothing at all), one button
   asks every variant and the one that answers becomes the main handling - without
-  moving the camera, because the test only sends stop commands. Home Assistant receives
-  `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
+  moving the camera, because the test only sends stop commands. A camera whose moves cannot be
+  stopped (the Xiongmai family) gets **step by step arrows**: the position of the moment is
+  stored as a step of an axis, a short press of an arrow walks one rung of that ladder and the
+  step field walks several - a bounded move, without the travel to a limit. Home Assistant
+  receives `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset.
 - **Live in seconds** – adding, renaming, disabling or deleting a camera is picked
   up by Home Assistant within seconds, without a restart and without YAML.

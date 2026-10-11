@@ -180,6 +180,7 @@
     "action_home": "Pozycja domowa",
     "action_stop": "Stop",
     "action_preset": "Preset",
+    "action_store": "Zapisz pozycję",
     "port": "Port DVRIP (34567)",
     "token": "Token profilu ONVIF",
     "discover": "Wykryj token ONVIF",
@@ -207,7 +208,15 @@
     "status_error": "błąd",
     "speed_vertical": "Prędkość w górę/w dół (1-8)",
     "speed_horizontal": "Prędkość w lewo/w prawo (1-8)",
-    "speed_axis_hint": "Strzałki wysyłają prędkość swojej osi — przechył (góra/dół) bierze pionową, obrót (lewo/prawo) poziomą. Zoom i presety używają prędkości ogólnej."
+    "speed_axis_hint": "Strzałki wysyłają prędkość swojej osi — przechył (góra/dół) bierze pionową, obrót (lewo/prawo) poziomą. Zoom i presety używają prędkości ogólnej.",
+    "steps_per_press": "Kroki na naciśnięcie",
+    "store_step_vertical": "Zapisz przechył jako krok",
+    "store_step_horizontal": "Zapisz obrót jako krok",
+    "clear_steps": "Wyczyść kroki",
+    "steps_empty": "Nie ma jeszcze kroków: ustaw kamerę i zapisz krok - krótkie naciśnięcie strzałki przejdzie wtedy do następnego, bez długiej jazdy.",
+    "steps_note": "Kroki: {vertical} góra/dół, {horizontal} lewo/prawo - krótkie naciśnięcie to jeden krok, przytrzymanie porusza dalej.",
+    "step_reached": "Krok {index} z {rungs}",
+    "step_stored": "Krok zapisany"
   },
   "errors": {
     "ptz_not_configured": "Ta kamera nie ma skonfigurowanego PTZ",
@@ -235,7 +244,11 @@
     "update_failed": "Nie udało się rozpocząć aktualizacji dodatku",
     "ptz_base_url_required": "Najpierw wpisz adres HTTP kamery",
     "ptz_onvif_failed": "ONVIF nie odpowiedział",
-    "ptz_direction_required": "Stop nie wie, w którą stronę kamera się rusza — wyślij strzałkę ruchu"
+    "ptz_direction_required": "Stop nie wie, w którą stronę kamera się rusza — wyślij strzałkę ruchu",
+    "ptz_steps_missing": "Ta kamera nie ma jeszcze kroków - zapisz najpierw jeden",
+    "ptz_steps_axis": "Nieznana oś kroków",
+    "ptz_steps_full": "Lista kroków tej osi jest pełna",
+    "ptz_store_missing": "Ten profil kamery nie potrafi zapisać pozycji"
   },
   "common": {
     "close": "Zamknij",

@@ -363,6 +363,20 @@
             <span data-i18n="ptz.go_preset"></span>
           </button>
           <label class="field field--tight">
+            <span class="field__label" data-i18n="ptz.steps_per_press"></span>
+            <input type="number" id="ptz-steps-per-press" min="1" max="10" step="1" value="1">
+          </label>
+          <button type="button" class="btn btn--ghost" id="btn-ptz-step-vertical">
+            <span data-i18n="ptz.store_step_vertical"></span>
+          </button>
+          <button type="button" class="btn btn--ghost" id="btn-ptz-step-horizontal">
+            <span data-i18n="ptz.store_step_horizontal"></span>
+          </button>
+          <button type="button" class="btn btn--ghost" id="btn-ptz-step-clear">
+            <span data-i18n="ptz.clear_steps"></span>
+          </button>
+          <p class="note note--tight" id="ptz-steps-note"></p>
+          <label class="field field--tight">
             <span class="field__label" data-i18n="ptz.speed_vertical"></span>
             <input type="number" id="ptz-speed-vertical" min="1" max="8" step="1" value="4">
           </label>

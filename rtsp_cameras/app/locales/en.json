@@ -180,6 +180,7 @@
     "action_home": "Home position",
     "action_stop": "Stop",
     "action_preset": "Preset",
+    "action_store": "Store position",
     "port": "DVRIP port (34567)",
     "token": "ONVIF profile token",
     "discover": "Discover the ONVIF token",
@@ -207,7 +208,15 @@
     "status_error": "error",
     "speed_vertical": "Speed up/down (1-8)",
     "speed_horizontal": "Speed left/right (1-8)",
-    "speed_axis_hint": "The arrows send the speed of their own axis - the tilt reads the vertical one, the pan the horizontal one. Zoom and presets use the general speed."
+    "speed_axis_hint": "The arrows send the speed of their own axis - the tilt reads the vertical one, the pan the horizontal one. Zoom and presets use the general speed.",
+    "steps_per_press": "Steps per press",
+    "store_step_vertical": "Store the tilt as a step",
+    "store_step_horizontal": "Store the pan as a step",
+    "clear_steps": "Clear the steps",
+    "steps_empty": "No steps yet: point the camera and store a step - a short press of an arrow then walks the camera to the next one, without the long travel.",
+    "steps_note": "Steps: {vertical} up/down, {horizontal} left/right - a short press walks one, holding moves on.",
+    "step_reached": "Step {index} of {rungs}",
+    "step_stored": "Step stored"
   },
   "errors": {
     "ptz_not_configured": "This camera has no PTZ configuration",
@@ -235,7 +244,11 @@
     "update_failed": "The add-on update could not be started",
     "ptz_base_url_required": "Enter the HTTP address of the camera first",
     "ptz_onvif_failed": "ONVIF did not answer",
-    "ptz_direction_required": "The stop does not know which way the camera moves - send the arrow of the movement"
+    "ptz_direction_required": "The stop does not know which way the camera moves - send the arrow of the movement",
+    "ptz_steps_missing": "This camera has no steps yet - store the first one",
+    "ptz_steps_axis": "Unknown step axis",
+    "ptz_steps_full": "The step list of this axis is full",
+    "ptz_store_missing": "This camera profile cannot store a position"
   },
   "common": {
     "close": "Close",

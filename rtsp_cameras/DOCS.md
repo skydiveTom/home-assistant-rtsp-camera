@@ -265,6 +265,30 @@ of the first. The session is also what the vendor app keeps of a camera - one lo
 command of that camera on it - and every stop shape that was measured on the device of the
 test set went out on a connection of its own. See the changelog of 0.3.9 and of 0.3.12.
 
+**A step by step arrow.** A held arrow of this family always ends in the whole travel: the move
+runs to the limit of its axis and the capture of the release drags the camera back to where it
+stood. A *short press* is no help either - this firmware needs about 2.5 s before it starts to
+move, so the capture stores the position of the start. What the device *does* have is a
+**position**, and the preview pad offers a ladder of them. Move the camera where a step should
+be and press *Store the tilt as a step* (or *… the pan as a step*): the position of the moment
+is written into the next free preset slot of that axis - 210 upwards, above the presets the
+panel shows and above the two slots this project keeps for itself. A **short press of an arrow**
+then drives the camera to the neighbouring rung, which is a bounded move: the axis travels the
+distance between the two rungs and stands still there, with no trip to a limit. *Steps per
+press* (1-10) walks several rungs at once, a press that stays is the continuous move
+it always was, and *Clear the steps* forgets the ladder. The rungs are ordinary preset slots of
+the camera, so they survive a restart of the add-on, and Home Assistant can visit one through
+`rtsp_cameras.ptz` with `move_mode: GotoPreset` and the slot as `preset`.
+
+The ladder needs a camera whose PTZ block carries a **store** command: the DVRIP profile of the
+bundled set has one (`SetPreset`, shown in the camera editor as *Store position*) and a camera
+of another vendor whose interface has a store command of its own can grow a ladder as well.
+Two details are worth knowing: a `SetPreset` is served *while the axis moves* (answered in 0.2
+to 0.3 s) and it halts the sweep for a moment, but the queued direction runs on to its limit
+afterwards - a ladder is therefore built from the positions the camera really stands at, not
+from the timing of a sweep. The panel stores the place of the moment, one rung per press, which
+is why the button is pressed once per step.
+
 For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
 `GetProfiles` to the media service, takes the first profile token and fills the
 commands with it. For **DVRIP** the port field (default 34567) is used; the add-on logs

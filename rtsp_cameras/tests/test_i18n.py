@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,20 @@ def test_every_interface_language_has_the_same_keys(bundles: dict[str, dict]) ->
     assert len(reference) > 80
     for code, bundle in bundles.items():
         assert flatten(bundle) == reference, f"{code} differs from {DEFAULT_LANGUAGE}"
+
+
+def test_every_key_of_the_interface_exists(bundles: dict[str, dict]) -> None:
+    """Every ``data-i18n`` of the panel template has to be translated.
+
+    A key the bundle does not know is printed as itself, and the panel would show
+    "ptz.steps_per_press" instead of its label.
+    """
+    template = (LOCALES_DIR.parent / "templates" / "index.html").read_text(encoding="utf-8")
+    keys = set(re.findall(r'data-i18n="([^"]+)"', template))
+    assert keys, "the template has to use the translation helper"
+
+    english = flatten(bundles[DEFAULT_LANGUAGE])
+    assert keys <= english, sorted(keys - english)
 
 
 def test_every_api_error_code_is_translated(bundles: dict[str, dict]) -> None:

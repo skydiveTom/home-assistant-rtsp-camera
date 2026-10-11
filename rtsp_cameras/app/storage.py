@@ -183,8 +183,10 @@ class CameraStore:
                 camera.preview_mode = value or None
             if "ptz" in changes:
                 # Normalized against the (possibly just changed) stream URL, because
-                # the PTZ base URL defaults to its host.
-                camera.ptz = normalize_ptz(changes["ptz"], camera.url)
+                # the PTZ base URL defaults to its host - and against the block the
+                # camera carries, so the ladder of step positions survives a save of
+                # the camera editor (which has no field for it).
+                camera.ptz = normalize_ptz(changes["ptz"], camera.url, camera.ptz)
             if changes.get("touch", True):
                 camera.updated_at = utcnow()
         self.save()

@@ -38,7 +38,7 @@
       timer: null,
     },
     ptzProfiles: [],
-    ptzActions: ['up', 'down', 'left', 'right', 'zoom_in', 'zoom_out', 'home', 'stop', 'preset'],
+    ptzActions: ['up', 'down', 'left', 'right', 'zoom_in', 'zoom_out', 'home', 'stop', 'preset', 'store'],
     ptzDirection: null,
   };
 
@@ -1272,6 +1272,7 @@
     );
     select.disabled = presets.length === 0;
     document.getElementById('btn-ptz-preset').disabled = presets.length === 0;
+    renderPtzSteps(ptz);
   }
 
   // Which speed field belongs to the arrows of an axis: the tilt (up/down) and the pan
@@ -1298,10 +1299,7 @@
       document.getElementById('ptz-error').hidden = true;
       return true;
     } catch (err) {
-      const box = document.getElementById('ptz-error');
-      box.hidden = false;
-      const code = err instanceof ApiError ? err.code : 'ptz_failed';
-      box.textContent = errorText(code) + errorDetail(err);
+      showPtzError(err);
       return false;
     }
   }
@@ -1310,6 +1308,103 @@
     const direction = state.ptzDirection;
     state.ptzDirection = null;
     sendPtz('stop', direction ? { direction } : null);
+  }
+
+  /* ----------------------------------------------------------------- steps */
+  /* A step by step arrow needs a *position*. This family drives an axis to its limit and
+     nothing halts it on the way, so the only bounded move it has is a ``GotoPreset`` of a
+     preset slot a position was written into before - a rung of a ladder. The panel offers
+     that ladder: "store the position" writes the place the camera stands at into the next
+     free slot, a short press of an arrow walks one rung (the number in the step field),
+     and a press that stays is the continuous move it always was. */
+
+  //: How long an arrow has to be held to count as a move instead of a step.
+  const STEP_TAP_MS = 220;
+
+  function stepRungs(action, camera) {
+    const axis = PTZ_AXIS_SPEED[action];
+    if (!axis || !camera || !camera.ptz) return [];
+    return ((camera.ptz.steps || {})[axis]) || [];
+  }
+
+  function renderPtzSteps(ptz) {
+    const steps = (ptz && ptz.steps) || {};
+    const vertical = (steps.vertical || []).length;
+    const horizontal = (steps.horizontal || []).length;
+    const canStore = ((ptz && ptz.actions) || []).indexOf('store') >= 0;
+    document.getElementById('btn-ptz-step-vertical').disabled = !canStore;
+    document.getElementById('btn-ptz-step-horizontal').disabled = !canStore;
+    document.getElementById('btn-ptz-step-clear').disabled = !vertical && !horizontal;
+    const note = document.getElementById('ptz-steps-note');
+    note.textContent = vertical || horizontal
+      ? t('ptz.steps_note', { vertical, horizontal })
+      : t('ptz.steps_empty');
+  }
+
+  function stepsPerPress() {
+    const value = Number(document.getElementById('ptz-steps-per-press').value);
+    return Math.max(1, Math.min(10, Math.round(value) || 1));
+  }
+
+  function showPtzError(err) {
+    const box = document.getElementById('ptz-error');
+    box.hidden = false;
+    const code = err instanceof ApiError ? err.code : 'ptz_failed';
+    box.textContent = errorText(code) + errorDetail(err);
+  }
+
+  async function sendStep(direction) {
+    const cameraId = state.preview.cameraId;
+    if (!cameraId) return false;
+    try {
+      const data = await api('api/cameras/' + cameraId + '/ptz', {
+        method: 'POST',
+        body: { action: 'step', direction, steps: stepsPerPress() },
+      });
+      const step = data.step || {};
+      document.getElementById('ptz-error').hidden = true;
+      toast(
+        t('ptz.step_reached', { index: (step.index || 0) + 1, rungs: step.rungs || 0 }),
+        'ok',
+      );
+      return true;
+    } catch (err) {
+      showPtzError(err);
+      return false;
+    }
+  }
+
+  async function storeStep(axis) {
+    const cameraId = state.preview.cameraId;
+    if (!cameraId) return;
+    try {
+      await api('api/cameras/' + cameraId + '/ptz/steps', {
+        method: 'POST',
+        body: { axis, mode: 'add' },
+      });
+      await reload();
+      renderPtzPad(cameraById(cameraId));
+      toast(t('ptz.step_stored'), 'ok');
+    } catch (err) {
+      showPtzError(err);
+    }
+  }
+
+  async function clearSteps() {
+    const cameraId = state.preview.cameraId;
+    if (!cameraId) return;
+    try {
+      for (const axis of ['vertical', 'horizontal']) {
+        await api('api/cameras/' + cameraId + '/ptz/steps', {
+          method: 'POST',
+          body: { axis, mode: 'clear' },
+        });
+      }
+      await reload();
+      renderPtzPad(cameraById(cameraId));
+    } catch (err) {
+      showPtzError(err);
+    }
   }
 
 
@@ -1818,20 +1913,52 @@
     document.querySelectorAll('#ptz-pad [data-ptz]').forEach((button) => {
       const action = button.dataset.ptz;
       if (button.dataset.ptzHold) {
+        /* A short press walks one step of the ladder of this axis - a bounded move to a
+           position that was stored before - and only a press that stays becomes the
+           continuous move. The delay is there only for an axis that really has rungs. */
+        let timer = null;
+        let moving = false;
+        const release = () => {
+          button.classList.remove('is-active');
+          if (timer !== null) {
+            window.clearTimeout(timer);
+            timer = null;
+            if (!moving) sendStep(action);
+            return;
+          }
+          if (moving) stopPtz();
+        };
         button.addEventListener('pointerdown', (event) => {
           event.preventDefault();
           button.classList.add('is-active');
-          sendPtz(action);
+          moving = false;
+          const camera = state.preview.cameraId ? cameraById(state.preview.cameraId) : null;
+          if (stepRungs(action, camera).length) {
+            timer = window.setTimeout(() => {
+              timer = null;
+              moving = true;
+              sendPtz(action);
+            }, STEP_TAP_MS);
+          } else {
+            moving = true;
+            sendPtz(action);
+          }
         });
         ['pointerup', 'pointerleave', 'pointercancel'].forEach((name) =>
-          button.addEventListener(name, () => {
-            button.classList.remove('is-active');
-            stopPtz();
-          }),
+          button.addEventListener(name, release),
         );
       } else {
         button.addEventListener('click', () => sendPtz(action));
       }
+    });
+    document.getElementById('btn-ptz-step-vertical').addEventListener('click', () => {
+      storeStep('vertical');
+    });
+    document.getElementById('btn-ptz-step-horizontal').addEventListener('click', () => {
+      storeStep('horizontal');
+    });
+    document.getElementById('btn-ptz-step-clear').addEventListener('click', () => {
+      clearSteps();
     });
     document.getElementById('btn-ptz-preset').addEventListener('click', () => {
       const preset = document.getElementById('ptz-preset-select').value;

@@ -25,6 +25,10 @@ camera on any dashboard, because every instance turns into a regular
   Xiongmai, DVRIP on TCP 34567) which one really moves it. The variant that answers
   becomes the main PTZ handling of the camera; the test only sends stop commands, so
   the camera never moves.
+- **Step by step arrows** – a camera whose moves cannot be halted (the Xiongmai family:
+  a `DirectionX` runs to the limit of its axis) gets a ladder of stored positions: the
+  position of the moment becomes a step of an axis, a short press of an arrow walks one
+  rung and the step field walks several. That move is bounded - no travel to a limit.
 - **Four languages** – English, German, Spanish and Polish. The interface follows
   the language configured in Home Assistant, English is the default.
 - **Safe by design** – the interface is only reachable through the authenticated

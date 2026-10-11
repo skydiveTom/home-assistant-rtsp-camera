@@ -39,6 +39,8 @@ from app.ptz import (
     COMMAND_TIMEOUT,
     DEFAULT_SPEED,
     DVRIP_TIMEOUT,
+    FIRST_STEP_SLOT,
+    MAX_STEP_SLOTS,
     PROBE_STATUS_AUTH,
     PROBE_STATUS_NO_TOKEN,
     PROBE_STATUS_OK,
@@ -58,6 +60,7 @@ from app.ptz import (
     probe_base_url,
     public_config,
     split_userinfo,
+    step_target,
 )
 from app.ptz import (
     async_discover_onvif_token as discover_onvif_token,
@@ -1818,6 +1821,289 @@ def test_probe_without_an_address_asks_nothing() -> None:
     assert report["ok"] is False
     assert report["profile"] is None
     assert report["results"] == []
+
+
+DVRIP_URL = "rtsp://admin:secret@127.0.0.1:554/user=admin&password=secret&channel=1&stream=0.sdp"
+
+
+def add_dvrip_camera(test_client: TestClient, port: int) -> dict:
+    """Create a camera whose PTZ handling is the DVRIP device under test."""
+    return add_camera(test_client, url=DVRIP_URL, ptz={"profile": "xiongmai_dvrip", "port": port})
+
+
+def store_rungs(test_client: TestClient, camera_id: str, count: int) -> dict:
+    """Store ``count`` rungs on one axis and return the answer of the last one."""
+    answer: dict = {}
+    for _ in range(count):
+        response = test_client.post(
+            f"/api/cameras/{camera_id}/ptz/steps", json={"axis": "vertical", "mode": "add"}
+        )
+        assert response.status_code == 200, response.text
+        answer = response.json()
+    return answer
+
+
+def test_the_panel_stores_a_step_position(client: TestClient, dvrip_cam: int) -> None:
+    """The store button writes the position of the moment into the next free slot."""
+    camera = add_dvrip_camera(client, dvrip_cam)
+
+    response = client.post(
+        f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "vertical", "mode": "add"}
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["slot"] == FIRST_STEP_SLOT
+    assert data["steps"] == {"vertical": [FIRST_STEP_SLOT]}
+    assert data["index"] == 0, "the camera stands on the rung that was just written"
+    assert data["camera"]["ptz"]["steps"] == {"vertical": [FIRST_STEP_SLOT]}, (
+        "the ladder is part of the camera the panel gets back"
+    )
+    sent = DvripCamera.received[0]["payload"]["OPPTZControl"]
+    assert sent["Command"] == "SetPreset"
+    assert sent["Parameter"]["Preset"] == FIRST_STEP_SLOT
+    assert sent["Parameter"]["Channel"] == 0
+
+    second = client.post(
+        f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "vertical", "mode": "add"}
+    ).json()
+    assert second["slot"] == FIRST_STEP_SLOT + 1, "a second rung takes the next free slot"
+    assert second["steps"] == {"vertical": [FIRST_STEP_SLOT, FIRST_STEP_SLOT + 1]}
+
+    # The rungs of the other axis are a ladder of their own.
+    horizontal = client.post(
+        f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "horizontal", "mode": "add"}
+    ).json()
+    assert horizontal["steps"] == {
+        "vertical": [FIRST_STEP_SLOT, FIRST_STEP_SLOT + 1],
+        "horizontal": [FIRST_STEP_SLOT],
+    }
+
+
+def test_a_step_walks_to_the_next_rung(client: TestClient, dvrip_cam: int) -> None:
+    """A step of the panel is a ``GotoPreset``: a bounded move, no travel to a limit."""
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 3)
+    DvripCamera.received.clear()
+
+    # Three rungs were stored, so the camera stands on the last one of them.
+    down = client.post(
+        f"/api/cameras/{camera['id']}/ptz",
+        json={"action": "step", "direction": "down", "steps": 2},
+    )
+
+    assert down.status_code == 200, down.text
+    assert down.json()["step"] == {
+        "axis": "vertical",
+        "slot": FIRST_STEP_SLOT,
+        "index": 0,
+        "rungs": 3,
+        "arrow": "down",
+    }
+    sent = DvripCamera.received[0]["payload"]["OPPTZControl"]
+    assert sent["Command"] == "GotoPreset", "a step does not start a move"
+    assert sent["Parameter"]["Preset"] == FIRST_STEP_SLOT
+
+    # The rung the camera reached is remembered, so the next step starts from there.
+    up = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"})
+    assert up.status_code == 200, up.text
+    assert up.json()["step"]["index"] == 1
+    assert up.json()["step"]["slot"] == FIRST_STEP_SLOT + 1
+
+
+def test_a_continuous_move_forgets_the_rung(client: TestClient, dvrip_cam: int) -> None:
+    """The ladder only counts while the add-on knows the rung the camera stands on."""
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 3)
+
+    moved = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "down"})
+    assert moved.status_code == 200, moved.text
+
+    step = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"}
+    )
+
+    assert step.status_code == 200, step.text
+    assert step.json()["step"]["index"] == 0, "a first step lands on the first rung again"
+
+
+def test_a_step_without_a_ladder_is_refused(client: TestClient, dvrip_cam: int) -> None:
+    """A camera without rungs cannot step: the panel is told instead of moving nothing."""
+    camera = add_dvrip_camera(client, dvrip_cam)
+
+    response = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"}
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "ptz_steps_missing"
+
+
+def test_the_panel_drops_and_clears_the_ladder(client: TestClient, dvrip_cam: int) -> None:
+    """A stored rung can be taken back, and a whole axis can be forgotten."""
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 2)
+
+    dropped = client.post(
+        f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "vertical", "mode": "drop"}
+    )
+    assert dropped.status_code == 200, dropped.text
+    assert dropped.json()["steps"] == {"vertical": [FIRST_STEP_SLOT]}
+
+    last = client.post(
+        f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "vertical", "mode": "drop"}
+    )
+    assert last.json()["steps"] == {}, "the last rung of an axis removes the ladder"
+
+    store_rungs(client, camera["id"], 1)
+    cleared = client.post(
+        f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "vertical", "mode": "clear"}
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["steps"] == {}
+    assert cleared.json()["camera"]["ptz"]["steps"] == {}
+
+
+def test_the_camera_editor_keeps_the_ladder(client: TestClient, dvrip_cam: int) -> None:
+    """A save of the camera form has no field for the ladder and must not lose it."""
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 1)
+
+    saved = client.put(
+        f"/api/cameras/{camera['id']}",
+        json={"ptz": {"enabled": True, "profile": "xiongmai_dvrip", "port": dvrip_cam, "speed": 5}},
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["camera"]["ptz"]["steps"] == {"vertical": [FIRST_STEP_SLOT]}
+    assert saved.json()["camera"]["ptz"]["speed"] == 5, "the new field of the form arrived"
+
+
+def test_a_camera_without_a_store_cannot_grow_a_ladder(client: TestClient) -> None:
+    """The store button of the panel is refused where the profile has no store command."""
+    camera = add_camera(client, ptz={"profile": "dahua", "base_url": "http://10.0.0.5"})
+
+    response = client.post(
+        f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "vertical", "mode": "add"}
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "ptz_store_missing"
+
+
+def test_a_full_ladder_is_reported(client: TestClient, dvrip_cam: int) -> None:
+    """A ladder has a last rung, and the panel is told instead of overwriting one."""
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], MAX_STEP_SLOTS)
+
+    response = client.post(
+        f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "vertical", "mode": "add"}
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "ptz_steps_full"
+
+# --------------------------------------------------------------------- steps
+# A step by step arrow needs a *position*. This family drives an axis to its limit and
+# nothing halts it on the way (measured: every shape of a ``Stop`` is acknowledged and
+# ignored, ``Step: 0`` with a direction drives the axis to its zero position), so the only
+# bounded move the device has is the ``GotoPreset`` of a slot a position was written into
+# before - a **rung** of a ladder. These tests pin the rules of that ladder: who may store a
+# rung, how a step walks it, and when it is lost.
+
+
+def test_the_dvrip_profile_can_store_a_position(dvrip_cam: int) -> None:
+    """The ``store`` action writes the position of the moment into the slot of the request."""
+    config = normalize_ptz({"profile": "xiongmai_dvrip", "port": dvrip_cam}, RTSP_URL)
+    assert config is not None
+    assert "store" in configured_actions(config), "a ladder needs a slot a position can go to"
+
+    command = build_command(config, "store", preset="212")
+    assert command is not None
+    status, error = asyncio.run(
+        async_send(command, host="127.0.0.1", port=dvrip_cam, username="user", password="pass")
+    )
+
+    assert error is None, error
+    assert status == LOGIN_OK
+    sent = DvripCamera.received[0]["payload"]["OPPTZControl"]
+    assert sent["Command"] == "SetPreset", "the store of the capture stop, not a move"
+    assert sent["Parameter"]["Preset"] == 212
+    assert sent["Parameter"]["Channel"] == 0
+
+
+def test_a_profile_without_a_store_cannot_build_a_ladder() -> None:
+    """The store button is offered only where the command exists."""
+    config = normalize_ptz({"profile": "dahua", "base_url": "http://10.0.0.5"}, RTSP_URL)
+    assert config is not None
+    assert "store" not in configured_actions(config)
+
+
+def test_a_ladder_survives_a_save_of_the_camera_editor() -> None:
+    """The camera form has no field for the ladder, so saving the camera keeps it."""
+    ladder = {"vertical": [210, 211], "horizontal": ["212"]}
+    first = normalize_ptz({"profile": "xiongmai_dvrip", "steps": ladder}, RTSP_URL)
+    assert first is not None
+    assert first["steps"] == {"vertical": [210, 211], "horizontal": [212]}
+    assert public_config(first)["steps"] == first["steps"], "the panel has to see the rungs"
+
+    # What the camera editor sends: the fields it knows, no ``steps`` at all.
+    saved = normalize_ptz({"profile": "xiongmai_dvrip", "speed": 6}, RTSP_URL, first)
+    assert saved is not None
+    assert saved["steps"] == first["steps"], "a form that does not speak of rungs keeps them"
+
+    # The step endpoint sends the whole block, so an empty ladder clears the camera.
+    cleared = normalize_ptz({"profile": "xiongmai_dvrip", "steps": {}}, RTSP_URL, first)
+    assert cleared is not None
+    assert cleared["steps"] == {}
+
+
+def test_a_ladder_is_cleaned_and_cut() -> None:
+    """Garbage in a ladder is dropped: no step may ever point at a preset of the panel."""
+    config = normalize_ptz(
+        {
+            "profile": "xiongmai_dvrip",
+            "steps": {
+                "vertical": [210, "211", 211, 3, 200, 201, 300, "x", 250],
+                "horizontal": "not a list",
+                "diagonal": [212],
+                "sideways": [],
+            },
+        },
+        RTSP_URL,
+    )
+
+    assert config is not None
+    assert config["steps"] == {"vertical": [210, 211]}, (
+        "the presets 3, 200 and 201 belong to the user and to this project, 300 and 250 are "
+        "out of range, 211 is written twice, and a value that is not a number is dropped"
+    )
+
+
+def test_a_long_ladder_is_cut() -> None:
+    """A ladder holds ``MAX_STEP_SLOTS`` rungs."""
+    slots = list(range(FIRST_STEP_SLOT, FIRST_STEP_SLOT + MAX_STEP_SLOTS + 4))
+    config = normalize_ptz({"profile": "xiongmai_dvrip", "steps": {"vertical": slots}}, RTSP_URL)
+
+    assert config is not None
+    assert config["steps"]["vertical"] == slots[:MAX_STEP_SLOTS]
+
+
+def test_a_step_walks_the_ladder_of_its_axis() -> None:
+    """Up and right walk a ladder away from its first rung, down and left back towards it."""
+    slots = [210, 211, 212]
+
+    assert step_target(slots, 0, "up", 1) == (211, 1)
+    assert step_target(slots, 1, "down", 2) == (210, 0)
+    assert step_target(slots, 0, "right", 1) == (211, 1), "the pan ladder is walked the same way"
+    assert step_target(slots, 0, "down", 1) == (210, 0), "a step never leaves the ladder"
+    assert step_target(slots, 2, "up", 1) == (212, 2), "... also at the upper end"
+    assert step_target(slots, 0, "up", 99) == (212, 2), "the count is cut at the end of it"
+    assert step_target(slots, None, "up", 1) == (210, 0), "a first step lands on the first rung"
+    assert step_target(slots, None, "down", 1) == (212, 2), "... a first down on the last one"
+    assert step_target(slots, 0, "zoom_in", 1) is None, "only the four arrows walk a ladder"
+    assert step_target([], 0, "up", 1) is None, "a camera without rungs has nothing to walk"
+
 
 
 

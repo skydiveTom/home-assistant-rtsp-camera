@@ -4,6 +4,47 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-11
+
+### Added
+
+- **Step by step arrows: an arrow can move the camera by one bounded step now.** A `DirectionX`
+  command of the Xiongmai family drives its axis to the limit and nothing halts it on the way -
+  every shape of a stop was measured and ignored - so a press of an arrow always ended in the
+  whole travel, and only the *capture* stop of the release decided where the camera came to
+  rest (0.3.10). What the device *does* have is a **position**, and the panel offers a ladder of
+  them: *Store the tilt as a step* (or *… the pan …*) writes the position of the moment into the
+  next free preset slot of that axis - 210 upwards, above the presets the panel shows and above
+  the two slots this project keeps for itself - and a **short press of an arrow** drives the
+  camera to the neighbouring rung with a `GotoPreset`. That is a bounded move: the axis travels
+  the distance between the two rungs and stands still there, with no trip to a limit, because no
+  direction is involved. *Steps per press* (1-10) walks several rungs at once, a press that
+  stays is the continuous move it was, *Clear the steps* forgets the ladder, and the ladder is
+  part of the camera - it survives a restart of the add-on. A rung is an ordinary preset slot,
+  so Home Assistant reaches it through `preset` as well.
+- **A `store` action of its own.** The camera editor knows the `SetPreset` payload of the DVRIP
+  profile as the action *Store position* now, so it can be edited like any other command. Every
+  other bundled profile has no store command, and the panel's store button stays disabled on
+  those cameras. The step endpoint answers with a translated message: `ptz_store_missing` (the
+  profile cannot store), `ptz_steps_missing` (the axis has no rung yet), `ptz_steps_full` and
+  `ptz_steps_axis`.
+
+### Fixed
+
+- **What a `SetPreset` does to a moving axis was read wrong.** One run of the notes reported a
+  camera that came back to the top, another one that came back to the bottom and a third one
+  that stayed "on a mid frame" - three readings of the same question. Two probes of 2026-10-11
+  settle it (`.smoke/dvrip-protocol.md`): a store *is* served at once (0.2 to 0.3 s, a running
+  axis included), it **does** halt the sweep for a moment, and the queued direction runs on to
+  its limit afterwards - which is what makes the capture stop of 0.3.10 end where it does. A
+  ladder can therefore not be written into one sweep: six stores of one sweep all stored the
+  *same* position, the place the first one halted the axis at. The docstring of the capture stop
+  and the protocol notes carry the measurement.
+- **A save of the camera editor keeps the ladder of a camera.** The form sends the fields it
+  knows and knows nothing about step positions, so the block it sends would have dropped them:
+  a PTZ block without a `steps` key now keeps the ladder the camera carries, and only a request
+  that brings one (the step endpoint) replaces it.
+
 ## [0.3.12] - 2026-10-11
 
 ### Fixed

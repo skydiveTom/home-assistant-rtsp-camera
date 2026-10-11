@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,13 +56,19 @@ from .ptz import (
     DEFAULT_DVRIP_PORT,
     DIRECTION_ACTIONS,
     MAX_PROBE_TIMEOUT,
+    MAX_STEP_SLOTS,
     PROBE_TIMEOUT,
+    STEP_AXES,
     async_discover_onvif_token,
     async_probe_ptz,
+    first_free_step_slot,
     needs_direction,
     normalize_action,
     probe_base_url,
     profile_list,
+    step_axis,
+    step_target,
+    steps_of,
 )
 from .ptz import async_run as ptz_run
 from .storage import CameraStore
@@ -123,6 +129,11 @@ class AppContext:
     #: axis that is moving. Guessing costs: a Xiongmai device sends a camera to its top
     #: position when a stop says "up" (see ``build_command``).
     ptz_directions: dict[str, str] = field(default_factory=dict)
+    #: Which rung of its ladder of step positions a camera stands on, per axis. A step is a
+    #: *position* the device has to be at (see ``ptz.step_target``), so the add-on keeps the
+    #: rung it walked a camera to - and forgets it as soon as a continuous move, a stop or
+    #: the home key leaves the ladder.
+    ptz_steps: dict[str, dict[str, int]] = field(default_factory=dict)
     started_at: float = field(default_factory=time.monotonic)
 
 
@@ -394,6 +405,23 @@ async def camera_item(request: Request) -> JSONResponse:
     return _ok(camera=updated.to_api_dict(), cameras=_cameras_payload(context))
 
 
+def _step_index(config: Mapping[str, Any] | None, preset: Any) -> tuple[str, int] | None:
+    """Return the axis and the rung of the ladder a preset slot belongs to.
+
+    For the camera a preset and a rung of a ladder are the same thing - a slot a position
+    was written into - so a preset that *is* a rung tells the add-on where the camera
+    stands, and any other preset means the ladder it walked is lost.
+    """
+    slot = str(preset or "").strip()
+    if not slot:
+        return None
+    for axis, slots in steps_of(config).items():
+        for index, value in enumerate(slots):
+            if str(value) == slot:
+                return axis, index
+    return None
+
+
 async def camera_ptz(request: Request) -> JSONResponse:
     """Move a PTZ capable camera.
 
@@ -413,14 +441,30 @@ async def camera_ptz(request: Request) -> JSONResponse:
     action = normalize_action(body.get("action"))
     if action is None:
         return await _error(request, "ptz_action_required", 400)
+    if action == "step":
+        return await _camera_step(request, context, camera, body)
 
     direction = str(body.get("direction") or "").strip() or None
     if action in DIRECTION_ACTIONS:
         context.ptz_directions[camera.id] = action
+        # A continuous move leaves the ladder of step positions: the camera stands between
+        # two rungs of it now, and this device has no way to tell where. Only a rung the
+        # camera is *at* can be walked on (see ``ptz.step_target``).
+        context.ptz_steps.pop(camera.id, None)
     elif action == "stop" and direction is None:
         direction = context.ptz_directions.get(camera.id)
         if direction is None and needs_direction(camera.ptz, action):
             return await _error(request, "ptz_direction_required", 400)
+
+    if action in ("home", "stop", "preset"):
+        # The ladder stays valid only while the add-on knows the rung the camera stands on:
+        # a preset that *is* a rung keeps it, every other one (and the home key and a stop,
+        # which leaves the camera where it was released) forgets it.
+        rung = _step_index(camera.ptz, body.get("preset")) if action == "preset" else None
+        if rung is None:
+            context.ptz_steps.pop(camera.id, None)
+        else:
+            context.ptz_steps.setdefault(camera.id, {})[rung[0]] = rung[1]
 
     result = await ptz_run(
         camera.ptz,
@@ -441,6 +485,124 @@ async def camera_ptz(request: Request) -> JSONResponse:
             status_code=502,
         )
     return _ok(ptz=result.to_dict(), camera=camera.to_api_dict())
+
+
+async def _camera_step(
+    request: Request, context: AppContext, camera: Camera, body: Mapping[str, Any]
+) -> JSONResponse:
+    """Walk a camera to the rung of its ladder that a step asks for.
+
+    A step is not a move. This family drives an axis to its limit and nothing halts it on
+    the way (measured: every shape of a ``Stop`` is acknowledged and ignored, ``Step: 0``
+    with a direction drives the axis to its zero position), so the only bounded move the
+    device has is the ``GotoPreset`` of a slot a position was written into before - a rung
+    of the ladder the panel stores with :func:`camera_ptz_steps`. The answer carries the
+    rung the camera stands on now, and the add-on remembers it for the next step.
+    """
+    arrow = str(body.get("direction") or "").strip().lower()
+    axis = step_axis(arrow)
+    if axis is None:
+        return await _error(request, "ptz_steps_axis", 400)
+
+    ladder = steps_of(camera.ptz).get(axis) or []
+    index = (context.ptz_steps.get(camera.id) or {}).get(axis)
+    target = step_target(ladder, index, arrow, body.get("steps") or 1)
+    if target is None:
+        return await _error(request, "ptz_steps_missing", 400)
+
+    slot, reached = target
+    result = await ptz_run(camera.ptz, "preset", preset=str(slot))
+    if not result.ok:
+        _LOGGER.info("the step of %s failed: %s", camera.id, result.detail)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "ptz_failed",
+                "detail": result.detail,
+                "ptz": result.to_dict(),
+            },
+            status_code=502,
+        )
+    context.ptz_steps.setdefault(camera.id, {})[axis] = reached
+    return _ok(
+        ptz=result.to_dict(),
+        step={"axis": axis, "slot": slot, "index": reached, "rungs": len(ladder), "arrow": arrow},
+        camera=camera.to_api_dict(),
+    )
+
+
+async def camera_ptz_steps(request: Request) -> JSONResponse:
+    """Store a step position of a camera, drop its last one or clear the ladder.
+
+    The panel builds the ladder while the user positions the camera: **add** writes the
+    position of the moment into the next free slot of the axis - a ``store`` (``SetPreset``)
+    through the command of the profile, which only the DVRIP profile of the bundled set has
+    - **drop** forgets the last rung, **clear** forgets the axis. The ladder lives in the
+    PTZ block of the camera, so the step arrows survive a restart of the add-on.
+    """
+    context = _ctx(request)
+    camera = context.store.get(request.path_params["camera_id"])
+    if camera is None:
+        return await _error(request, "not_found", 404)
+    if not camera.ptz:
+        return await _error(request, "ptz_not_configured", 400)
+
+    body = await _json_body(request)
+    axis = str(body.get("axis") or "").strip().lower()
+    if axis not in STEP_AXES:
+        return await _error(request, "ptz_steps_axis", 400)
+    mode = str(body.get("mode") or "add").strip().lower()
+    if mode not in ("add", "drop", "clear"):
+        return await _error(request, "ptz_action_required", 400)
+
+    ladder = steps_of(camera.ptz)
+    slots = list(ladder.get(axis) or [])
+    added: int | None = None
+    if mode == "clear":
+        ladder.pop(axis, None)
+        context.ptz_steps.pop(camera.id, None)
+    elif mode == "drop":
+        slots = slots[:-1]
+        if slots:
+            ladder[axis] = slots
+        else:
+            ladder.pop(axis, None)
+        # The rung the camera stood on may be the one that is gone: forget where it is.
+        context.ptz_steps.pop(camera.id, None)
+    else:
+        if not (camera.ptz.get("commands") or {}).get("store"):
+            return await _error(request, "ptz_store_missing", 400)
+        slot = first_free_step_slot(slots)
+        if slot is None or len(slots) >= MAX_STEP_SLOTS:
+            return await _error(request, "ptz_steps_full", 400)
+        result = await ptz_run(camera.ptz, "store", preset=str(slot))
+        if not result.ok:
+            _LOGGER.info("storing a step of %s failed: %s", camera.id, result.detail)
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "ptz_failed",
+                    "detail": result.detail,
+                    "ptz": result.to_dict(),
+                },
+                status_code=502,
+            )
+        slots.append(slot)
+        ladder[axis] = slots
+        # The camera stands on the rung that was just written.
+        context.ptz_steps.setdefault(camera.id, {})[axis] = len(slots) - 1
+        added = slot
+
+    updated = context.store.update(camera.id, ptz={**camera.ptz, "steps": ladder})
+    if updated is None:
+        return await _error(request, "not_found", 404)
+    return _ok(
+        slot=added,
+        axis=axis,
+        steps=(updated.ptz or {}).get("steps") or {},
+        index=(context.ptz_steps.get(camera.id) or {}).get(axis),
+        camera=updated.to_api_dict(),
+    )
 
 
 async def ptz_profiles(request: Request) -> JSONResponse:
@@ -1319,6 +1481,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
         ),
         Route("/api/cameras/{camera_id}/test", camera_test, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz", camera_ptz, methods=["POST"]),
+        Route("/api/cameras/{camera_id}/ptz/steps", camera_ptz_steps, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz/probe", ptz_probe, methods=["POST"]),
         Route("/api/ptz/profiles", ptz_profiles),
         Route("/api/ptz/probe", ptz_probe, methods=["POST"]),

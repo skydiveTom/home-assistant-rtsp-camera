@@ -60,7 +60,10 @@ w panelu dodatku.
   RTSP**, więc nie wpisujesz ich drugi raz. **Tryb testowania PTZ** sam znajdzie
   właściwy wariant: wpisz IP kamery (albo nic), jeden przycisk odpytuje wszystkie
   warianty, a ten który odpowie staje się główną obsługą — bez ruszania kamery, bo test
-  wysyła tylko komendy stop. Home Assistant dostaje usługę
+  wysyła tylko komendy stop. Kamera, której ruchu nie da się zatrzymać (rodzina Xiongmai),
+  dostaje **kroki na strzałkach**: pozycja z chwili zapisania staje się krokiem osi, krótkie
+  naciśnięcie strzałki przechodzi o jeden krok dalej, a pole kroków o kilka — ruch ograniczony,
+  bez jazdy do krańca. Home Assistant dostaje usługę
   `rtsp_cameras.ptz` (te same pola co `onvif.ptz`), `rtsp_cameras.ptz_home` oraz
   przycisk dla każdego presetu.
 - **Działa od razu** – dodanie, zmiana nazwy, wyłączenie lub usunięcie kamery jest

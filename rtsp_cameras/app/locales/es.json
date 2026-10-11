@@ -180,6 +180,7 @@
     "action_home": "Posición inicial",
     "action_stop": "Stop",
     "action_preset": "Preset",
+    "action_store": "Guardar posición",
     "port": "Puerto DVRIP (34567)",
     "token": "Token de perfil ONVIF",
     "discover": "Detectar el token ONVIF",
@@ -207,7 +208,15 @@
     "status_error": "error",
     "speed_vertical": "Velocidad arriba/abajo (1-8)",
     "speed_horizontal": "Velocidad izquierda/derecha (1-8)",
-    "speed_axis_hint": "Las flechas envían la velocidad de su propio eje: la inclinación (arriba/abajo) usa la vertical y el giro (izquierda/derecha) la horizontal. El zoom y los presets usan la velocidad general."
+    "speed_axis_hint": "Las flechas envían la velocidad de su propio eje: la inclinación (arriba/abajo) usa la vertical y el giro (izquierda/derecha) la horizontal. El zoom y los presets usan la velocidad general.",
+    "steps_per_press": "Pasos por pulsación",
+    "store_step_vertical": "Guardar la inclinación como paso",
+    "store_step_horizontal": "Guardar el giro como paso",
+    "clear_steps": "Borrar los pasos",
+    "steps_empty": "Aún no hay pasos: orienta la cámara y guarda un paso; una pulsación corta de una flecha llevará la cámara al siguiente, sin el recorrido largo.",
+    "steps_note": "Pasos: {vertical} arriba/abajo, {horizontal} izquierda/derecha - una pulsación corta avanza uno, mantener pulsado sigue moviendo.",
+    "step_reached": "Paso {index} de {rungs}",
+    "step_stored": "Paso guardado"
   },
   "errors": {
     "ptz_not_configured": "Esta cámara no tiene PTZ configurado",
@@ -235,7 +244,11 @@
     "update_failed": "No se pudo iniciar la actualización del complemento",
     "ptz_base_url_required": "Primero indica la dirección HTTP de la cámara",
     "ptz_onvif_failed": "ONVIF no respondió",
-    "ptz_direction_required": "La parada no sabe hacia dónde se mueve la cámara: envía la flecha del movimiento"
+    "ptz_direction_required": "La parada no sabe hacia dónde se mueve la cámara: envía la flecha del movimiento",
+    "ptz_steps_missing": "Esta cámara aún no tiene pasos: guarda uno primero",
+    "ptz_steps_axis": "Eje de pasos desconocido",
+    "ptz_steps_full": "La lista de pasos de este eje está llena",
+    "ptz_store_missing": "Este perfil de cámara no puede guardar una posición"
   },
   "common": {
     "close": "Cerrar",

@@ -52,8 +52,16 @@ PTZ_ACTIONS = (
     "home",
     "stop",
     "preset",
+    # A *store* writes the position of the moment into a preset slot of the camera. It is
+    # the primitive a ladder of step positions is built with (see ``FIRST_STEP_SLOT``), and
+    # only the profiles that really have one carry it - the bundled DVRIP profile does.
+    "store",
 )
 DIRECTION_ACTIONS = ("up", "down", "left", "right", "zoom_in", "zoom_out")
+#: Actions that are not a command of a camera but a decision of the add-on: a ``step`` walks
+#: the ladder of positions (see :func:`step_target`) instead of sending a payload of its own,
+#: so it is not one of ``PTZ_ACTIONS`` - the camera editor has no field for it.
+PANEL_ACTIONS = ("step",)
 #: ``DVRIP`` commands are not HTTP: they carry a JSON payload for the Xiongmai
 #: protocol on TCP 34567.
 COMMAND_METHODS = ("GET", "POST", "PUT", "DVRIP")
@@ -61,6 +69,26 @@ HTTP_METHODS = ("GET", "POST", "PUT")
 MAX_COMMAND_LENGTH = 600
 MAX_PRESETS = 16
 MAX_SPEED = 8
+#: A *ladder* is the ordered list of preset slots a step by step arrow walks. The slots of
+#: a ladder sit above the presets the panel offers (``MAX_PRESETS``) and above the two slots
+#: this project keeps for itself - 200 for the framing of the test set, 201 for the capture
+#: stop - so no step can ever point at something a user sees. The device of the test set
+#: answered ``SetPreset``/``GotoPreset`` of the slots 200, 201 and 210 to 215 (measured,
+#: ``.smoke/dvrip-protocol.md``); the field itself holds a byte, so the ladder ends well
+#: above that range.
+FIRST_STEP_SLOT = 210
+MAX_STEP_SLOT = 249
+MAX_STEP_SLOTS = 12
+#: How many rungs one press of an arrow may walk at most.
+MAX_STEPS_PER_PRESS = 10
+#: The arrows that walk a ladder, per axis: the first one of a pair leads away from the rung
+#: the ladder was started at, the second one walks back to it. A ladder is stored in the
+#: order the user walks it - the first rung is the position of the first store - so up and
+#: right go forward and down and left back.
+STEP_AXES: dict[str, tuple[str, str]] = {
+    "vertical": ("up", "down"),
+    "horizontal": ("right", "left"),
+}
 DEFAULT_SPEED = 4
 DEFAULT_CHANNEL = 1
 DEFAULT_DVRIP_PORT = 34567
@@ -234,6 +262,12 @@ DVRIP_STOP_PRESET = 201
 #: payloads the way a command carries it.
 DVRIP_STEP = " DVRIP "
 
+#: The two payloads a *ladder* of step positions is built and walked with. Their slot is the
+#: ``{preset}`` placeholder, so the request decides which rung is written or visited - the
+#: panel's "store this position" button and its step arrows fill it.
+DVRIP_STORE_COMMAND = 'DVRIP {"Command":"SetPreset","Preset":{preset},"Channel":{channel}}'
+DVRIP_GOTO_COMMAND = 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}'
+
 
 def dvrip_payloads(rest: str) -> list[dict[str, Any]] | None:
     """Return the JSON payloads of a DVRIP body, in the order they have to be sent.
@@ -257,12 +291,12 @@ def dvrip_payloads(rest: str) -> list[dict[str, Any]] | None:
 
 def _dvrip_store(preset: int = DVRIP_STOP_PRESET) -> str:
     """Return the DVRIP command that writes the position of the camera into a preset."""
-    return f'DVRIP {{"Command":"SetPreset","Preset":{preset},"Channel":{{channel}}}}'
+    return DVRIP_STORE_COMMAND.replace("{preset}", str(preset))
 
 
 def _dvrip_goto(preset: int) -> str:
     """Return the DVRIP command that drives the camera to a stored position."""
-    return f'DVRIP {{"Command":"GotoPreset","Preset":{preset},"Channel":{{channel}}}}'
+    return DVRIP_GOTO_COMMAND.replace("{preset}", str(preset))
 
 
 def _dvrip_move(command: str, speed: str = "{speed}") -> str:
@@ -283,10 +317,13 @@ def _dvrip_capture_stop(preset: int = DVRIP_STOP_PRESET) -> str:
     """Return the stop of the bundled DVRIP profile: store the position, return to it.
 
     A move of this protocol drives the axis to its limit - it is not a hold that ends with
-    the commands - and no payload of this device halts it half way:
+    the commands - and no *move* of this device ends before that limit. Every payload that
+    could be a stop is ignored:
 
     * a ``Stop`` of any shape is acknowledged with ``Ret: 100`` and the axis travels on,
-      however it names its channel and whatever else its parameter carries,
+      however it names its channel and whatever else its parameter carries, and the same
+      holds for one sent inside the session of the moving axis (``app/dvrip.py``,
+      ``async_send_many``),
     * ``Step: 0`` with a direction drives that axis to its *zero position*, and for
       ``DirectionUp`` the zero position is the top - the defect of 0.3.5,
     * the ``POINT`` object of the vendor app is refused with ``Ret: 118`` when it carries
@@ -297,14 +334,21 @@ def _dvrip_capture_stop(preset: int = DVRIP_STOP_PRESET) -> str:
       ``stop-empty``), and so is ``StopTour`` (``stop-tour``).
 
     What the device *does* have is a position, and the two payloads of this stop use it:
-    the ``SetPreset`` is served immediately - measured on a running axis, answered in
-    0.3 s - and stores where the camera stands at that moment, the ``GotoPreset`` that
-    follows drags the camera back there. A released arrow therefore ends where the camera
-    was when it was released, and the *length* of the arrow press decides the distance:
-    half a second, one second and three seconds of a hold ended at ``vs top`` 1.9, 7.7 and
-    32.1 on the tilt of the test device (see ``.smoke/jog_probe.py``). The travel to the
-    limit in between is what this device does with a move and cannot be avoided - a
-    command that arrives while an axis moves is served *after* it.
+    the ``SetPreset`` is served immediately - measured on a running axis, answered in 0.3 s
+    - and stores where the camera stands at that moment (it does hold the axis for the
+    moment the device handles it, but the queued direction runs on to its limit afterwards,
+    which is why the camera travels to the end of the axis before the ``GotoPreset`` behind
+    it drags it back; ``.smoke/dvrip-protocol.md``, 2026-10-11). A released arrow therefore
+    ends where the camera was when it was released, and the *length* of the arrow press
+    decides the distance: half a second, one second and three seconds of a hold ended at
+    ``vs top`` 1.9, 7.7 and 32.1 on the tilt of the test device (see
+    ``.smoke/jog_probe.py``). The travel to the limit in between is what this device does
+    with a move and cannot be avoided for a move - a command that arrives while an axis
+    moves is served *after* it.
+
+    That travel is why the panel walks a *ladder* of stored positions instead of holding an
+    arrow: a ``GotoPreset`` sent to a camera that stands still moves the axis to the slot and
+    leaves it there, no direction involved and nothing to halt (see :func:`step_target`).
     """
     return f"{_dvrip_store(preset)} {_dvrip_goto(preset)}"
 
@@ -483,7 +527,11 @@ PTZ_PROFILES: dict[str, dict[str, Any]] = {
             # Every other shape of a stop was measured on the device and does not halt a
             # moving axis at all.
             "stop": _dvrip_capture_stop(),
-            "preset": 'DVRIP {"Command":"GotoPreset","Preset":{preset},"Channel":{channel}}',
+            # The two payloads a ladder of step positions is walked with: a ``store`` writes
+            # the position of the moment into the slot the request names, ``preset`` drives
+            # the camera to that slot (see ``step_target``).
+            "preset": DVRIP_GOTO_COMMAND,
+            "store": DVRIP_STORE_COMMAND,
         },
         "direction_codes": {
             "up": "DirectionUp",
@@ -660,7 +708,7 @@ def normalize_action(value: Any) -> str | None:
     """Return a known action name for a user supplied value."""
     action = str(value or "").strip().lower().replace(" ", "_")
     action = _ACTION_ALIASES.get(action, action)
-    return action if action in PTZ_ACTIONS else None
+    return action if action in PTZ_ACTIONS or action in PANEL_ACTIONS else None
 
 
 def base_url_for(stream_url: str) -> str:
@@ -766,6 +814,44 @@ def _presets(value: Any) -> list[dict[str, str]]:
     return presets
 
 
+def _step_slot(value: Any) -> int | None:
+    """Return the slot number of a rung, or None when it cannot be a rung.
+
+    A rung lives above the presets the panel offers (``MAX_PRESETS``) and above the two
+    slots this project keeps for itself (200 and 201), so nothing a user sees is taken away.
+    """
+    try:
+        slot = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if slot < FIRST_STEP_SLOT or slot > MAX_STEP_SLOT:
+        return None
+    return slot
+
+
+def _steps(value: Any) -> dict[str, list[int]]:
+    """Return a clean ladder: per axis the slots, in the order they were walked.
+
+    A ladder is cut at ``MAX_STEP_SLOTS``, a slot is used once, and an axis that is not one
+    of ``STEP_AXES`` (or a value that is not a mapping) is dropped.
+    """
+    ladder: dict[str, list[int]] = {}
+    if not isinstance(value, Mapping):
+        return ladder
+    for axis in STEP_AXES:
+        slots: list[int] = []
+        for item in value.get(axis) or []:
+            slot = _step_slot(item)
+            if slot is None or slot in slots:
+                continue
+            slots.append(slot)
+            if len(slots) >= MAX_STEP_SLOTS:
+                break
+        if slots:
+            ladder[axis] = slots
+    return ladder
+
+
 def credentials_from_url(url: str) -> tuple[str, str, int | None]:
     """Return username, password and channel taken from a stream URL.
 
@@ -841,11 +927,18 @@ def _upgrade_command(
     return str(PTZ_PROFILES[profile]["commands"][action])
 
 
-def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
+def normalize_ptz(
+    raw: Any, stream_url: str, previous: Mapping[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Validate the PTZ block of a camera and fill in its defaults.
 
     Credentials and the channel come from the stream URL when the PTZ block does not
     define them. Returns None when PTZ is switched off or nothing usable is set up.
+
+    ``previous`` is the block the camera carries already. The camera editor sends the fields
+    it knows and has no idea of the ladder of step positions, so a block without a ``steps``
+    key keeps the ladder of the camera: only a request that *brings* a ladder (the step
+    endpoint of the panel) replaces it, and an empty one clears it.
     """
     if not isinstance(raw, Mapping) or not raw.get("enabled", True):
         return None
@@ -912,6 +1005,10 @@ def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
         "commands": commands,
         "stop_codes": dict(PTZ_PROFILES[profile]["direction_codes"]),
         "presets": _presets(raw.get("presets")),
+        # The ladder of step positions: a block that does not speak about it keeps the one
+        # of the camera (the camera editor has no field for it), a block that brings one
+        # replaces it, and an empty one clears it.
+        "steps": _steps(raw.get("steps") if "steps" in raw else (previous or {}).get("steps")),
     }
 
 
@@ -1005,6 +1102,62 @@ def configured_actions(config: Mapping[str, Any] | None) -> list[str]:
         return []
     commands = config.get("commands") or {}
     return [action for action in PTZ_ACTIONS if action in commands]
+
+
+def steps_of(config: Mapping[str, Any] | None) -> dict[str, list[int]]:
+    """Return the ladder of a PTZ configuration, axis by axis."""
+    if not config:
+        return {}
+    return _steps(config.get("steps"))
+
+
+def step_axis(action: str) -> str | None:
+    """Return the axis an arrow walks, or None when the action is not an arrow."""
+    for axis, arrows in STEP_AXES.items():
+        if action in arrows:
+            return axis
+    return None
+
+
+def first_free_step_slot(slots: Sequence[int]) -> int | None:
+    """Return the first slot a new rung of a ladder can take."""
+    for slot in range(FIRST_STEP_SLOT, MAX_STEP_SLOT + 1):
+        if slot not in slots:
+            return slot
+    return None
+
+
+def step_target(
+    slots: Sequence[int], index: int | None, action: str, count: Any = 1
+) -> tuple[int, int] | None:
+    """Return the rung a step of ``action`` lands on, together with its index.
+
+    A step is a *position*, not a move: this family cannot halt a moving axis (measured -
+    a ``Stop`` of every shape is acknowledged and ignored, ``Step: 0`` with a direction
+    drives the axis to its zero position), so the only bounded move it has is a
+    ``GotoPreset`` of a slot that was written before - a rung of the ladder. The arrows of
+    a step therefore walk a list of slots instead of starting a move.
+
+    ``index`` is the rung the camera stands on; ``None`` means the panel does not know it
+    (the camera was moved outside the ladder, or the first step of a session is pressed),
+    and the walk starts at the end the direction comes from: the first ``up`` lands on the
+    lowest rung, the first ``down`` on the highest. A step that would leave the ladder stops
+    on its first or its last rung, so a press always moves the camera somewhere it knows.
+    """
+    pair = next((arrows for arrows in STEP_AXES.values() if action in arrows), None)
+    if pair is None or not slots:
+        return None
+    try:
+        steps = abs(int(count))
+    except (TypeError, ValueError):
+        steps = 1
+    steps = max(1, min(MAX_STEPS_PER_PRESS, steps))
+    forward = action == pair[0]
+    start = index if isinstance(index, int) and index >= 0 else None
+    if start is None:
+        start = -1 if forward else len(slots)
+    target = max(0, min(len(slots) - 1, start + (steps if forward else -steps)))
+    return slots[target], target
 
 
 async def async_send(
@@ -1304,6 +1457,9 @@ def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
         },
         "stop_codes": dict(config.get("stop_codes") or {}),
         "presets": list(config.get("presets") or []),
+        # The ladder of step positions, so the panel can offer the step arrows and the
+        # "store this position" button of the axes that have one.
+        "steps": steps_of(config),
         "actions": configured_actions(config),
     }
 
