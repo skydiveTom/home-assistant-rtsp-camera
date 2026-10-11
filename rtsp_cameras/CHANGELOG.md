@@ -19,10 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `devicePTZControl` is an argument of that session, not a message of its own, and no shape
   of a stop is written by the protocol layer. The payloads of a command - the stop of the
   bundled profile is a `SetPreset` and a `GotoPreset` - are therefore sent on the connection
-  of their login, and the sequence number of the protocol counts them. The session was the
-  one thing that no measurement had held equal to the vendor before; whether a device honours
-  a stop inside that session is what the pair probe of `.smoke/dvrip-protocol.md` asks, and
-  the answer decides whether the capture stays the stop of the profile.
+  of their login, and the sequence number of the protocol counts them. Measured afterwards on
+  the device of the test set: the session is **not** what decides whether a stop acts - the
+  direction at ``Step: 0`` is ignored inside the session of its move as well, and the stop of
+  the bundled profile holds the camera where it was released in either transport (one command
+  or two). What the single session buys is the second login and the deadline: the payloads of
+  a command share one connection, so the 25 s of ``DVRIP_TIMEOUT`` go to every answer instead
+  of to the whole sequence.
 - **The deadline of the DVRIP transport belongs to one answer, not to the whole command.**
   The device answers the `GotoPreset` that ends a stop only once the axis arrived, measured
   10 to 16 s, so a command of two payloads could spend the 25 s of `DVRIP_TIMEOUT` on its

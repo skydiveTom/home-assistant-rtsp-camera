@@ -229,15 +229,19 @@ DVRIP {"Command":"SetPreset","Preset":201,"Channel":1} DVRIP {"Command":"GotoPre
 
 One command may carry more than one DVRIP payload, and they are sent in that order - and
 since 0.3.12 **on one session**: the payloads of a command share the connection of their
-login, the way the vendor SDK keeps one session per camera. A device drives the axis of the
-session its move came in, so a stop that arrives on a connection of its own is answered and
-ignored (that is what every stop shape measured before 0.3.12 did). A held
+login, the way the vendor SDK keeps one session per camera. That is what the vendor does; it
+is *not* what makes a stop act - measured on the device of the test set, the direction at
+`Step: 0` is ignored on a connection of its own and inside the session of its move alike, and
+the capture of the profile holds the camera where it was released in either transport. A held
 arrow therefore moves the camera for as long as it is held and comes to rest where it stood
-when the key was released. The travel to the limit in between is what this device does with
-a move and cannot be avoided - a command that arrives while an axis moves is served *after*
-it - but the *position* the camera ends at follows the length of the press. Measured on the
-tilt of the camera of the test set (192.168.20.253, `.smoke/jog_probe.py`, the `vs top`
-column of its frames: 0 is the parked top, 59 to 75 the bottom limit):
+when the key was released - as long as the hold outlasts the moment this firmware needs to
+start a move (about 2.5 s). A shorter press leaves the axis where it stands, or lets the
+queued move run to the end of the axis: the capture then stores the position of the release
+*before* the axis left it. The travel to the limit in between is what this device does with a
+move and cannot be avoided - a command that arrives while an axis moves is served *after* it -
+but the *position* the camera ends at follows the length of the press. Measured on the tilt of
+the camera of the test set (192.168.20.253, `.smoke/jog_probe.py`, the `vs top` column of its
+frames: 0 is the parked top, 59 to 75 the bottom limit):
 
 | how long the arrow was held | where the camera came to rest |
 | --- | --- |
