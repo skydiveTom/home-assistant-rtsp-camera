@@ -31,6 +31,7 @@ exactly one place — the add-on panel.
 | `custom_components/rtsp_cameras/` | The **custom integration** that turns every camera into a `camera` entity (this is what HACS installs). |
 | `rtsp_cameras/custom_components/` | A copy of the integration shipped inside the add-on, because the add-on folder is the Docker build context. |
 | `scripts/sync_integration.ps1` | Keeps both integration copies identical (the test suite enforces it). |
+| `scripts/setup_ha_venv.ps1` | Builds the throw-away `.venv-ha` that runs `ha_tests` (on Windows with the `fcntl`/`resource` stand-ins written into it). |
 | `rtsp_cameras/tests/` | Unit tests for the API, storage, ffmpeg layer, translations and repository layout. |
 | `ha_tests/` | Integration tests that run a real Home Assistant core and prove cameras become `camera` entities. |
 
@@ -119,6 +120,17 @@ published by the add-on end up as `camera` entities:
 python -m venv .venv-ha
 .venv-ha/Scripts/python -m pip install pytest-homeassistant-custom-component av
 .venv-ha/Scripts/python -m pytest -c ha_tests/pytest.ini ha_tests
+```
+
+On Windows those three commands do not give you an environment the suite can
+use: before the first test runs, Home Assistant imports the Unix-only `fcntl`
+and `resource` modules, so `.venv-ha` has to carry a `sitecustomize.py` that
+stands in for them. `scripts/setup_ha_venv.ps1` creates the environment *and*
+writes that file; `-ShimOnly` rewrites only the file, in an environment that
+already exists:
+
+```powershell
+pwsh -File scripts/setup_ha_venv.ps1
 ```
 
 ## How it works

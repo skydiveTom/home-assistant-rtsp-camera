@@ -32,6 +32,7 @@ w panelu dodatku.
 | `custom_components/rtsp_cameras/` | **Integracja**, która zamienia każdą kamerę w encję `camera` (to instaluje HACS). |
 | `rtsp_cameras/custom_components/` | Kopia integracji wysyłana w obrazie dodatku (katalog dodatku jest kontekstem budowania Dockera). |
 | `scripts/sync_integration.ps1` | Utrzymuje identyczność obu kopii integracji (pilnuje tego zestaw testów). |
+| `scripts/setup_ha_venv.ps1` | Buduje jednorazowe `.venv-ha` do testów `ha_tests` (na Windows dopisuje do niego stand-iny `fcntl`/`resource`). |
 | `rtsp_cameras/tests/` | Testy API, magazynu danych, warstwy ffmpeg, tłumaczeń i struktury repozytorium. |
 | `ha_tests/` | Testy integracyjne na prawdziwym Home Assistant — dowodzą, że kamery stają się encjami `camera`. |
 
@@ -124,6 +125,17 @@ dodatek stają się encjami `camera`:
 python -m venv .venv-ha
 .venv-ha/Scripts/python -m pip install pytest-homeassistant-custom-component av
 .venv-ha/Scripts/python -m pytest -c ha_tests/pytest.ini ha_tests
+```
+
+Na Windows same te trzy polecenia nie dają środowiska, którego testy użyją:
+jeszcze przed pierwszym testem Home Assistant importuje moduły `fcntl` i
+`resource`, które istnieją tylko na Uniksie, więc `.venv-ha` musi nieść
+`sitecustomize.py`, który je zastępuje. `scripts/setup_ha_venv.ps1` tworzy
+środowisko *i* zapisuje ten plik; `-ShimOnly` odtwarza sam plik, w środowisku,
+które już istnieje:
+
+```powershell
+pwsh -File scripts/setup_ha_venv.ps1
 ```
 
 ### 4. Testy na prawdziwej kamerze (end-to-end)
