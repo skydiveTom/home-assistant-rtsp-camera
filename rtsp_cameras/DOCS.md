@@ -186,6 +186,15 @@ own - both `rtsp://user:pass@host/…` and the query style of many DVRs
 (`…/user=admin&password=secret&channel=1&stream=0.sdp`) are understood, including the
 channel. Only cameras with a different PTZ login need the fields filled in.
 
+**A command can name the credentials in two shapes.** `{username}` and `{password}` are
+percent encoded, so a space, a colon or an `&` inside them cannot break the query string.
+`{username_raw}` and `{password_raw}` are the strings as they were typed, which is what a
+CGI of the Xiongmai family compares against its own password: the snapshot API of the
+camera of the test set answers `401` to `password=Qwas123%24k` and `200` to
+`password=Qwas123$k`, and it does not accept Basic authentication either. A command of that
+family therefore has to ask for the raw form, for example
+`GET {base}/webcapture.jpg?command=snap&channel={channel}&user={username_raw}&password={password_raw}`.
+
 **The arrows move at their own speed.** *Speed* (1-8) is the speed of the whole camera,
 *Speed up/down* is the speed of the tilt and *Speed left/right* that of the pan. Both
 default to the general speed, so a camera configured before these fields existed moves as
@@ -218,7 +227,11 @@ axis included. The second payload drags the camera back to that position:
 DVRIP {"Command":"SetPreset","Preset":201,"Channel":1} DVRIP {"Command":"GotoPreset","Preset":201,"Channel":1}
 ```
 
-One command may carry more than one DVRIP payload, and they are sent in that order. A held
+One command may carry more than one DVRIP payload, and they are sent in that order - and
+since 0.3.12 **on one session**: the payloads of a command share the connection of their
+login, the way the vendor SDK keeps one session per camera. A device drives the axis of the
+session its move came in, so a stop that arrives on a connection of its own is answered and
+ignored (that is what every stop shape measured before 0.3.12 did). A held
 arrow therefore moves the camera for as long as it is held and comes to rest where it stood
 when the key was released. The travel to the limit in between is what this device does with
 a move and cannot be avoided - a command that arrives while an axis moves is served *after*
@@ -241,7 +254,12 @@ The answer of a `GotoPreset` arrives **late**: the device replies only once the 
 arrived, measured 10 to 16 s after the command on the camera of the test set. The DVRIP
 transport therefore has a deadline of its own (25 s), where a vendor CGI keeps the short
 one - it answers within a second - so a stop that drags the camera back keeps its caller
-(this service call, the panel, an automation) busy that long. See the changelog of 0.3.9.
+(this service call, the panel, an automation) busy that long. That deadline belongs to a
+single answer since 0.3.12: the two payloads of the stop share one session and every one of
+them gets the full 25 s, so the answer of the second payload cannot run into the deadline
+of the first. The session is also what the vendor app keeps of a camera - one login, every
+command of that camera on it - and every stop shape that was measured on the device of the
+test set went out on a connection of its own. See the changelog of 0.3.9 and of 0.3.12.
 
 For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
 `GetProfiles` to the media service, takes the first profile token and fills the

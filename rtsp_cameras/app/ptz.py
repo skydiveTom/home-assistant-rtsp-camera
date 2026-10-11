@@ -8,7 +8,13 @@ Every PTZ command is a single string::
 The first word is the HTTP method (GET/POST/PUT), the second the URL and everything
 behind it the optional body. Placeholders in curly braces are filled in:
 
-* when a camera is stored: ``{base}``, ``{username}``, ``{password}``, ``{channel}``
+* when a camera is stored: ``{base}``, ``{channel}``, ``{port}``, ``{token}`` and the
+  credentials in **two shapes**: ``{username}``/``{password}`` percent encoded - a space or
+  a colon inside them cannot break the query string - and ``{username_raw}``/``{password_raw}``
+  as they are, for a CGI that compares what it gets against the password of the camera
+  itself. Measured on the Xiongmai camera of the test set: its
+  ``/webcapture.jpg?…&user=…&password=…`` answers **401** for ``%24`` where the password
+  holds a ``$`` and **200** for the same password sent as it is.
 * when a command is sent: ``{speed}``, ``{preset}``, ``{direction}``, ``{seconds}``
 
 ``{direction}`` is replaced with the value of ``stop_codes`` for the direction that
@@ -60,11 +66,13 @@ DEFAULT_CHANNEL = 1
 DEFAULT_DVRIP_PORT = 34567
 COMMAND_TIMEOUT = 6.0
 #: The DVRIP transport of the Xiongmai family answers a ``GotoPreset`` - the stop of the
-#: bundled profile, which drags the camera back to the preset a move stored - only once the
-#: axis arrived. Measured on the device of the test set: 10 to 16 s after the command,
+#: bundled profile, which drags the camera back to the position a move stored - only once
+#: the axis arrived. Measured on the device of the test set: 10 to 16 s after the command,
 #: where the timeout of a vendor CGI (``COMMAND_TIMEOUT``) reports a command that works as
-#: a failure and the camera stays where it was. The test mode keeps its short deadline: it
-#: asks a *stop* of a slot that is usually empty, and an empty slot is answered at once.
+#: a failure and the camera stays where it was. This is the deadline of *one answer*: the
+#: payloads of a command ride one session and every payload gets it (see
+#: ``dvrip.sequence_timeout``). The test mode keeps its short deadline: it asks a *stop*
+#: of a slot that is usually empty, and an empty slot is answered at once.
 DVRIP_TIMEOUT = 25.0
 
 ONVIF_DISCOVERY_TIMEOUT = 8.0
@@ -863,10 +871,17 @@ def normalize_ptz(raw: Any, stream_url: str) -> dict[str, Any] | None:
 
     profile_commands = PTZ_PROFILES[profile]["commands"]
     supplied = raw.get("commands") if isinstance(raw.get("commands"), Mapping) else {}
+    # Two shapes of the credentials. The encoded one survives a query string; the raw one
+    # is what a CGI of the Xiongmai family compares against the password of the camera -
+    # the snapshot API of the device of the test set answers 401 to ``password=Qwas123%24k``
+    # and 200 to ``password=Qwas123$k``. ``fill`` replaces whole names, so ``{password}``
+    # and ``{password_raw}`` cannot be confused with each other.
     values = {
         "base": base,
         "username": quote(username, safe=""),
         "password": quote(password, safe=""),
+        "username_raw": username,
+        "password_raw": password,
         "channel": str(channel),
         "port": str(port),
         "token": token,
@@ -1028,21 +1043,21 @@ async def async_send_detail(
 
     if method == "DVRIP":
         # A command may carry a second DVRIP payload behind its own, and the sender sends
-        # them in that order: the moves of the bundled profile store the position they
-        # start from first, which is what their stop returns to. Each payload goes over its
-        # own connection, and the first one that fails ends the sequence.
+        # them in that order: the stop of the bundled profile stores the position it is sent
+        # at first, which is what its ``GotoPreset`` returns to. Both payloads ride the
+        # *same* session, the way the vendor app keeps one session per camera - every stop
+        # shape that was measured on the device of the test set went out on a connection of
+        # its own - and the first payload that fails ends the sequence.
         rest = url if body is None else f"{url} {body.decode('utf-8', 'replace')}"
         payloads = dvrip_payloads(rest)
         if payloads is None:
             return None, "invalid_payload", ""
-        answer = ""
-        for payload in payloads:
-            ok, detail = await dvrip.async_send(
-                host, port, username, password, payload, timeout
-            )
-            answer = str(detail or answer)
-            if not ok:
-                return None, detail, answer
+        ok, detail = await dvrip.async_send_many(
+            host, port, username, password, payloads, timeout
+        )
+        answer = str(detail or "")
+        if not ok:
+            return None, detail, answer
         return LOGIN_OK, None, answer
 
     return await asyncio.to_thread(_send_blocking_detail, method, url, body, timeout)

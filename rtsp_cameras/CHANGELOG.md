@@ -4,6 +4,48 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.12] - 2026-10-11
+
+### Fixed
+
+- **A DVRIP command rides one session now.** Every shape of a stop that the vocabulary of
+  this family knows was measured against a moving axis on the device of the test set - a
+  `Stop` of any case, `StopTour`, an empty command name, a direction with `Step: 0`, the
+  nested `POINT` object of the vendor app, `AUX` off, a preset - and each of them was
+  answered with `Ret: 100` and ignored, while every one of those runs logged in *and
+  disconnected again for every single payload* (`.smoke/dvrip-protocol.md`). The vendor takes
+  the other way: the demo app of the family and `libFunSDK.so` keep **one session per
+  camera** and send the commands of that camera on it - the `stop` boolean of
+  `devicePTZControl` is an argument of that session, not a message of its own, and no shape
+  of a stop is written by the protocol layer. The payloads of a command - the stop of the
+  bundled profile is a `SetPreset` and a `GotoPreset` - are therefore sent on the connection
+  of their login, and the sequence number of the protocol counts them. The session was the
+  one thing that no measurement had held equal to the vendor before; whether a device honours
+  a stop inside that session is what the pair probe of `.smoke/dvrip-protocol.md` asks, and
+  the answer decides whether the capture stays the stop of the profile.
+- **The deadline of the DVRIP transport belongs to one answer, not to the whole command.**
+  The device answers the `GotoPreset` that ends a stop only once the axis arrived, measured
+  10 to 16 s, so a command of two payloads could spend the 25 s of `DVRIP_TIMEOUT` on its
+  first answer and report the second one as a `timeout` - `HTTP 500` in Home Assistant -
+  although the camera moved. Every payload of a command now gets that deadline of its own
+  (`dvrip.sequence_timeout`).
+
+## [0.3.11] - 2026-10-11
+
+### Fixed
+
+- **A PTZ command can ask for the password as it is.** The credentials of a command were
+  only available percent encoded (`{username}`, `{password}`), which keeps a query string
+  intact but is refused by a CGI that compares the string it receives with the password of
+  the camera. The new `{username_raw}` and `{password_raw}` are the values as they were
+  typed. Measured on the Xiongmai camera of the test set, through the HTTP surface of the
+  add-on: `GET /webcapture.jpg?command=snap&channel=1&user=borys&password=Qwas123%24k`
+  answers **401**, the same request with `password=Qwas123$k` answers **200** with a frame,
+  and `Authorization: Basic` is answered 401 as well - so the password of this family has
+  to travel in the query string and unchanged. Cameras whose commands are already stored
+  keep the text they carry; *Fill commands from the profile* or a re-save of the camera
+  writes it with the new placeholder.
+
 ## [0.3.10] - 2026-10-06
 
 ### Fixed

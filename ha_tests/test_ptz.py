@@ -558,19 +558,19 @@ async def test_dvrip_commands_go_through_the_tcp_client(hass, entry, monkeypatch
     """A DVRIP command is sent over TCP 34567, not over HTTP."""
     calls: list[dict[str, Any]] = []
 
-    async def fake_send(host, port, username, password, short, timeout=None):  # noqa: ANN001
+    async def fake_send_many(host, port, username, password, payloads, timeout=None):  # noqa: ANN001
         calls.append(
             {
                 "host": host,
                 "port": port,
                 "username": username,
                 "password": password,
-                "short": short,
+                "payloads": payloads,
             }
         )
         return True, None
 
-    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
+    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send_many", fake_send_many)
     await setup_camera(
         hass,
         entry,
@@ -593,29 +593,31 @@ async def test_dvrip_commands_go_through_the_tcp_client(hass, entry, monkeypatch
     )
 
     assert session.requests == [], "no HTTP request for a DVRIP camera"
-    assert len(calls) == 3, "the move and the two payloads of the automatic stop"
+    assert len(calls) == 2, "the move and the stop, one command each"
 
     move = calls[0]
     assert move["host"] == "10.0.0.5"
     assert move["port"] == 34567
     assert move["username"] == "admin"
     assert move["password"] == "secret"
-    assert move["short"]["Command"] == "DirectionLeft"
-    assert move["short"]["Step"] == 6, "0.75 of the camera scale (1-8)"
-    assert move["short"]["Channel"] == 1
+    assert len(move["payloads"]) == 1, "a move of this profile is one payload"
+    assert move["payloads"][0]["Command"] == "DirectionLeft"
+    assert move["payloads"][0]["Step"] == 6, "0.75 of the camera scale (1-8)"
+    assert move["payloads"][0]["Channel"] == 1
 
     # The stop is a *capture*: it stores the position it is sent at - the position of the
     # release - and returns to it. A dashboard that moves and stops therefore decides the
-    # distance with the pause between its two commands.
-    store = calls[1]
-    assert store["short"]["Command"] == "SetPreset", "the stop stores where the camera is"
-    assert store["short"]["Preset"] == 201, "the slot the profile reserves for the stop"
-    assert store["short"]["Channel"] == 1
-
-    stop = calls[2]
-    assert stop["short"]["Command"] == "GotoPreset", "the stop of the bundled profile"
-    assert stop["short"]["Preset"] == 201, "back to the position of the release"
-    assert stop["short"]["Channel"] == 1
+    # distance with the pause between its two commands. Both payloads ride **one** connection:
+    # the device drives the axis of the session its move came in, and a stop that arrives on
+    # a connection of its own is acknowledged and ignored.
+    stop = calls[1]
+    assert [one["Command"] for one in stop["payloads"]] == ["SetPreset", "GotoPreset"], (
+        "the stop stores where the camera is and returns to it"
+    )
+    assert [one["Preset"] for one in stop["payloads"]] == [201, 201], (
+        "the slot the profile reserves for the stop"
+    )
+    assert [one["Channel"] for one in stop["payloads"]] == [1, 1]
 
 
 async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
@@ -627,11 +629,11 @@ async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
     """
     calls: list[dict[str, Any]] = []
 
-    async def fake_send(host, port, username, password, short, timeout=None):  # noqa: ANN001
-        calls.append(short)
+    async def fake_send_many(host, port, username, password, payloads, timeout=None):  # noqa: ANN001
+        calls.append(payloads)
         return True, None
 
-    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
+    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send_many", fake_send_many)
     await setup_camera(hass, entry, commands=DVRIP_COMMANDS, stop_codes={"left": "DirectionLeft"})
 
     await hass.services.async_call(
@@ -641,20 +643,18 @@ async def test_dvrip_stop_needs_no_direction(hass, entry, monkeypatch):
         blocking=True,
     )
 
-    assert len(calls) == 2, "the capture of the position and the return to it"
-    assert calls[0]["Command"] == "SetPreset"
-    assert calls[0]["Preset"] == 201
-    assert calls[1]["Command"] == "GotoPreset"
-    assert calls[1]["Preset"] == 201
+    assert len(calls) == 1, "the capture of the position and the return to it, one command"
+    assert [one["Command"] for one in calls[0]] == ["SetPreset", "GotoPreset"]
+    assert [one["Preset"] for one in calls[0]] == [201, 201]
 
 
 async def test_dvrip_failure_is_reported(hass, entry, monkeypatch):
     """A refused DVRIP login raises a readable error."""
 
-    async def fake_send(host, port, username, password, short, timeout=None):  # noqa: ANN001
+    async def fake_send_many(host, port, username, password, payloads, timeout=None):  # noqa: ANN001
         return False, "login_failed_101"
 
-    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
+    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send_many", fake_send_many)
     await setup_camera(hass, entry, commands=DVRIP_COMMANDS)
 
     with pytest.raises(HomeAssistantError):
@@ -673,18 +673,18 @@ async def test_dvrip_waits_longer_than_a_vendor_cgi(hass, entry, monkeypatch):
     """
     timeouts: list[float | None] = []
 
-    async def fake_send(host, port, username, password, short, timeout=None):  # noqa: ANN001
+    async def fake_send_many(host, port, username, password, payloads, timeout=None):  # noqa: ANN001
         timeouts.append(timeout)
         return True, None
 
-    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send", fake_send)
+    monkeypatch.setattr("custom_components.rtsp_cameras.dvrip.async_send_many", fake_send_many)
     await setup_camera(hass, entry, commands=DVRIP_COMMANDS, stop_codes={"left": "DirectionLeft"})
 
     await hass.services.async_call(
         DOMAIN, "ptz", {"entity_id": "camera.front_door", "action": "left"}, blocking=True
     )
 
-    assert timeouts == [DVRIP_TIMEOUT_SECONDS] * 3, "the move and the two payloads of the stop"
+    assert timeouts == [DVRIP_TIMEOUT_SECONDS] * 2, "the move and the stop, one command each"
     assert DVRIP_TIMEOUT_SECONDS > PTZ_TIMEOUT_SECONDS, "a CGI keeps its short deadline"
 
 

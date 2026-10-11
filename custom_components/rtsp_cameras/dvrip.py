@@ -1,10 +1,15 @@
 """DVRIP (Xiongmai "Sofia") client of the RTSP Camera Manager integration.
 
 The add-on publishes PTZ commands for DVRs that have no HTTP interface at all; they
-speak this small binary protocol on TCP 34567. Every command logs in (the login of
-the RTSP URL is reused), sends the PTZ payload and disconnects again. The payload
-carries the message name twice (``Name`` and the key of the nested object), because
-that is how a device looks the structure up; a hand written payload that already
+speak this small binary protocol on TCP 34567. Every *command* logs in (the login of
+the RTSP URL is reused), sends **all of its payloads on that one session** and
+disconnects again. The session is what the stop of this family is about: the vendor app keeps
+one session per camera and sends every command of that camera on it, while every shape of a
+stop that was measured on the device of the test set went out **on a connection of its own**
+and was ignored while the axis moved. The payloads of a command therefore share the
+connection their login opened. The payload
+carries the message name twice (``Name`` and the key of the nested object),
+because that is how a device looks the structure up; a hand written payload that already
 carries ``Name`` is sent as it is.
 
 The framing and the login follow the vendor SDK (``libFunSDK.so`` of the Android
@@ -28,6 +33,7 @@ import hashlib
 import json
 import logging
 import struct
+from collections.abc import Sequence
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
@@ -174,6 +180,18 @@ def parse_payload(body: bytes) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def sequence_timeout(timeout: float, payloads: Sequence[Any]) -> float:
+    """Return the deadline of a whole command: one answer time for every payload.
+
+    ``timeout`` is what the caller allows for a *single* answer, and a device answers a
+    ``GotoPreset`` - the payload that ends the stop of the bundled profile - only once the
+    axis arrived (see ``DVRIP_TIMEOUT_SECONDS`` of ``const.py``). A command of two payloads
+    therefore gets its deadline twice; a deadline for the whole sequence would report the
+    second answer of a working command as a failure.
+    """
+    return float(timeout) * max(1, len(payloads))
+
+
 async def async_send(
     host: str,
     port: int,
@@ -183,11 +201,37 @@ async def async_send(
     timeout: float = DEFAULT_TIMEOUT,
 ) -> tuple[bool, str | None]:
     """Log in, send one PTZ command and return success plus an error message."""
+    return await async_send_many(host, port, username, password, [short], timeout=timeout)
+
+
+async def async_send_many(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    payloads: Sequence[dict[str, Any]],
+    timeout: float = DEFAULT_TIMEOUT,
+) -> tuple[bool, str | None]:
+    """Log in and send every payload of a command on that one session.
+
+    The session is what the vendor SDK keeps for a device - one login per camera, all of
+    its commands on that connection - and the stop of this family is why the integration
+    followed suit: every shape of a stop that the vocabulary knows was measured on a
+    connection of its own in the runs of the past and ignored while the axis moved (see
+    ``.smoke/dvrip-protocol.md``). The payloads of a command share the connection the login
+    opened here, and the sequence number of the protocol counts them.
+
+    ``timeout`` is the deadline of one answer; the command gets that much time per payload
+    (see :func:`sequence_timeout`).
+    """
     if not host:
         return False, "no_host"
+    if not payloads:
+        return False, "no_payload"
     try:
         return await asyncio.wait_for(
-            _async_session(host, port, username, password, short), timeout=timeout
+            _async_session(host, port, username, password, payloads),
+            timeout=sequence_timeout(timeout, payloads),
         )
     except TimeoutError:
         return False, "timeout"
@@ -196,12 +240,16 @@ async def async_send(
 
 
 async def _async_session(
-    host: str, port: int, username: str, password: str, short: dict[str, Any]
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    payloads: Sequence[dict[str, Any]],
 ) -> tuple[bool, str | None]:
     """Try the login types of the family until one of them is accepted."""
     result: tuple[bool, str | None] = (False, "login_failed")
     for login_type in LOGIN_TYPES:
-        ok, error, retry = await _async_try(host, port, username, password, short, login_type)
+        ok, error, retry = await _async_try(host, port, username, password, payloads, login_type)
         if not retry:
             return ok, error
         result = (ok, error)
@@ -213,10 +261,10 @@ async def _async_try(
     port: int,
     username: str,
     password: str,
-    short: dict[str, Any],
+    payloads: Sequence[dict[str, Any]],
     login_type: str,
 ) -> tuple[bool, str | None, bool]:
-    """Log in with one login type and send the PTZ command on the same connection.
+    """Log in with one login type and send the payloads of the command on that connection.
 
     The third value tells whether another login type is worth a try: a device that
     only dislikes the login type answers ``102`` or ``103`` and stays logged out.
@@ -236,17 +284,18 @@ async def _async_try(
             return False, f"login_failed_{ret}", ret in LOGIN_RETRY_CODES
         session = session_id(payload) or session
 
-        ptz = ptz_payload(short)
-        ptz["SessionID"] = f"0x{session:08X}"
-        writer.write(pack(MSG_PTZ_REQUEST, ptz, session=session, sequence=1))
-        await writer.drain()
+        for sequence, short in enumerate(payloads, start=1):
+            ptz = ptz_payload(short)
+            ptz["SessionID"] = f"0x{session:08X}"
+            writer.write(pack(MSG_PTZ_REQUEST, ptz, session=session, sequence=sequence))
+            await writer.drain()
 
-        message_id, _session, payload = await _async_read(reader)
-        if message_id != MSG_PTZ_RESPONSE:
-            return False, f"unexpected_reply_{message_id}", False
-        ret = result_code(payload)
-        if ret != LOGIN_OK:
-            return False, f"ptz_failed_{ret}", False
+            message_id, _session, payload = await _async_read(reader)
+            if message_id != MSG_PTZ_RESPONSE:
+                return False, f"unexpected_reply_{message_id}", False
+            ret = result_code(payload)
+            if ret != LOGIN_OK:
+                return False, f"ptz_failed_{ret}", False
         return True, None, False
     finally:
         writer.close()

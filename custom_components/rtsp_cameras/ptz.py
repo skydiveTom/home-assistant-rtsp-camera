@@ -261,15 +261,17 @@ async def _async_send_dvrip(command: str, config: PtzConfig | None) -> PtzOutcom
 
     A command may carry more than one payload, and they are sent in that order: the stop of
     the ``xiongmai_dvrip`` profile captures the position it is sent at first and returns to
-    it afterwards. Each payload goes over its own connection, and the first one that fails
-    ends the sequence.
+    it afterwards. The payloads of one command share the connection of their login - the way
+    the vendor SDK keeps one session per camera, and every stop shape that was measured on the
+    device of the test set went out on a connection of its own.
 
     The deadline is the long one of this transport (``DVRIP_TIMEOUT_SECONDS``): the device
     answers the ``GotoPreset`` of that stop only once the axis arrived - measured 10 to
-    16 s - and a shorter one would report a working command as a failure.
+    16 s - and a shorter one would report a working command as a failure. It belongs to a
+    single answer and is multiplied by the payloads of the command.
     """
-    from .dvrip import DEFAULT_PORT
-    from .dvrip import async_send as dvrip_send
+    from .dvrip import DEFAULT_PORT, sequence_timeout
+    from .dvrip import async_send_many as dvrip_send_many
 
     _method, payload, body = parse_command(command)
     rest = payload if body is None else f"{payload} {body.decode('utf-8', 'replace')}"
@@ -283,13 +285,10 @@ async def _async_send_dvrip(command: str, config: PtzConfig | None) -> PtzOutcom
     password = (config.password if config else "") or ""
     ok, error = True, None
     try:
-        async with asyncio.timeout(DVRIP_TIMEOUT_SECONDS):
-            for one in payloads:
-                ok, error = await dvrip_send(
-                    host, port, username, password, one, timeout=DVRIP_TIMEOUT_SECONDS
-                )
-                if not ok:
-                    break
+        async with asyncio.timeout(sequence_timeout(DVRIP_TIMEOUT_SECONDS, payloads)):
+            ok, error = await dvrip_send_many(
+                host, port, username, password, payloads, timeout=DVRIP_TIMEOUT_SECONDS
+            )
     except TimeoutError:
         return PtzOutcome(action=command, url="dvrip", error="timeout")
     if not ok:

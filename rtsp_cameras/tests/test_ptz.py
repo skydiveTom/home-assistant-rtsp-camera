@@ -32,6 +32,7 @@ from app.dvrip import (
     hash_password,
     pack,
     ptz_payload,
+    sequence_timeout,
     unpack,
 )
 from app.ptz import (
@@ -224,6 +225,36 @@ def test_credentials_are_encoded_and_hidden() -> None:
     assert masked is not None
     assert "pwd=***" in masked["commands"]["up"]
     assert "p w" not in json.dumps(masked)
+
+
+def test_the_raw_placeholders_keep_a_password_as_it_is() -> None:
+    """A CGI that compares the password itself gets the password, not an encoding of it.
+
+    The snapshot API of the Xiongmai family of the test set answers 401 to
+    ``password=Qwas123%24k`` and 200 to ``password=Qwas123$k``, so the encoded form that
+    keeps a query string intact is exactly what that family refuses.
+    """
+    config = normalize_ptz(
+        {
+            "profile": "custom",
+            "username": "borys",
+            "password": "Qwas123$k",
+            "commands": {
+                "up": "GET {base}/webcapture.jpg?command=snap&channel={channel}"
+                "&user={username_raw}&password={password_raw}",
+                "stop": "GET {base}/webcapture.jpg?command=snap&channel={channel}"
+                "&user={username}&password={password}",
+            },
+        },
+        "rtsp://10.0.0.4:554/stream",
+    )
+
+    assert config is not None
+    assert "user=borys&password=Qwas123$k" in config["commands"]["up"]
+    assert "user=borys&password=Qwas123%24k" in config["commands"]["stop"]
+    masked = public_config(config)
+    assert masked is not None
+    assert "Qwas123" not in json.dumps(masked), "the raw form is masked as well"
 
 
 def test_split_userinfo_moves_credentials_into_a_header() -> None:
@@ -1082,11 +1113,16 @@ class DvripCamera(socketserver.ThreadingTCPServer):
 
 
 class DvripHandler(socketserver.BaseRequestHandler):
-    """Handle one connection: login, then the PTZ command."""
+    """Handle one connection: the login, then every payload of the command.
+
+    A command of this family may carry more than one payload, and the client sends all of
+    them on the connection of their login - the session is what a device drives the axis of -
+    so this device answers PTZ messages until the client closes its end of the connection.
+    """
 
     def handle(self) -> None:
-        """Answer the two messages the client sends."""
-        _message_id, payload = read_message(self.request)
+        """Answer the login and every PTZ message that follows on that connection."""
+        _message_id, _session, payload = read_message(self.request)
         DvripCamera.logins.append(payload)
         DvripCamera.login = payload
         rejection = DvripCamera.reject_login_types.get(str(payload.get("LoginType")))
@@ -1100,9 +1136,15 @@ class DvripHandler(socketserver.BaseRequestHandler):
             reply(MSG_LOGIN_RESPONSE, {"Ret": 100, "SessionID": f"0x{DVRIP_SESSION:08X}"})
         )
 
-        message_id, payload = read_message(self.request)
-        DvripCamera.received.append({"message_id": message_id, "payload": payload})
-        self.request.sendall(reply(MSG_PTZ_RESPONSE, {"Ret": 100}))
+        while True:
+            try:
+                message_id, session, payload = read_message(self.request)
+            except AssertionError:  # the client is done with the command and disconnected
+                return
+            DvripCamera.received.append(
+                {"message_id": message_id, "session": session, "payload": payload}
+            )
+            self.request.sendall(reply(MSG_PTZ_RESPONSE, {"Ret": 100}))
 
 
 def _read_exactly(sock: Any, length: int) -> bytes:
@@ -1116,12 +1158,12 @@ def _read_exactly(sock: Any, length: int) -> bytes:
     return data
 
 
-def read_message(sock: Any) -> tuple[int, dict[str, Any]]:
-    """Read a complete DVRIP message from a socket."""
+def read_message(sock: Any) -> tuple[int, int, dict[str, Any]]:
+    """Read a complete DVRIP message: message id, session and payload."""
     header = _read_exactly(sock, DVRIP_HEADER_SIZE)
     parsed = struct.unpack(DVRIP_HEADER, header)
     body = _read_exactly(sock, parsed[7]) if parsed[7] else b"{}"
-    return parsed[6], json.loads(body.decode("utf-8"))
+    return parsed[6], parsed[2], json.loads(body.decode("utf-8"))
 
 
 def reply(message_id: int, payload: dict[str, Any]) -> bytes:
@@ -1196,8 +1238,8 @@ def test_dvrip_stop_captures_the_position_it_is_sent_at(dvrip_cam: int) -> None:
     This family has no payload that halts a moving axis, so the stop of its profile is a
     *capture*: the ``SetPreset`` of the release is served immediately - a running axis
     included - and the ``GotoPreset`` behind it brings the camera back to the position it
-    stored. Two payloads over two connections, no direction, measured on the device (see
-    the changelog of 0.3.10).
+    stored. Two payloads on **one session**, no direction, measured on the device (see the
+    changelog of 0.3.10 and of 0.3.12).
     """
     url = "rtsp://admin:secret@127.0.0.1:554/user=admin&password=secret&channel=1&stream=0.sdp"
     config = normalize_ptz({"profile": "xiongmai_dvrip", "port": dvrip_cam}, url)
@@ -1219,6 +1261,11 @@ def test_dvrip_stop_captures_the_position_it_is_sent_at(dvrip_cam: int) -> None:
     assert error is None, error
     assert status == LOGIN_OK
     assert len(DvripCamera.received) == 2
+    assert len(DvripCamera.logins) == 1, "both payloads ride the session of one login"
+    assert [one["session"] for one in DvripCamera.received] == [DVRIP_SESSION] * 2
+    assert [one["payload"]["SessionID"] for one in DvripCamera.received] == [
+        f"0x{DVRIP_SESSION:08X}"
+    ] * 2
     store = DvripCamera.received[0]
     assert store["payload"]["OPPTZControl"]["Command"] == "SetPreset"
     assert store["payload"]["OPPTZControl"]["Parameter"]["Preset"] == 201
@@ -1227,6 +1274,22 @@ def test_dvrip_stop_captures_the_position_it_is_sent_at(dvrip_cam: int) -> None:
     assert sent["payload"]["OPPTZControl"]["Command"] == "GotoPreset"
     assert sent["payload"]["OPPTZControl"]["Parameter"]["Preset"] == 201
     assert sent["payload"]["OPPTZControl"]["Parameter"]["Channel"] == 0
+
+
+def test_dvrip_gives_every_payload_of_a_command_its_own_deadline() -> None:
+    """The deadline of this transport belongs to an answer, not to the whole command.
+
+    The stop of the bundled profile is two payloads, and the second one - the
+    ``GotoPreset`` - is answered only once the axis arrived: measured 10 to 16 s on the
+    device of the test set. A single deadline for the sequence would cut that answer off and
+    report a command that works as a failure.
+    """
+    store = [{"Command": "SetPreset", "Preset": 201, "Channel": 1}]
+    both = [*store, {"Command": "GotoPreset", "Preset": 201, "Channel": 1}]
+
+    assert sequence_timeout(DVRIP_TIMEOUT, store) == DVRIP_TIMEOUT
+    assert sequence_timeout(DVRIP_TIMEOUT, both) == DVRIP_TIMEOUT * 2
+    assert sequence_timeout(DVRIP_TIMEOUT, []) == DVRIP_TIMEOUT, "a command without a payload"
 
 
 def test_dvrip_reports_a_refused_login(dvrip_cam: int) -> None:
@@ -1335,14 +1398,13 @@ def test_dvrip_asks_again_with_another_login_type(dvrip_cam: int) -> None:
 
     assert error is None, error
     assert status == LOGIN_OK
-    # The stop of this profile carries two payloads and every payload logs in on its own
-    # connection, so the device is asked with the next login type twice.
+    # The command is one login: a refused login type is asked again on a fresh connection,
+    # and the accepted one carries both payloads of the stop.
     assert [login["LoginType"] for login in DvripCamera.logins] == [
         "DVRIP-Web",
         "DVRIP-Mobile",
-        "DVRIP-Web",
-        "DVRIP-Mobile",
     ]
+    assert len(DvripCamera.received) == 2
 
 
 # ----------------------------------------------------------- PTZ test mode
