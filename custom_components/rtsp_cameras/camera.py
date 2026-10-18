@@ -247,9 +247,11 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         plain property (``_attr_use_stream_for_stills`` does not exist in 2026.9),
         and the first call right after a stream start often has no keyframe yet and
         returns ``None`` (Home Assistant then reports "Unable to get image").
-        Therefore the still is taken here: a keyframe is awaited with a bound
-        timeout, then whatever frame is available is used. A snapshot URL known to
-        the add-on has priority.
+        Therefore the still is taken here: the frame the running stream already
+        holds is used first (a stream that was open for a while answers at once),
+        then a keyframe is awaited with a bound timeout. Waiting first would cost
+        ``KEYFRAME_WAIT_SECONDS`` on every still of a stream that has been running
+        for hours. A snapshot URL known to the add-on has priority.
         """
         if self._definition.snapshot_url:
             image = await self._async_fetch_snapshot(self._definition.snapshot_url)
@@ -260,6 +262,10 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         if stream is None:
             return None
 
+        image = await stream.async_get_image(width=width, height=height)
+        if image is not None:
+            return image
+
         try:
             async with asyncio.timeout(KEYFRAME_WAIT_SECONDS):
                 image = await stream.async_get_image(
@@ -268,9 +274,6 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         except TimeoutError:
             _LOGGER.debug("No keyframe for %s within %s s", self.entity_id, KEYFRAME_WAIT_SECONDS)
             image = None
-
-        if image is None:
-            image = await stream.async_get_image(width=width, height=height)
         return image
 
     async def _async_fetch_snapshot(self, url: str) -> bytes | None:

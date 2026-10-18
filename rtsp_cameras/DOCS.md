@@ -155,9 +155,15 @@ exceptions). Check the codec in the camera tile of the add-on:
   download the integration **Diagnostics** (Settings → Devices & services → RTSP
   Camera Manager → ⋮ → Download diagnostics), which lists the checked file, the
   cameras and their (masked) stream URLs.
+- The first frame of a card costs a stream start: Home Assistant opens the RTSP session
+  of the camera when the first card asks for it (measured 2 to 9 s on the test set of this
+  project, a warm stream answers in a moment). The gear in the camera dialog - or
+  *Settings* of a camera card - has **Preload stream**: Home Assistant then keeps the
+  stream running, from its own start on, and the cards are live as soon as they are shown.
+  A camera whose RTSP server allows only a few sessions at a time should stay without it.
 - Still images (thumbnail, `camera.snapshot`) are taken from the live stream by the
-  integration - it waits up to 8 seconds for a keyframe. If a camera offers an HTTP
-  snapshot URL, enter it in the add-on: that snapshot is used first and is faster.
+  integration: the frame a running stream already holds answers at once, and only a stream
+  that was just started waits up to 8 seconds for its first keyframe.
 
 **PTZ (pan, tilt, zoom)**
 

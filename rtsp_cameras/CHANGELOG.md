@@ -4,6 +4,26 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-10-18
+
+### Fixed
+
+- **A still costs nothing while the stream is running.** The camera entity asked the stream
+  for the *next* keyframe first and only then used the frame that was already there - so
+  every still of a stream that had been open for hours waited the whole
+  `KEYFRAME_WAIT_SECONDS` (8 s) before it answered. Measured on the test set: 7.5 s for the
+  still behind `camera_proxy`, the picture a camera card and the entity thumbnail ask for
+  every few seconds. The frame a running stream already holds is used first now, and the
+  wait is left for a stream that was just started and has nothing to hand out yet. A
+  `camera.snapshot` in an automation answers at once instead of after eight seconds.
+
+### Changed
+
+- The documentation of the camera entity describes the new still and names the one thing a
+  card cannot do itself: *Preload stream* in the settings of the camera keeps the stream of
+  Home Assistant running, so the first frame does not wait for the RTSP session of the
+  camera (measured 2 to 9 s per cold start on the test set).
+
 ## [0.4.0] - 2026-10-11
 
 ### Added

@@ -87,11 +87,22 @@ def use_session(monkeypatch: pytest.MonkeyPatch, session: FakeSession) -> None:
 
 
 class FakeStream:
-    """Stand-in for ``homeassistant.components.stream.Stream``."""
+    """Stand-in for ``homeassistant.components.stream.Stream``.
 
-    def __init__(self, image: bytes | None = JPEG, delay: float = 0.0) -> None:
+    ``cached`` is what the stream hands out without waiting - ``None`` models a
+    stream that has not decoded a keyframe yet, which is the state right after a
+    start. ``image`` is what the wait for the next keyframe yields.
+    """
+
+    def __init__(
+        self,
+        image: bytes | None = JPEG,
+        delay: float = 0.0,
+        cached: bytes | None = None,
+    ) -> None:
         self.image = image
         self.delay = delay
+        self.cached = cached
         self.calls: list[bool] = []
 
     async def async_get_image(
@@ -102,8 +113,9 @@ class FakeStream:
     ) -> bytes | None:
         """Record how the image was requested."""
         self.calls.append(wait_for_next_keyframe)
-        if wait_for_next_keyframe:
-            await asyncio.sleep(self.delay)
+        if not wait_for_next_keyframe:
+            return self.cached
+        await asyncio.sleep(self.delay)
         return self.image
 
 
@@ -147,25 +159,45 @@ async def setup_camera(hass: HomeAssistant, entry: MockConfigEntry, **extra: Any
     return camera
 
 
-async def test_still_awaits_a_keyframe_from_the_stream(hass, entry, monkeypatch):
-    """The still is taken from the live stream, waiting for a keyframe."""
+async def test_still_of_a_warm_stream_answers_without_waiting(hass, entry, monkeypatch):
+    """A running stream already holds a keyframe: the still is taken at once.
+
+    Waiting for the *next* keyframe first would cost ``KEYFRAME_WAIT_SECONDS`` on
+    every still of a stream that has been running for hours - a camera card asks
+    for one every few seconds.
+    """
+    camera = await setup_camera(hass, entry)
+    stream = FakeStream(cached=JPEG)
+    monkeypatch.setattr(camera, "async_create_stream", stream_factory(stream))
+
+    assert await camera.async_camera_image() == JPEG
+    assert stream.calls == [False], "a warm stream must not be asked to wait"
+
+
+async def test_still_awaits_a_keyframe_when_the_stream_has_none(hass, entry, monkeypatch):
+    """A stream that was just started has no frame: the keyframe is awaited."""
     camera = await setup_camera(hass, entry)
     stream = FakeStream()
     monkeypatch.setattr(camera, "async_create_stream", stream_factory(stream))
 
     assert await camera.async_camera_image() == JPEG
-    assert stream.calls == [True], "the keyframe must be awaited first"
+    assert stream.calls == [False, True], "the last frame first, then the next keyframe"
 
 
-async def test_still_falls_back_when_no_keyframe_arrives(hass, entry, monkeypatch):
-    """A slow keyframe does not turn into 'Unable to get image'."""
+async def test_still_gives_up_when_no_keyframe_arrives(hass, entry, monkeypatch, caplog):
+    """A keyframe that never comes ends in no image instead of an endless wait."""
     camera = await setup_camera(hass, entry)
     stream = FakeStream(delay=5)
     monkeypatch.setattr(camera, "async_create_stream", stream_factory(stream))
     monkeypatch.setattr(camera_module, "KEYFRAME_WAIT_SECONDS", 0.05)
 
-    assert await camera.async_camera_image() == JPEG
-    assert stream.calls == [True, False], "after the timeout the last frame is used"
+    with caplog.at_level("DEBUG"):
+        assert await camera.async_camera_image() is None
+
+    assert stream.calls == [False, True]
+    assert any(
+        "No keyframe for camera.front_door" in record.message for record in caplog.records
+    )
 
 
 async def test_snapshot_url_has_priority(hass, entry, monkeypatch):
@@ -196,7 +228,7 @@ async def test_failing_snapshot_url_falls_back_to_the_stream(hass, entry, monkey
     with caplog.at_level("WARNING"):
         assert await camera.async_camera_image() == JPEG
 
-    assert stream.calls == [True]
+    assert stream.calls == [False, True]
     assert any("Snapshot of camera.front_door failed" in record.message for record in caplog.records)
 
 
@@ -212,5 +244,5 @@ async def test_error_status_of_the_snapshot_url_falls_back(hass, entry, monkeypa
     with caplog.at_level("WARNING"):
         assert await camera.async_camera_image() == JPEG
 
-    assert stream.calls == [True]
+    assert stream.calls == [False, True]
     assert any("returned HTTP 404" in record.message for record in caplog.records)
