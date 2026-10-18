@@ -111,6 +111,9 @@ Buttons:
 - **Quick preview** – live picture in a modal. The preview process runs inside
   the add-on and stops as soon as you close the window (at the latest after 45
   seconds without playback requests).
+- **Stream codec (ONVIF)** – reads the encoders of the camera and switches the codec of
+  one of them, so a sub stream that sends H.265 can be turned into H.264 without the app
+  of the vendor (see *The codec of a stream*).
 
 ### Which preview mode is used?
 
@@ -146,7 +149,8 @@ exceptions). Check the codec in the camera tile of the add-on:
 
 - `hevc`/`h265` → enter the **H.264 sub stream** of the camera in *Stream URL for
   Home Assistant* (for example `/Streaming/Channels/102` on Hikvision or
-  `subtype=1` on Dahua), or switch the camera itself to H.264.
+  `subtype=1` on Dahua), or switch the camera itself to H.264 - the camera editor
+  does the second one over ONVIF, see *The codec of a stream* below.
 - Also use **TCP** as the RTSP transport: the integration passes it on to Home
   Assistant (`stream_options`), so Home Assistant does not lose UDP packets either
   (a video that only stutters or stays black in the card while the add-on preview
@@ -390,6 +394,58 @@ data:
 
 The preview window of the add-on shows a PTZ pad; hold an arrow to move, release to
 stop. The two speed fields next to it set the speed of the tilt and of the pan.
+
+### The codec of a stream (ONVIF)
+
+Home Assistant does not transcode an RTSP stream - it copies the packets of the camera
+into HLS - so the codec inside decides whether a browser plays it. A sub stream in
+**H.265** (`hvc1`) plays in Safari and on iOS, while Chrome, Edge and Firefox keep a
+spinner; the playlist names it (`CODECS="hvc1.1.6.L63"`). The lever is the camera, and
+the camera editor reaches it over ONVIF:
+
+1. Open the camera, expand **Stream codec (ONVIF)** and press **Read the encoders**. The
+   add-on asks the camera (`GetServices` → `GetVideoEncoderConfigurations` → `GetProfiles`)
+   and lists every encoder it has: token, codec, picture, frame rate, bit rate and the
+   keyframe interval, next to the profile (the stream) that uses it.
+2. Choose **H.264** for the encoder of the sub stream and press **Set codec**.
+3. The answer is the state the camera reports *after* the change: a write is only taken
+   as done when the next read shows the new codec (a device that acknowledges a change and
+   keeps its codec is not reported as a success).
+
+**Where the address and the credentials come from.** What the PTZ section of the same
+camera carries (HTTP address, user, password) is used first, otherwise the host and the
+credentials of the stream URL - so a camera that never used PTZ works as well. Type the
+HTTP address once into *HTTP address of the camera* when the ONVIF service does not answer
+on port 80.
+
+**Authentication.** Every request carries a WS-Security `UsernameToken` with a password
+digest, and the HTTP layer follows a Basic or Digest challenge on top of it. A firmware
+that refuses the header is asked again without it, so both kinds of device are reached.
+
+**The camera's own document is sent back.** `SetVideoEncoderConfiguration` is built from
+the configuration the camera handed out, with the encoding word changed and the block of
+the new codec filled in - multicast, session timeout and every rate control setting the
+add-on does not show survive, because a firmware that is strict about the schema drops its
+picture otherwise.
+
+**A device that refuses** answers with a SOAP fault and the panel shows its words, for
+example `ter:ActionNotSupported: Optional Action Not Implemented`. That is a camera whose
+media service is read only; its codec has to be changed in the web interface or the app of
+the vendor.
+
+The same two steps are endpoints, for a script or an automation of the add-on:
+
+```bash
+curl -X POST -H 'Content-Type: application/json' -d '{}' \
+     http://<add-on>/api/cameras/<id>/encoder/inspect
+curl -X POST -H 'Content-Type: application/json' \
+     -d '{"token": "V_ENC_001", "encoding": "H264"}' \
+     http://<add-on>/api/cameras/<id>/encoder
+```
+
+After the change the camera restarts that stream. Home Assistant reconnects within a
+minute, the `codec` attribute of the entity follows the next health check, and a browser
+that was watching the old stream needs a reload.
 
 **Brand assets (the icon in Home Assistant)**
 

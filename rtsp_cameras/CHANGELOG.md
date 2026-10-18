@@ -4,6 +4,40 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-18
+
+### Added
+
+- **The codec of a stream is switched from the panel now, over ONVIF.** Home Assistant does
+  not transcode an RTSP stream - it copies the packets of the camera into HLS - so a sub
+  stream that sends H.265 (`hvc1`) plays in Safari while Chrome, Edge and Firefox keep a
+  spinner. The camera editor has a *Stream codec (ONVIF)* section: it reads the encoders of
+  the camera (`GetServices`, `GetVideoEncoderConfigurations`, `GetProfiles`) and offers a
+  codec select per encoder, so the sub stream can be set to H.264 without the app of the
+  vendor. The address and the credentials come from the PTZ block of the camera, or from the
+  host and the credentials of the stream URL when the camera never used PTZ.
+- **Two endpoints behind it**: `POST /api/cameras/<id>/encoder/inspect` reads the encoders,
+  `POST /api/cameras/<id>/encoder` writes `{"token": …, "encoding": "H264"}`. The write is
+  answered with the state the camera reports *afterwards*: an encoder that already sends the
+  codec is not written again (`changed: false`), and a device that acknowledges the change and
+  keeps its codec is never reported as a success.
+- **The configuration of the camera is sent back, not rebuilt.** `SetVideoEncoderConfiguration`
+  is built from the document the camera handed out - deep copied, the encoding word replaced,
+  the block of the new codec filled in - so multicast, session timeout and every rate control
+  setting the panel does not show survive the write. Nine error codes name what went wrong
+  (`encoder_auth`, `encoder_fault`, `encoder_no_media`, `encoder_unreachable`, `encoder_timeout`,
+  `encoder_bad_url`, `encoder_bad_encoding`, `encoder_token_required`, `encoder_token_unknown`),
+  and a fault of the device is shown with its own words, e.g.
+  `ter:ActionNotSupported: Optional Action Not Implemented`.
+
+### Changed
+
+- **The ONVIF layer authenticates the way the specification asks for.** A SOAP request carries
+  a WS-Security `UsernameToken` with a password digest, and the HTTP layer follows a Basic or a
+  Digest challenge on top of it; a firmware that refuses the header is asked once more without
+  it. The read is bounded: a host that does not answer costs one timeout, not one per path, and
+  an address that cannot work (no scheme, no host) is refused before any socket is opened.
+
 ## [0.4.1] - 2026-10-18
 
 ### Fixed

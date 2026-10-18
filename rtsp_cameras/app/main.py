@@ -52,6 +52,21 @@ from .models import (
     validate_optional_stream_url,
     validate_stream_url,
 )
+from .onvif_media import (
+    REQUEST_ERRORS as ENCODER_REQUEST_ERRORS,
+)
+from .onvif_media import (
+    EncoderReport,
+)
+from .onvif_media import (
+    async_read as encoder_read,
+)
+from .onvif_media import (
+    async_set_encoding as encoder_write,
+)
+from .onvif_media import (
+    clamp_timeout as encoder_timeout,
+)
 from .ptz import (
     DEFAULT_DVRIP_PORT,
     DIRECTION_ACTIONS,
@@ -61,6 +76,8 @@ from .ptz import (
     STEP_AXES,
     async_discover_onvif_token,
     async_probe_ptz,
+    base_url_for,
+    credentials_from_url,
     first_free_step_slot,
     needs_direction,
     normalize_action,
@@ -110,6 +127,15 @@ API_ERRORS = (
     "supervisor_missing",
     "update_check_failed",
     "update_failed",
+    "encoder_bad_url",
+    "encoder_unreachable",
+    "encoder_timeout",
+    "encoder_auth",
+    "encoder_no_media",
+    "encoder_fault",
+    "encoder_bad_encoding",
+    "encoder_token_required",
+    "encoder_token_unknown",
 )
 
 
@@ -627,6 +653,110 @@ async def ptz_onvif_discover(request: Request) -> JSONResponse:
             {"ok": False, "error": "ptz_onvif_failed", "detail": error}, status_code=502
         )
     return _ok(token=token)
+
+
+# ---------------------------------------------------------------- stream codec
+# The codec of a stream is the one thing a browser cares about: Home Assistant copies the
+# packets of the camera into HLS, and Chrome, Edge and Firefox show a spinner instead of a
+# picture when those packets are H.265. These two endpoints read the encoders of the camera
+# through ONVIF and switch the codec of one of them, so the panel needs no vendor app.
+def _encoder_credentials(camera: Camera, body: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Return the HTTP address and the credentials of the ONVIF service of a camera.
+
+    What the panel typed wins, then what the camera carries for PTZ (the same ONVIF
+    account), then the host and the credentials of the stream URL - so a camera that was
+    never configured for PTZ still has its encoders read.
+    """
+    ptz = camera.ptz or {}
+    base_url = str(body.get("base_url") or ptz.get("base_url") or "").strip()
+    username = str(body.get("username") or ptz.get("username") or "").strip()
+    password = str(body.get("password") or ptz.get("password") or "")
+    if not base_url:
+        base_url = base_url_for(camera.url)
+    if not username:
+        url_user, url_password, _channel = credentials_from_url(camera.url)
+        username = url_user
+        password = password or url_password
+    return base_url, username, password
+
+
+async def _encoder_failure(
+    request: Request, code: str, detail: str = "", status: int = 502
+) -> JSONResponse:
+    """Answer an encoder request with a translated error and the words of the device."""
+    context = _ctx(request)
+    language = await _language(request)
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": code,
+            "message": context.translations.error(code, language, detail=detail),
+            "detail": detail,
+        },
+        status_code=status,
+    )
+
+
+async def _encoder_answer(request: Request, report: EncoderReport) -> JSONResponse:
+    """Answer with the encoders of the camera, or with the reason there are none."""
+    if report.ok:
+        return _ok(encoder=report.to_dict())
+    status = 400 if report.error in ENCODER_REQUEST_ERRORS else 502
+    return await _encoder_failure(
+        request, report.error or "encoder_fault", report.detail, status
+    )
+
+
+async def camera_encoder_read(request: Request) -> JSONResponse:
+    """Read the encoders of a camera: the codec every stream of it sends."""
+    context = _ctx(request)
+    camera = context.store.get(request.path_params["camera_id"])
+    if camera is None:
+        return await _error(request, "not_found", 404)
+
+    body = await _json_body(request)
+    base_url, username, password = _encoder_credentials(camera, body)
+    report = await encoder_read(
+        base_url,
+        username=username,
+        password=password,
+        timeout=encoder_timeout(body.get("timeout")),
+    )
+    return await _encoder_answer(request, report)
+
+
+async def camera_encoder_write(request: Request) -> JSONResponse:
+    """Switch the codec of one encoder of a camera and report the new state.
+
+    The camera answers the change with the picture it sends from now on, so the endpoint
+    reads the encoders again before it answers: a device that acknowledges the write and
+    keeps its codec is what makes a panel that trusts the acknowledgement lie.
+    """
+    context = _ctx(request)
+    camera = context.store.get(request.path_params["camera_id"])
+    if camera is None:
+        return await _error(request, "not_found", 404)
+
+    body = await _json_body(request)
+    base_url, username, password = _encoder_credentials(camera, body)
+    report = await encoder_write(
+        base_url,
+        token=body.get("token"),
+        encoding=body.get("encoding"),
+        username=username,
+        password=password,
+        timeout=encoder_timeout(body.get("timeout")),
+    )
+    if report.ok and report.changed:
+        # The codec a camera sends is part of what the integration publishes; the health
+        # check of the add-on reads it again within a minute.
+        _LOGGER.info(
+            "encoder %s of %s switched to %s",
+            body.get("token"),
+            camera.id,
+            body.get("encoding"),
+        )
+    return await _encoder_answer(request, report)
 
 
 def _probe_timeout(value: Any) -> float:
@@ -1483,6 +1613,12 @@ def create_app(settings: Settings | None = None) -> Starlette:
         Route("/api/cameras/{camera_id}/ptz", camera_ptz, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz/steps", camera_ptz_steps, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz/probe", ptz_probe, methods=["POST"]),
+        Route(
+            "/api/cameras/{camera_id}/encoder/inspect",
+            camera_encoder_read,
+            methods=["POST"],
+        ),
+        Route("/api/cameras/{camera_id}/encoder", camera_encoder_write, methods=["POST"]),
         Route("/api/ptz/profiles", ptz_profiles),
         Route("/api/ptz/probe", ptz_probe, methods=["POST"]),
         Route("/api/ptz/onvif/discover", ptz_onvif_discover, methods=["POST"]),

@@ -282,6 +282,29 @@
           <p class="note note--tight" data-i18n="ptz.hold_hint"></p>
         </details>
 
+        <details class="ptz" id="encoder-config">
+          <summary class="ptz__summary">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M4 12h10M4 17h7"></path>
+              <circle cx="18" cy="17" r="3"></circle>
+            </svg>
+            <span data-i18n="encoder.title"></span>
+            <span class="chip chip--mono" id="encoder-state"></span>
+          </summary>
+
+          <p class="note note--tight" data-i18n="encoder.hint"></p>
+          <div class="ptz__actions">
+            <button type="button" class="btn btn--ghost" id="btn-encoder-read">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3a9 9 0 1 1-9 9"></path><path d="M3 12l3-3M3 12l3 3"></path>
+              </svg>
+              <span data-i18n="encoder.read"></span>
+            </button>
+          </div>
+          <div class="probe" id="encoder-result" hidden></div>
+          <p class="note note--tight" data-i18n="encoder.note"></p>
+        </details>
+
         <div class="probe" id="probe-result" hidden></div>
 
         <footer class="modal__foot">

@@ -62,6 +62,12 @@ exactly one place — the add-on panel.
   step field walks several - a bounded move, without the travel to a limit. Home Assistant
   receives `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset.
+- **The codec of a stream, without the vendor app** – a camera whose sub stream sends
+  **H.265** stays black in Chrome, Edge and Firefox, because Home Assistant copies the
+  stream without transcoding. The camera editor reads the encoders of the camera over
+  **ONVIF** and switches the one of the sub stream to H.264 - the configuration the camera
+  handed out is sent back with one word changed, and the answer is the codec the camera
+  reports afterwards.
 - **Live in seconds** – adding, renaming, disabling or deleting a camera is picked
   up by Home Assistant within seconds, without a restart and without YAML.
 - **Self-updating** – the Settings tab checks for a new add-on version on demand

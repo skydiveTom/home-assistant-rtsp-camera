@@ -1219,6 +1219,31 @@ select:focus {
   margin: 10px 0 4px;
 }
 
+/* Encoder / codec: one card per stream of the camera, with the codec select of it. */
+.encoder {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.encoder__used {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.encoder__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.encoder__actions select {
+  min-width: 110px;
+}
+
 /* PTZ test mode: the address of the camera and the button that asks every vendor
    variant which one moves it. */
 .ptz__test {

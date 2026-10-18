@@ -755,6 +755,7 @@
     document.getElementById('btn-save').textContent = camera ? t('camera.save_changes') : t('camera.save');
     document.getElementById('btn-preview-form').hidden = !camera;
     renderPtzForm(camera);
+    resetEncoderBox();
     const probeBox = document.getElementById('probe-result');
     probeBox.hidden = true;
     probeBox.replaceChildren();
@@ -1112,6 +1113,170 @@
       box.replaceChildren(
         el('p', { class: 'probe__error', text: errorText(code) + errorDetail(err) }),
       );
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  /* ------------------------------------------------- stream codec (ONVIF) */
+  /* Home Assistant copies the stream of the camera into HLS without transcoding, so the
+     codec inside decides whether a browser plays it. The encoders of the camera are read
+     over ONVIF and the codec of one of them is switched - the panel needs no vendor app. */
+  const ENCODER_CHOICES = ['H264', 'H265'];
+
+  function resetEncoderBox() {
+    const box = document.getElementById('encoder-result');
+    box.hidden = true;
+    box.replaceChildren();
+    document.getElementById('encoder-state').textContent = t('encoder.state_none');
+  }
+
+  function encoderBody() {
+    /* The HTTP address and the credentials of the PTZ section are the ONVIF account of
+       the camera, so what the user typed there is sent along. The add-on falls back to
+       the host and the credentials of the stream URL when nothing is typed. */
+    const body = {};
+    const base = document.getElementById('field-ptz-base').value.trim();
+    const username = document.getElementById('field-ptz-username').value.trim();
+    const password = document.getElementById('field-ptz-password').value;
+    if (base) body.base_url = base;
+    if (username) body.username = username;
+    if (password) body.password = password;
+    return body;
+  }
+
+  function encoderStateLabel(configurations) {
+    const codecs = [];
+    (configurations || []).forEach((item) => {
+      if (item.encoding && codecs.indexOf(item.encoding) < 0) codecs.push(item.encoding);
+    });
+    return codecs.length ? codecs.join(' + ') : t('encoder.state_none');
+  }
+
+  function encoderPicture(item) {
+    if (!item.width || !item.height) return '—';
+    const picture = item.width + '×' + item.height;
+    return item.fps ? picture + ' @ ' + item.fps + ' fps' : picture;
+  }
+
+  function encoderProfiles(report, item) {
+    return (report.profiles || [])
+      .filter((profile) => profile.encoder === item.token)
+      .map((profile) => profile.name)
+      .join(', ');
+  }
+
+  function renderEncoders(box, camera, report) {
+    const configurations = report.configurations || [];
+    document.getElementById('encoder-state').textContent = encoderStateLabel(configurations);
+    box.hidden = false;
+    box.className = 'probe ' + (configurations.length ? 'probe--ok' : 'probe--err');
+    const children = [
+      el('p', {
+        class: 'probe__head',
+        text: configurations.length
+          ? t('encoder.found', { count: configurations.length })
+          : t('encoder.none'),
+      }),
+    ];
+
+    configurations.forEach((item) => {
+      const pairs = [
+        [t('encoder.token'), item.token],
+        [t('camera.codec'), item.encoding || '—'],
+        [t('camera.resolution'), encoderPicture(item)],
+        [
+          t('camera.bitrate'),
+          item.bitrate ? t('camera.bitrate_value', { value: item.bitrate }) : '—',
+        ],
+        [t('encoder.gop'), item.gop ? String(item.gop) : '—'],
+      ];
+      const used = encoderProfiles(report, item);
+      const select = el(
+        'select',
+        { 'aria-label': t('encoder.set') },
+        ENCODER_CHOICES.map((codec) => el('option', { value: codec, text: codec })),
+      );
+      select.value = ENCODER_CHOICES.indexOf(item.encoding) >= 0 ? item.encoding : 'H264';
+      const button = el('button', { type: 'button', class: 'btn btn--ghost' }, [
+        el('span', { text: t('encoder.set') }),
+      ]);
+      button.addEventListener('click', () => {
+        applyEncoding(camera, item.token, select.value, button);
+      });
+
+      children.push(
+        el('div', { class: 'encoder' }, [
+          el(
+            'dl',
+            { class: 'probe__grid' },
+            pairs.flatMap(([label, value]) => [
+              el('dt', { text: label }),
+              el('dd', { text: value }),
+            ]),
+          ),
+          used ? el('p', { class: 'encoder__used', text: t('encoder.used_by', { profiles: used }) }) : null,
+          el('div', { class: 'encoder__actions' }, [select, button]),
+        ]),
+      );
+    });
+    box.replaceChildren(...children);
+  }
+
+  async function readEncoders() {
+    const camera = state.editing ? cameraById(state.editing) : null;
+    const box = document.getElementById('encoder-result');
+    const button = document.getElementById('btn-encoder-read');
+    if (!camera) {
+      toast(t('camera.preview_save_first'), 'err');
+      return;
+    }
+    button.disabled = true;
+    box.hidden = false;
+    box.className = 'probe';
+    box.replaceChildren(el('p', { class: 'probe__head', text: t('encoder.reading') }));
+    try {
+      const data = await api('api/cameras/' + camera.id + '/encoder/inspect', {
+        method: 'POST',
+        body: encoderBody(),
+      });
+      renderEncoders(box, camera, data.encoder || {});
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : 'encoder_fault';
+      document.getElementById('encoder-state').textContent = t('encoder.state_none');
+      box.className = 'probe probe--err';
+      box.replaceChildren(
+        el('p', { class: 'probe__error', text: errorText(code) + errorDetail(err) }),
+      );
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function applyEncoding(camera, token, encoding, button) {
+    const box = document.getElementById('encoder-result');
+    button.disabled = true;
+    try {
+      const data = await api('api/cameras/' + camera.id + '/encoder', {
+        method: 'POST',
+        body: Object.assign(encoderBody(), { token, encoding }),
+      });
+      const report = data.encoder || {};
+      renderEncoders(box, camera, report);
+      toast(
+        report.changed
+          ? t('encoder.applied', { encoding })
+          : t('encoder.unchanged', { encoding }),
+        'ok',
+      );
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : 'encoder_fault';
+      box.hidden = false;
+      box.className = 'probe probe--err';
+      box.replaceChildren(
+        el('p', { class: 'probe__error', text: errorText(code) + errorDetail(err) }),
+      );
+      toast(errorText(code), 'err');
     } finally {
       button.disabled = false;
     }
@@ -1903,6 +2068,7 @@
     document.getElementById('btn-test-form').addEventListener('click', () => testForm(false));
     document.getElementById('btn-ptz-fill').addEventListener('click', () => fillPtzFromProfile());
     document.getElementById('btn-ptz-onvif').addEventListener('click', discoverOnvif);
+  document.getElementById('btn-encoder-read').addEventListener('click', readEncoders);
     document.getElementById('btn-ptz-test').addEventListener('click', testPtz);
     document.getElementById('btn-ptz-detect').addEventListener('click', detectPtz);
     document.getElementById('field-ptz-profile').addEventListener('change', () => {
