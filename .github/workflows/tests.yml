@@ -28,7 +28,29 @@ jobs:
         run: python -m ruff check .
 
       - name: Unit tests
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=pytest-report.xml
+
+      - name: Report the unit test failures
+        if: failure()
+        run: |
+          python - <<'PY'
+          import pathlib
+          import xml.etree.ElementTree as ET
+
+          report = pathlib.Path("pytest-report.xml")
+          if not report.exists():
+              print("::error::the unit tests left no report")
+              raise SystemExit(0)
+          found = False
+          for case in ET.parse(report).getroot().iter("testcase"):
+              for node in [*case.findall("failure"), *case.findall("error")]:
+                  found = True
+                  detail = " | ".join((node.text or "").strip().splitlines()[-4:])
+                  location = f"file={case.get('file') or 'rtsp_cameras'},line={case.get('line') or 1}"
+                  print(f"::error {location},title={case.get('name') or 'test'}::{detail[:900]}")
+          if not found:
+              print("::error::the report holds no failing test case")
+          PY
 
       - name: Check the sync of the integration copy
         run: python -m pytest -q rtsp_cameras/tests/test_manifests.py
