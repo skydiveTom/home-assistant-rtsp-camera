@@ -32,6 +32,7 @@ exactly one place — the add-on panel.
 | `rtsp_cameras/custom_components/` | A copy of the integration shipped inside the add-on, because the add-on folder is the Docker build context. |
 | `scripts/sync_integration.ps1` | Keeps both integration copies identical (the test suite enforces it). |
 | `scripts/setup_ha_venv.ps1` | Builds the throw-away `.venv-ha` that runs `ha_tests` (on Windows with the `fcntl`/`resource` stand-ins written into it). |
+| `scripts/publish_releases.ps1` | Publishes the GitHub release of every tagged version that has none, with the changelog section of that version as its notes (`-DryRun` prints the plan). |
 | `rtsp_cameras/tests/` | Unit tests for the API, storage, ffmpeg layer, translations and repository layout. |
 | `ha_tests/` | Integration tests that run a real Home Assistant core and prove cameras become `camera` entities. |
 
