@@ -19,6 +19,7 @@ exactly what a panel that trusts the acknowledgement shows as done.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -335,6 +336,30 @@ def codec_spelling(current: str, wanted: str) -> str:
     return wanted
 
 
+#: The request types a write of the family may hide behind: the reference client uses one
+#: number for a read and for a write, other clients write on a number of their own.
+WRITE_MESSAGE_IDS = (dvrip.MSG_CONFIG_REQUEST, 1040, 1044)
+#: How long the camera of a change is given to restart the encoder before the read back.
+WRITE_SETTLE_SECONDS = 0.4
+
+
+def write_variants(raw_encoding: str, wanted: str) -> list[tuple[int, str]]:
+    """Return the (request type, codec word) pairs a camera of the family may accept.
+
+    The family is not consistent about either one: a firmware answers the same request
+    type for a read and for a write while another writes on a type of its own, and the
+    codec word is spelled ``H.265`` by one device and ``H265`` by the next. Every pair is
+    tried - and the device is read back after each - so the panel names the pair that
+    really changed the camera instead of guessing it.
+    """
+    words = [codec_spelling(raw_encoding, wanted)]
+    if wanted not in words:
+        words.append(wanted)
+    return [
+        (message_id, word) for message_id in WRITE_MESSAGE_IDS for word in words
+    ]
+
+
 def _follow(document: Any, path: tuple[str | int, ...]) -> dict[str, Any] | None:
     """Return the object a path points at, or None when the document has no such object."""
     node: Any = document
@@ -548,44 +573,75 @@ async def async_write(
         # Nothing to do: the camera already sends the codec the panel asked for.
         return _report(configurations, host, port)
 
-    # The document the camera handed out goes back with one word replaced.
-    written = {key: _copy(value) for key, value in (document or {}).items()}
-    video = _follow(written, current["path"])
-    if video is None:
-        return EncoderReport(error=ERROR_FAULT, detail="no_video_block", backend=BACKEND)
-    _set_codec(video, codec_spelling(current.get("raw_encoding", ""), wanted))
+    # The document the camera handed out goes back with one word replaced - and the pair
+    # of request type and codec word a camera accepts is found by trying them, because a
+    # device that answers "done" and keeps its codec is what the family does too.
+    attempts: list[str] = []
+    for message_id, word in write_variants(current.get("raw_encoding", ""), wanted):
+        written = {key: _copy(value) for key, value in (document or {}).items()}
+        video = _follow(written, current["path"])
+        if video is None:
+            return EncoderReport(
+                error=ERROR_FAULT, detail="no_video_block", backend=BACKEND
+            )
+        _set_codec(video, word)
 
-    _answer, error = await dvrip.async_config(
-        host,
-        port,
-        username,
-        password,
-        CONFIG_NAME,
-        document=written,
-        timeout=timeout,
-        extra={"Channel": max(0, channel - 1)},
-    )
-    if error is not None:
-        return _failure(error)
-
-    # The write is only real when the device reports it: read the camera again.
-    after_document, after_failure = await _read_document(
-        host, port, username, password, channel, timeout
-    )
-    if after_failure is not None:
-        # The camera accepted the write but would not answer the read: report what the
-        # panel asked for, and say that it could not be confirmed.
-        return _report(configurations, host, port, changed=True, detail="reread_failed")
-    after = parse_encoders(after_document or {}, channel, preferred=stream)
-    confirmed = next(
-        (item for item in after if item["token"] == wanted_token), None
-    )
-    if confirmed is None:
-        return _report(configurations, host, port, changed=True, detail="reread_failed")
-    if confirmed["encoding"] != wanted:
-        return EncoderReport(
-            error=ERROR_FAULT,
-            detail=f"codec_kept_{confirmed['encoding'] or 'unknown'}",
-            backend=BACKEND,
+        _answer, error = await dvrip.async_config(
+            host,
+            port,
+            username,
+            password,
+            CONFIG_NAME,
+            document=written,
+            timeout=timeout,
+            extra={"Channel": max(0, channel - 1)},
+            message_id=message_id,
         )
-    return _report(after, host, port, changed=True)
+        if error is not None:
+            attempts.append(f"{message_id}:{word}={error}")
+            continue
+
+        after_document, after_failure = await _read_after_write(
+            host, port, username, password, channel, timeout
+        )
+        if after_failure is not None:
+            # The camera accepted the write but would not answer the read: report what the
+            # panel asked for, and say that it could not be confirmed.
+            return _report(
+                configurations, host, port, changed=True, detail="reread_failed"
+            )
+        after = parse_encoders(after_document or {}, channel, preferred=stream)
+        confirmed = next((item for item in after if item["token"] == wanted_token), None)
+        if confirmed is not None and confirmed["encoding"] == wanted:
+            return _report(
+                after, host, port, changed=True, detail=f"write={message_id}:{word}"
+            )
+        kept = confirmed["encoding"] if confirmed is not None else "unknown"
+        attempts.append(f"{message_id}:{word}=kept_{kept or 'unknown'}")
+
+    return EncoderReport(
+        error=ERROR_FAULT,
+        detail=("codec_kept_" + ";".join(attempts))[:MAX_DESCRIPTION],
+        backend=BACKEND,
+    )
+
+
+async def _read_after_write(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    channel: int,
+    timeout: float,
+) -> tuple[dict[str, Any] | None, EncoderReport | None]:
+    """Read the encoders again, giving the camera a moment to restart that encoder."""
+    failure: EncoderReport | None = None
+    for _attempt in range(2):
+        await asyncio.sleep(WRITE_SETTLE_SECONDS)
+        document, failure = await _read_document(
+            host, port, username, password, channel, timeout
+        )
+        if failure is None:
+            return document, None
+    return None, failure
+

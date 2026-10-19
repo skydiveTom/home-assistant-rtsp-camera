@@ -4,6 +4,20 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2026-10-18
+
+### Fixed
+
+- **A write that the camera acknowledges and ignores is no longer the end of the story.**
+  The firmware of the test set answers a `SetConfig` with `Ret: 100` and keeps its codec,
+  so the pair of request type and codec word a camera accepts is now found by trying
+  them - `1042`/`1040`/`1044` with `H.265` and `H265` - and reading the device back after
+  every attempt. The answer names the pair that really changed the camera
+  (`write=1040:H264`), and a camera that keeps its codec through all of them reports every
+  attempt (`codec_kept_1042:H.264=kept_H265;…`) instead of a single word.
+- The read back waits a moment before it asks, because a camera restarts the encoder of a
+  stream it just changed.
+
 ## [0.5.8] - 2026-10-18
 
 ### Fixed

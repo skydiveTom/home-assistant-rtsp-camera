@@ -35,6 +35,8 @@ from tests.helpers import add_camera
 DVRIP_HEADER = "<BB2xIIBBHI"
 DVRIP_HEADER_SIZE = struct.calcsize(DVRIP_HEADER)
 DVRIP_SESSION = 0x2C
+#: The request types the family uses for a configuration document.
+CONFIG_IDS = (MSG_CONFIG_REQUEST, 1040, 1044)
 
 
 def avenc_document(main: str = "H265", extra: str = "H265") -> dict[str, Any]:
@@ -173,12 +175,19 @@ class FakeXmCamera(socketserver.ThreadingTCPServer):
     """Fake Xiongmai device: it logs in and answers the ``AVEnc`` document."""
 
     allow_reuse_address = True
+    #: A handler waiting on a socket the test left open must not keep the suite alive.
+    daemon_threads = True
+    block_on_close = False
     document: dict[str, Any] = {}
     requests: list[dict[str, Any]] = []
     logins: list[dict[str, Any]] = []
     #: A device that acknowledges a write and keeps its setting.
     keep_codec = False
     fail_login = False
+    #: A device that takes a write only on this request type and with this codec word
+    #: (``""`` means every write is taken).
+    accept_message_id = MSG_CONFIG_REQUEST
+    accept_word = ""
     #: When set, the answer carries these keys instead of the document.
     answer: dict[str, Any] | None = None
 
@@ -215,14 +224,14 @@ class FakeXmHandler(socketserver.BaseRequestHandler):
             FakeXmCamera.requests.append(
                 {"message_id": message_id, "session": session, "payload": payload}
             )
-            if message_id != MSG_CONFIG_REQUEST:
+            if message_id not in CONFIG_IDS:
                 self.request.sendall(reply(MSG_CONFIG_RESPONSE, {"Ret": 102}))
                 continue
             if payload.get("Name") != xm_media.CONFIG_NAME:
                 self.request.sendall(reply(MSG_CONFIG_RESPONSE, {"Ret": 607}))
                 continue
             if xm_media.CONFIG_NAME in payload:
-                if not FakeXmCamera.keep_codec:
+                if _write_taken(message_id, payload) and not FakeXmCamera.keep_codec:
                     FakeXmCamera.document = copy.deepcopy(payload[xm_media.CONFIG_NAME])
                 self.request.sendall(reply(MSG_CONFIG_RESPONSE, {"Ret": 100}))
                 continue
@@ -232,6 +241,14 @@ class FakeXmHandler(socketserver.BaseRequestHandler):
             else:
                 answer[xm_media.CONFIG_NAME] = copy.deepcopy(FakeXmCamera.document)
             self.request.sendall(reply(MSG_CONFIG_RESPONSE, answer))
+
+
+def _write_taken(message_id: int, payload: dict[str, Any]) -> bool:
+    """Return True when the device of the test set takes this write."""
+    if message_id != FakeXmCamera.accept_message_id:
+        return False
+    word = FakeXmCamera.accept_word
+    return not word or word in json.dumps(payload)
 
 
 def _read_exactly(sock: Any, length: int) -> bytes:
@@ -270,6 +287,8 @@ def xm_cam_fixture() -> Iterator[int]:
     FakeXmCamera.logins = []
     FakeXmCamera.keep_codec = False
     FakeXmCamera.fail_login = False
+    FakeXmCamera.accept_message_id = MSG_CONFIG_REQUEST
+    FakeXmCamera.accept_word = ""
     FakeXmCamera.answer = None
     server = FakeXmCamera()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -765,7 +784,27 @@ def test_write_reports_a_camera_that_keeps_its_codec(xm_cam: int) -> None:
 
     assert report.ok is False
     assert report.error == "encoder_fault"
-    assert report.detail == "codec_kept_H265"
+    assert report.detail.startswith("codec_kept_")
+    assert "kept_H265" in report.detail
+
+
+def test_write_tries_the_pairs_a_camera_may_accept(xm_cam: int) -> None:
+    """A device that takes only one request type and one spelling is still switched."""
+    FakeXmCamera.document = avenc_channel_document()
+    FakeXmCamera.accept_message_id = 1040
+    FakeXmCamera.accept_word = "H264"
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    assert report.detail == "write=1040:H264"
+    document = FakeXmCamera.document
+    assert document["Encode"][0]["ExtraFormat"]["Video"]["Compression"] == "H264"
 
 
 # ------------------------------------------------------------------ endpoints

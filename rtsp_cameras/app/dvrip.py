@@ -327,6 +327,7 @@ async def async_config(
     document: dict[str, Any] | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     extra: dict[str, Any] | None = None,
+    message_id: int = MSG_CONFIG_REQUEST,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Read (no ``document``) or write one configuration document of a camera.
 
@@ -337,6 +338,8 @@ async def async_config(
 
     ``extra`` adds fields the device wants next to the name (the configuration commands
     of this family are per channel, so a camera with more than one carries ``Channel``).
+    ``message_id`` is the request type: a family that hides a different write path behind
+    another number is asked with that one (see ``xm_media.write_variants``).
     """
     if not host:
         return None, "no_host"
@@ -344,7 +347,9 @@ async def async_config(
         return None, "no_name"
     try:
         return await asyncio.wait_for(
-            _async_config_session(host, port, username, password, name, document, extra),
+            _async_config_session(
+                host, port, username, password, name, document, extra, message_id
+            ),
             timeout=float(timeout),
         )
     except TimeoutError:
@@ -361,6 +366,7 @@ async def _async_config_session(
     name: str,
     document: dict[str, Any] | None,
     extra: dict[str, Any] | None,
+    message_id: int = MSG_CONFIG_REQUEST,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Log in and read or write one configuration document on that one session."""
     failure: tuple[dict[str, Any] | None, str | None] = (None, "login_failed")
@@ -380,9 +386,9 @@ async def _async_config_session(
                 payload[key] = value
             if document is not None:
                 payload[name] = document
-            writer.write(pack(MSG_CONFIG_REQUEST, payload, session=session, sequence=1))
+            writer.write(pack(message_id, payload, session=session, sequence=1))
             await writer.drain()
-            message_id, _session, answer = await _async_read(reader)
+            answer_id, _session, answer = await _async_read(reader)
         finally:
             writer.close()
             try:
@@ -390,13 +396,27 @@ async def _async_config_session(
             except (OSError, RuntimeError):  # pragma: no cover - closing can fail
                 pass
 
-        if message_id not in (MSG_CONFIG_REQUEST, MSG_CONFIG_RESPONSE):
-            return None, f"unexpected_reply_{message_id}"
+        if not _is_config_answer(answer_id, message_id):
+            return None, f"unexpected_reply_{answer_id}"
         ret = result_code(answer)
         if ret != LOGIN_OK:
             return None, f"config_failed_{ret}"
         return answer, None
     return failure
+
+
+def _is_config_answer(answer_id: int, message_id: int) -> bool:
+    """Return True when a reply belongs to a configuration request.
+
+    The devices answer a request with the next number, and the family is not strict about
+    it: the reference client sends and reads on the request number itself.
+    """
+    return answer_id in (
+        message_id,
+        message_id + 1,
+        MSG_CONFIG_REQUEST,
+        MSG_CONFIG_RESPONSE,
+    )
 
 
 async def _async_login(

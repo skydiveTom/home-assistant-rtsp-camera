@@ -873,11 +873,12 @@ async def camera_encoder_write(request: Request) -> JSONResponse:
         # The codec a camera sends is part of what the integration publishes; the health
         # check of the add-on reads it again within a minute.
         _LOGGER.info(
-            "encoder %s of %s switched to %s over %s",
+            "encoder %s of %s switched to %s over %s (%s)",
             body.get("token"),
             camera.id,
             body.get("encoding"),
             report.backend,
+            report.detail or "plain",
         )
     return await _encoder_answer(request, report)
 
