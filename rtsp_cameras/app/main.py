@@ -714,19 +714,17 @@ def _stream_hint(url: str) -> str:
 
 def _xm_target(
     camera: Camera, body: Mapping[str, Any]
-) -> tuple[str, int, int, str, str, str]:
-    """Return host, DVRIP port, channel, stream and credentials of a camera.
+) -> tuple[str, int, str, str, str]:
+    """Return host, DVRIP port, stream and credentials of a camera.
 
-    Port and channel are what the PTZ section of the camera stores (the same device, the
-    same account); a camera that was never configured for PTZ falls back to the host and
-    the credentials of its stream URL, which ``_encoder_credentials`` resolves.
+    The port is what the PTZ section of the camera stores (the same device, the same
+    account); a camera that was never configured for PTZ falls back to the host and the
+    credentials of its stream URL, which ``_encoder_credentials`` resolves.
     """
     base_url, username, password = _encoder_credentials(camera, body)
     host = urlsplit(base_url).hostname or ""
-    ptz = camera.ptz or {}
-    port = _optional_int(ptz.get("port")) or DEFAULT_DVRIP_PORT
-    channel = _optional_int(ptz.get("channel")) or 1
-    return host, port, channel, _stream_hint(camera.url), username, password
+    port = _optional_int((camera.ptz or {}).get("port")) or DEFAULT_DVRIP_PORT
+    return host, port, _stream_hint(camera.url), username, password
 
 
 async def _encoder_read_report(
@@ -749,13 +747,12 @@ async def _encoder_read_report(
         if onvif.ok or source == "onvif":
             return onvif
 
-    host, port, channel, preferred, username, password = _xm_target(camera, body)
+    host, port, preferred, username, password = _xm_target(camera, body)
     vendor = await xm_media.async_read(
         host,
         port=port,
         username=username,
         password=password,
-        channel=channel,
         preferred=preferred,
         timeout=timeout,
     )
@@ -781,7 +778,7 @@ async def _encoder_write_report(
     encoding = body.get("encoding")
 
     async def over_vendor() -> EncoderReport:
-        host, port, channel, _stream, username, password = _xm_target(camera, body)
+        host, port, _stream, username, password = _xm_target(camera, body)
         return await xm_media.async_write(
             host,
             token=token,
@@ -789,7 +786,6 @@ async def _encoder_write_report(
             port=port,
             username=username,
             password=password,
-            channel=channel,
             timeout=timeout,
         )
 

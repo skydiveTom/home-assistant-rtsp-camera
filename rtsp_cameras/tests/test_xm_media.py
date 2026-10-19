@@ -302,14 +302,16 @@ def xm_cam_fixture() -> Iterator[int]:
 
 
 # ------------------------------------------------------------------- parsing
-def test_token_names_its_channel_and_stream() -> None:
+def test_token_names_its_group_stream_and_entry() -> None:
     """A token of the vendor protocol round trips through its parser."""
-    token = xm_media.token_of(2, "extra")
+    token = xm_media.token_of(2, "extra", 3)
 
-    assert token == "xm:2:extra"
-    assert xm_media.parse_token(token) == (2, "extra")
+    assert token == "xm:2:extra:3"
+    assert xm_media.parse_token(token) == (2, "extra", 3)
     assert xm_media.parse_token("VideoEncoder_1") is None
-    assert xm_media.parse_token("xm:1:snapshot") is None
+    assert xm_media.parse_token("xm:1:snapshot:1") is None
+    assert xm_media.parse_token("xm:1:main") is None
+    assert xm_media.parse_token("xm:1:main:x") is None
     assert xm_media.parse_token(None) is None
 
 
@@ -332,13 +334,13 @@ def test_read_reports_every_stream_of_the_camera(xm_cam: int) -> None:
     assert report.backend == "xm"
     assert report.media_url == f"dvrip://127.0.0.1:{xm_cam}"
     tokens = [item["token"] for item in report.configurations]
-    assert tokens == ["xm:1:main", "xm:1:extra"]
+    assert tokens == ["xm:1:main:1", "xm:1:extra:1"]
     main, extra = report.configurations
     assert main["encoding"] == "H265"
     assert (main["width"], main["height"]) == (1280, 720)
     assert main["gop"] == 50
     assert main["bitrate"] == 4096
-    assert extra["name"] == "Sub stream"
+    assert extra["name"] == "Sub stream 1/1"
     assert (extra["width"], extra["height"]) == (640, 360)
     assert report.to_dict()["backend"] == "xm"
 
@@ -353,9 +355,9 @@ def test_read_understands_the_encode_list_layout(xm_cam: int) -> None:
 
     assert report.ok is True
     tokens = [item["token"] for item in report.configurations]
-    assert tokens == ["xm:1:extra", "xm:1:main", "xm:1:third"]
+    assert tokens == ["xm:1:extra:2", "xm:1:main:1", "xm:1:third:3"]
     extra = report.configurations[0]
-    assert extra["name"] == "Sub stream"
+    assert extra["name"] == "Sub stream 1/2"
     assert (extra["width"], extra["height"]) == (640, 360)
     assert [item["encoding"] for item in report.configurations] == ["H265", "H265", "H264"]
 
@@ -366,7 +368,7 @@ def test_write_understands_the_encode_list_layout(xm_cam: int) -> None:
 
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:2", encoding="H264"
         )
     )
 
@@ -406,7 +408,7 @@ def test_write_keeps_the_spelling_of_the_codec_key(xm_cam: int) -> None:
 
     asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:2", encoding="H264"
         )
     )
 
@@ -425,7 +427,7 @@ def test_read_finds_the_video_fields_one_level_down(xm_cam: int) -> None:
 
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:2", encoding="H264"
         )
     )
 
@@ -449,7 +451,7 @@ def test_read_accepts_another_name_of_the_codec_field(xm_cam: int) -> None:
 
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
         )
     )
 
@@ -500,7 +502,7 @@ def test_write_keeps_the_dotted_spelling_of_the_camera(xm_cam: int) -> None:
 
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
         )
     )
 
@@ -523,22 +525,21 @@ def test_read_reports_the_shape_of_streams_without_a_codec(xm_cam: int) -> None:
     assert report.to_dict()["shape"].startswith("Encode[2]{Resolution}")
 
 
-def test_read_understands_the_per_channel_lists(xm_cam: int) -> None:
-    """A block that is a list over channels is read at the entry of that channel."""
+def test_read_lists_every_entry_of_the_per_channel_lists(xm_cam: int) -> None:
+    """Every entry of a list over the channels is offered, with its group and index."""
     FakeXmCamera.document = avenc_group_document()
 
-    first = asyncio.run(
-        xm_media.async_read("127.0.0.1", port=xm_cam, channel=1, preferred="extra")
-    )
-    second = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam, channel=2))
+    report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
 
-    assert first.ok is True
-    assert [item["token"] for item in first.configurations] == ["xm:1:extra", "xm:1:main"]
-    main = first.configurations[1]
-    assert (main["width"], main["height"]) == (1920, 1080)
-    assert main["gop"] == 50
-    assert main["bitrate"] == 4096
-    assert second.configurations[0]["gop"] == 40
+    assert report.ok is True
+    assert len(report.configurations) == 18
+    first = report.configurations[0]
+    assert first["token"] == "xm:1:main:1"
+    assert (first["width"], first["height"]) == (1920, 1080)
+    assert first["gop"] == 50
+    by_token = {item["token"]: item for item in report.configurations}
+    assert by_token["xm:1:main:2"]["gop"] == 40
+    assert by_token["xm:2:main:1"]["gop"] == 51
 
 
 def test_write_understands_the_per_channel_lists(xm_cam: int) -> None:
@@ -547,7 +548,7 @@ def test_write_understands_the_per_channel_lists(xm_cam: int) -> None:
 
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
         )
     )
 
@@ -561,32 +562,35 @@ def test_write_understands_the_per_channel_lists(xm_cam: int) -> None:
     assert document["Encode"][0]["SnapFormat"][0]["Video"]["Compression"] == "H265"
 
 
-def test_read_finds_the_streams_of_the_configured_channel(xm_cam: int) -> None:
-    """A list of channels is read at the entry of the camera's own channel."""
+def test_read_lists_every_channel_of_the_document(xm_cam: int) -> None:
+    """A list of channels is listed channel by channel, with the same tokens."""
     FakeXmCamera.document = avenc_channel_document()
 
-    first = asyncio.run(
-        xm_media.async_read("127.0.0.1", port=xm_cam, channel=1, preferred="extra")
-    )
-    second = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam, channel=2))
+    report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
 
-    assert first.ok is True
-    assert [item["token"] for item in first.configurations] == ["xm:1:extra", "xm:1:main"]
-    assert (first.configurations[1]["width"], first.configurations[1]["height"]) == (
-        1920,
-        1080,
-    )
-    assert [item["token"] for item in second.configurations] == ["xm:2:main", "xm:2:extra"]
-    assert second.configurations[0]["gop"] == 40
+    assert report.ok is True
+    tokens = [item["token"] for item in report.configurations]
+    assert tokens == [
+        "xm:1:main:1",
+        "xm:1:extra:1",
+        "xm:2:main:1",
+        "xm:2:extra:1",
+        "xm:3:main:1",
+        "xm:3:extra:1",
+    ]
+    by_token = {item["token"]: item for item in report.configurations}
+    main = by_token["xm:1:main:1"]
+    assert (main["width"], main["height"]) == (1920, 1080)
+    assert by_token["xm:2:main:1"]["gop"] == 40
 
 
-def test_write_changes_only_the_configured_channel(xm_cam: int) -> None:
+def test_write_changes_only_the_entry_it_read(xm_cam: int) -> None:
     """The codec word lands in the block of that channel and nothing else changes."""
     FakeXmCamera.document = avenc_channel_document()
 
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
         )
     )
 
@@ -608,14 +612,14 @@ def test_read_lists_the_stream_of_the_url_first(xm_cam: int) -> None:
     assert [item["stream"] for item in report.configurations] == ["extra", "main"]
 
 
-def test_read_asks_for_the_configured_channel(xm_cam: int) -> None:
-    """The configuration commands of the family are per channel, numbered from zero."""
-    asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam, channel=3))
+def test_read_asks_for_the_document_of_the_device(xm_cam: int) -> None:
+    """The document is asked for the first channel and carries every entry anyway."""
+    asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
 
     request = FakeXmCamera.requests[0]
     assert request["message_id"] == MSG_CONFIG_REQUEST
     assert request["payload"]["Name"] == xm_media.CONFIG_NAME
-    assert request["payload"]["Channel"] == 2
+    assert request["payload"]["Channel"] == 0
     assert request["payload"]["SessionID"] == f"0x{DVRIP_SESSION:08X}"
 
 
@@ -703,7 +707,7 @@ def test_write_switches_one_stream_and_reads_it_back(xm_cam: int) -> None:
     """The write changes one codec word and the re-read confirms it."""
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
         )
     )
 
@@ -715,14 +719,14 @@ def test_write_switches_one_stream_and_reads_it_back(xm_cam: int) -> None:
     assert document["ExtraFormat"]["Video"]["Compression"] == "H264"
     assert document["MainFormat"]["Video"]["Compression"] == "H265"
     encodings = {item["token"]: item["encoding"] for item in report.configurations}
-    assert encodings == {"xm:1:main": "H265", "xm:1:extra": "H264"}
+    assert encodings == {"xm:1:main:1": "H265", "xm:1:extra:1": "H264"}
 
 
 def test_write_keeps_everything_it_did_not_model(xm_cam: int) -> None:
     """The document goes back whole: only the codec word changes."""
     asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
         )
     )
 
@@ -739,7 +743,7 @@ def test_write_reports_a_codec_the_camera_already_sends(xm_cam: int) -> None:
     """Nothing is written when the camera already sends the codec."""
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H265"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H265"
         )
     )
 
@@ -764,7 +768,7 @@ def test_write_refuses_an_unknown_codec(xm_cam: int) -> None:
     """Only the two codecs the panel offers are written."""
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H266"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H266"
         )
     )
 
@@ -778,7 +782,7 @@ def test_write_reports_a_camera_that_keeps_its_codec(xm_cam: int) -> None:
 
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
         )
     )
 
@@ -796,7 +800,7 @@ def test_write_tries_the_pairs_a_camera_may_accept(xm_cam: int) -> None:
 
     report = asyncio.run(
         xm_media.async_write(
-            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
         )
     )
 
@@ -835,7 +839,7 @@ def test_endpoint_reads_the_encoders_over_the_vendor_protocol(
     encoder = response.json()["encoder"]
     assert encoder["backend"] == "xm"
     tokens = [item["token"] for item in encoder["configurations"]]
-    assert tokens == ["xm:1:extra", "xm:1:main"]
+    assert tokens == ["xm:1:extra:1", "xm:1:main:1"]
 
 
 def test_endpoint_falls_back_to_the_vendor_protocol(
@@ -875,7 +879,7 @@ def test_endpoint_routes_a_vendor_token_to_the_vendor_protocol(
 
     response = client.post(
         f"/api/cameras/{camera['id']}/encoder",
-        json={"token": "xm:1:extra", "encoding": "H264"},
+        json={"token": "xm:1:extra:1", "encoding": "H264"},
     )
 
     assert response.status_code == 200, response.text

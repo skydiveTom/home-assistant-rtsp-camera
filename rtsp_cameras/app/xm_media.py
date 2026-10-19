@@ -187,112 +187,99 @@ def _shape(value: Any, depth: int) -> str:
     return ""
 
 
-def token_of(channel: int, stream: str) -> str:
-    """Return the token the panel sees for one stream of a camera."""
-    return f"xm:{channel}:{stream}"
+def token_of(group: int, stream: str, index: int) -> str:
+    """Return the token the panel sees for one encoder of a document."""
+    return f"{BACKEND}:{group}:{stream}:{index}"
 
 
-def parse_token(token: Any) -> tuple[int, str] | None:
-    """Return channel and stream of a token, or None when it is not one of ours."""
+def parse_token(token: Any) -> tuple[int, str, int] | None:
+    """Return group, stream and index of a token, or None when it is not one of ours."""
     parts = str(token or "").strip().split(":")
-    if len(parts) != 3 or parts[0] != BACKEND:
+    if len(parts) != 4 or parts[0] != BACKEND:
         return None
-    channel = _int(parts[1])
+    group = _int(parts[1])
     stream = parts[2].strip().lower()
-    if channel is None or stream not in {item[1] for item in STREAMS}:
+    index = _int(parts[3])
+    if group is None or index is None or stream not in STREAM_NAMES:
         return None
-    return channel, stream
+    return group, stream, index
 
 
 def stream_blocks(
-    document: Mapping[str, Any], channel: int = 1
-) -> list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]]:
-    """Return stream, path and video fields of every stream the document carries.
+    document: Mapping[str, Any],
+) -> list[tuple[int, str, int, tuple[str | int, ...], Mapping[str, Any]]]:
+    """Return group, stream, index, path and video fields of every encoder of a document.
 
     Three layouts are known and all are read: a block per stream directly in the document
     (``MainFormat`` / ``ExtraFormat``), a list under ``Encode`` whose entries *are* the
-    streams, and a list under ``Encode`` whose entries are the *channels* - the firmware of
-    the test set keeps ``MainFormat`` / ``ExtraFormat`` inside every entry of it, so the
-    entry of the configured channel is the one that is read. The path points at the object
-    that holds ``Compression``, so the write puts the codec word where the device keeps it.
+    streams, and a list under ``Encode`` whose entries carry the blocks - and there a block
+    is itself a list, one entry for every variant the firmware keeps (the device of the
+    test set repeats the whole group three times). Every entry is offered to the panel, so
+    the one that feeds the RTSP URL is the one the user picks; the token names the group,
+    the stream and the entry inside it. The path points at the object that holds
+    ``Compression``, so the write puts the codec word where the device keeps it.
     """
-    blocks = _block_streams(document, channel)
-    if blocks:
-        return blocks
+    found = _entry_streams(document, ())
+    if found:
+        return [(1, stream, index, path, video) for stream, path, index, video in found]
 
     entries = document.get(ENCODE_KEY)
     if not isinstance(entries, list) or not entries:
         return []
 
-    # A list of channels: every entry carries the blocks of its own streams.
-    carrying = [
-        position
-        for position, entry in enumerate(entries)
-        if isinstance(entry, Mapping)
-        and any(isinstance(entry.get(key), Mapping) for key, _stream, _label in STREAMS)
-    ]
-    if carrying:
-        wanted = max(0, channel - 1)
-        position = wanted if wanted in carrying else carrying[0]
-        blocks = _block_streams(entries[position], channel, prefix=(ENCODE_KEY, position))
-        if blocks:
-            return blocks
-
-    # A list of groups: the blocks of a group are lists over the channels of the device.
-    for group, entry in enumerate(entries):
+    blocks: list[tuple[int, str, int, tuple[str | int, ...], Mapping[str, Any]]] = []
+    for group, entry in enumerate(entries, start=1):
         if not isinstance(entry, Mapping):
             continue
-        blocks = _block_streams(entry, channel, prefix=(ENCODE_KEY, group))
-        if blocks:
-            return blocks
+        blocks.extend(
+            (group, stream, index, path, video)
+            for stream, path, index, video in _entry_streams(
+                entry, (ENCODE_KEY, group - 1)
+            )
+        )
+    if blocks:
+        return blocks
 
-    for position, entry in enumerate(entries):
+    for position, entry in enumerate(entries, start=1):
         if not isinstance(entry, Mapping) or not entry:
             continue
         holder = _video_holder(entry)
         if holder is None:
             continue
         stream = (
-            STREAM_NAMES[position] if position < len(STREAM_NAMES) else str(position)
+            STREAM_NAMES[position - 1]
+            if position <= len(STREAM_NAMES)
+            else str(position)
         )
-        blocks.append((stream, (ENCODE_KEY, position, *holder[0]), holder[1]))
+        blocks.append(
+            (1, stream, position, (ENCODE_KEY, position - 1, *holder[0]), holder[1])
+        )
     return blocks
 
 
-def _block_streams(
-    document: Mapping[str, Any], channel: int = 1, prefix: tuple[str | int, ...] = ()
-) -> list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]]:
-    """Return the streams of a block layout (``MainFormat`` / ``ExtraFormat``).
-
-    A block is either the object of the stream or a *list* over the channels of the device
-    - the firmware of the test set keeps three entries in every block - so the entry of the
-    configured channel is taken from it.
-    """
-    blocks: list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]] = []
+def _entry_streams(
+    entry: Mapping[str, Any], prefix: tuple[str | int, ...] = ()
+) -> list[tuple[str, tuple[str | int, ...], int, Mapping[str, Any]]]:
+    """Return stream, path, index and video fields of every block of one document node."""
+    found: list[tuple[str, tuple[str | int, ...], int, Mapping[str, Any]]] = []
     for key, stream, _label in STREAMS:
-        block = document.get(key)
+        block = entry.get(key)
         path: tuple[str | int, ...] = (*prefix, key)
         if isinstance(block, list):
-            index = _list_index(block, channel)
-            if index is None:
-                continue
-            block = block[index]
-            path = (*path, index)
-        if not isinstance(block, Mapping):
-            continue
-        holder = _video_holder(block)
-        if holder is None:
-            continue
-        blocks.append((stream, (*path, *holder[0]), holder[1]))
-    return blocks
-
-
-def _list_index(entries: list[Any], channel: int) -> int | None:
-    """Return the entry of a per channel list, or the first one when the numbering differs."""
-    if not entries:
-        return None
-    wanted = max(0, channel - 1)
-    return wanted if wanted < len(entries) else 0
+            for index, item in enumerate(block, start=1):
+                if not isinstance(item, Mapping):
+                    continue
+                holder = _video_holder(item)
+                if holder is None:
+                    continue
+                found.append(
+                    (stream, (*path, index - 1, *holder[0]), index, holder[1])
+                )
+        elif isinstance(block, Mapping):
+            holder = _video_holder(block)
+            if holder is not None:
+                found.append((stream, (*path, *holder[0]), 1, holder[1]))
+    return found
 
 
 def _video_holder(
@@ -375,24 +362,23 @@ def _follow(document: Any, path: tuple[str | int, ...]) -> dict[str, Any] | None
     return node if isinstance(node, dict) else None
 
 
-def parse_encoders(
-    document: dict[str, Any], channel: int, preferred: str = ""
-) -> list[dict[str, Any]]:
-    """Read the streams of an ``AVEnc`` document.
+def parse_encoders(document: dict[str, Any], preferred: str = "") -> list[dict[str, Any]]:
+    """Read every encoder of an ``AVEnc`` document.
 
-    The stream the camera of the panel serves first (``preferred``, taken from the
-    ``stream=`` of its RTSP URL) is listed first, so the encoder the user has to change is
-    the one on top. The ``element`` of every entry is the object of the document that holds
-    the video fields: the write sends the document back with that one field replaced.
+    The stream the camera of the panel serves (``preferred``, taken from the ``stream=`` of
+    its RTSP URL) is listed first, so the encoder that has to change is near the top; the
+    rest follows by group and entry. The ``element`` of every entry is the object of the
+    document that holds the video fields - the write sends the document back with that one
+    field replaced.
     """
     configurations: list[dict[str, Any]] = []
-    for stream, path, video in stream_blocks(document, channel):
+    for group, stream, index, path, video in stream_blocks(document):
         width, height = _resolution(_value(video, "Resolution"))
         raw_encoding = _codec_of(video)
         configurations.append(
             {
-                "token": token_of(channel, stream),
-                "name": _stream_label(stream),
+                "token": token_of(group, stream, index),
+                "name": f"{_stream_label(stream)} {group}/{index}",
                 "use_count": None,
                 "encoding": normalize_encoding(raw_encoding) or raw_encoding,
                 "raw_encoding": raw_encoding,
@@ -406,11 +392,19 @@ def parse_encoders(
                 "profile": str(_value(video, "Profile") or "").strip(),
                 "element": video,
                 "stream": stream,
+                "group": group,
+                "index": index,
                 "path": path,
             }
         )
     if preferred:
-        configurations.sort(key=lambda item: item["stream"] != preferred)
+        configurations.sort(
+            key=lambda item: (
+                item["stream"] != preferred,
+                item["group"],
+                item["index"],
+            )
+        )
     return configurations
 
 
@@ -464,15 +458,19 @@ def _copy(value: Any) -> Any:
 
 
 # ------------------------------------------------------------------ reading
+#: The channel the document is asked for. The devices of the family answer the whole
+#: document of the device anyway, and every entry of it is offered to the panel.
+REQUEST_CHANNEL = 0
+
+
 async def _read_document(
     host: str,
     port: int,
     username: str,
     password: str,
-    channel: int,
     timeout: float,
 ) -> tuple[dict[str, Any] | None, EncoderReport | None]:
-    """Read the ``AVEnc`` document of one channel, or the failure of the read."""
+    """Read the ``AVEnc`` document of a camera, or the failure of the read."""
     answer, error = await dvrip.async_config(
         host,
         port,
@@ -480,7 +478,7 @@ async def _read_document(
         password,
         CONFIG_NAME,
         timeout=timeout,
-        extra={"Channel": max(0, channel - 1)},
+        extra={"Channel": REQUEST_CHANNEL},
     )
     if error is not None:
         return None, _failure(error)
@@ -501,19 +499,17 @@ async def async_read(
     port: int = DEFAULT_PORT,
     username: str = "",
     password: str = "",
-    channel: int = 1,
     preferred: str = "",
     timeout: float = dvrip.DEFAULT_TIMEOUT,
 ) -> EncoderReport:
     """Read the encoders of a camera: the codec every stream of it sends."""
     if not host:
         return EncoderReport(error=ERROR_BAD_URL, detail="", backend=BACKEND)
-    document, failure = await _read_document(
-        host, port, username, password, channel, timeout
-    )
+    document, failure = await _read_document(host, port, username, password, timeout)
     if failure is not None:
         return failure
-    configurations = parse_encoders(document or {}, channel, preferred)
+    configurations = parse_encoders(document or {}, preferred)
+
     if not configurations:
         return EncoderReport(
             error=ERROR_NO_MEDIA,
@@ -538,7 +534,6 @@ async def async_write(
     port: int = DEFAULT_PORT,
     username: str = "",
     password: str = "",
-    channel: int = 1,
     timeout: float = dvrip.DEFAULT_TIMEOUT,
 ) -> EncoderReport:
     """Switch the codec of one stream and report what the camera sends afterwards."""
@@ -555,15 +550,13 @@ async def async_write(
     parsed = parse_token(name)
     if parsed is None:
         return EncoderReport(error=ERROR_TOKEN_UNKNOWN, detail=name, backend=BACKEND)
-    token_channel, stream = parsed
+    group, stream, index = parsed
+    wanted_token = token_of(group, stream, index)
 
-    document, failure = await _read_document(
-        host, port, username, password, channel, timeout
-    )
+    document, failure = await _read_document(host, port, username, password, timeout)
     if failure is not None:
         return failure
-    configurations = parse_encoders(document or {}, channel)
-    wanted_token = token_of(token_channel, stream)
+    configurations = parse_encoders(document or {})
     current = next(
         (item for item in configurations if item["token"] == wanted_token), None
     )
@@ -594,7 +587,7 @@ async def async_write(
             CONFIG_NAME,
             document=written,
             timeout=timeout,
-            extra={"Channel": max(0, channel - 1)},
+            extra={"Channel": REQUEST_CHANNEL},
             message_id=message_id,
         )
         if error is not None:
@@ -602,7 +595,7 @@ async def async_write(
             continue
 
         after_document, after_failure = await _read_after_write(
-            host, port, username, password, channel, timeout
+            host, port, username, password, timeout
         )
         if after_failure is not None:
             # The camera accepted the write but would not answer the read: report what the
@@ -610,7 +603,7 @@ async def async_write(
             return _report(
                 configurations, host, port, changed=True, detail="reread_failed"
             )
-        after = parse_encoders(after_document or {}, channel, preferred=stream)
+        after = parse_encoders(after_document or {}, preferred=stream)
         confirmed = next((item for item in after if item["token"] == wanted_token), None)
         if confirmed is not None and confirmed["encoding"] == wanted:
             return _report(
@@ -631,16 +624,14 @@ async def _read_after_write(
     port: int,
     username: str,
     password: str,
-    channel: int,
     timeout: float,
 ) -> tuple[dict[str, Any] | None, EncoderReport | None]:
     """Read the encoders again, giving the camera a moment to restart that encoder."""
     failure: EncoderReport | None = None
     for _attempt in range(2):
         await asyncio.sleep(WRITE_SETTLE_SECONDS)
-        document, failure = await _read_document(
-            host, port, username, password, channel, timeout
-        )
+        document, failure = await _read_document(host, port, username, password, timeout)
+
         if failure is None:
             return document, None
     return None, failure

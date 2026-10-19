@@ -4,6 +4,21 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-18
+
+### Changed
+
+- **Every encoder entry a document carries is offered to the panel.** The firmware of the
+  test set repeats its blocks (`Encode[3]{MainFormat[3]{Video{…}}, ExtraFormat[3]{…}}`) and
+  only one of those entries feeds the RTSP URL, so guessing the entry changed a setting the
+  stream never used. The panel now lists them all with the group, the stream and the entry
+  inside it in the token (`xm:1:extra:2`), and the write follows exactly the entry that was
+  read. The token of 0.5.x (`xm:1:extra`) is gone with that - it can only be produced by a
+  read of the same version.
+- The read of the codec is one `H.264`/`H.265` word for the panel (`H264`/`H265` shown) and
+  the write answers in the spelling the camera used, which the firmware of the test set
+  needs: the change is only taken on request type `1040` and only with `H.264`.
+
 ## [0.5.9] - 2026-10-18
 
 ### Fixed
