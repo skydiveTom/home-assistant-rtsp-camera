@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -27,6 +28,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
+from . import xm_media
 from .actions import (
     ACTION_INSTALL_ADDON_UPDATE,
     ACTION_REFRESH_ADDON_UPDATE,
@@ -51,6 +53,12 @@ from .models import (
     utcnow,
     validate_optional_stream_url,
     validate_stream_url,
+)
+from .onvif_media import (
+    ERROR_NO_MEDIA as ENCODER_NO_MEDIA,
+)
+from .onvif_media import (
+    ERROR_TOKEN_UNKNOWN as ENCODER_TOKEN_UNKNOWN,
 )
 from .onvif_media import (
     REQUEST_ERRORS as ENCODER_REQUEST_ERRORS,
@@ -680,6 +688,134 @@ def _encoder_credentials(camera: Camera, body: Mapping[str, Any]) -> tuple[str, 
     return base_url, username, password
 
 
+#: Which service answers the encoder endpoints. ``auto`` asks ONVIF and falls back to the
+#: vendor protocol of the Xiongmai family when the firmware has no media service at all.
+ENCODER_SOURCES = ("auto", "onvif", "xm")
+
+
+def _encoder_source(body: Mapping[str, Any]) -> str:
+    """Return the service the panel asked for (``auto`` when it said nothing)."""
+    source = str(body.get("source") or "auto").strip().lower()
+    return source if source in ENCODER_SOURCES else "auto"
+
+
+def _stream_hint(url: str) -> str:
+    """Return ``main`` or ``extra``: which stream of the camera the RTSP URL serves.
+
+    The family numbers its streams in the URL (``stream=0`` is the high resolution one,
+    ``stream=1`` the sub stream), so the panel lists the encoder the user is looking at
+    first instead of the other one.
+    """
+    match = re.search(r"[?&]stream=(\d+)", str(url or ""))
+    if match is None:
+        return ""
+    return "main" if match.group(1) == "0" else "extra"
+
+
+def _xm_target(
+    camera: Camera, body: Mapping[str, Any]
+) -> tuple[str, int, int, str, str, str]:
+    """Return host, DVRIP port, channel, stream and credentials of a camera.
+
+    Port and channel are what the PTZ section of the camera stores (the same device, the
+    same account); a camera that was never configured for PTZ falls back to the host and
+    the credentials of its stream URL, which ``_encoder_credentials`` resolves.
+    """
+    base_url, username, password = _encoder_credentials(camera, body)
+    host = urlsplit(base_url).hostname or ""
+    ptz = camera.ptz or {}
+    port = _optional_int(ptz.get("port")) or DEFAULT_DVRIP_PORT
+    channel = _optional_int(ptz.get("channel")) or 1
+    return host, port, channel, _stream_hint(camera.url), username, password
+
+
+async def _encoder_read_report(
+    camera: Camera, body: Mapping[str, Any], source: str
+) -> EncoderReport:
+    """Read the encoders over ONVIF, or over the vendor protocol when that has none.
+
+    A firmware without a media service answers the ONVIF read with ``encoder_no_media``;
+    that is the case the vendor protocol exists for. A camera whose ONVIF service refuses
+    the credentials is reported as such instead, because its media service is there and
+    the answer of the other protocol would hide why nobody can log in.
+    """
+    timeout = encoder_timeout(body.get("timeout"))
+    onvif: EncoderReport | None = None
+    if source in ("auto", "onvif"):
+        base_url, username, password = _encoder_credentials(camera, body)
+        onvif = await encoder_read(
+            base_url, username=username, password=password, timeout=timeout
+        )
+        if onvif.ok or source == "onvif":
+            return onvif
+
+    host, port, channel, preferred, username, password = _xm_target(camera, body)
+    vendor = await xm_media.async_read(
+        host,
+        port=port,
+        username=username,
+        password=password,
+        channel=channel,
+        preferred=preferred,
+        timeout=timeout,
+    )
+    if onvif is None or vendor.ok:
+        return vendor
+    detail = f"{onvif.detail} / {vendor.detail}"
+    if onvif.error == ENCODER_NO_MEDIA:
+        return EncoderReport(error=vendor.error, detail=detail, backend=vendor.backend)
+    return EncoderReport(error=onvif.error, detail=detail, backend=onvif.backend)
+
+
+async def _encoder_write_report(
+    camera: Camera, body: Mapping[str, Any], source: str
+) -> EncoderReport:
+    """Switch the codec of one encoder over the service that read it.
+
+    ``auto`` routes on the token: the tokens of the vendor protocol name their own
+    service, everything else is ONVIF - with the vendor protocol still as the fallback
+    for a camera that turned out to have no media service.
+    """
+    timeout = encoder_timeout(body.get("timeout"))
+    token = body.get("token")
+    encoding = body.get("encoding")
+
+    async def over_vendor() -> EncoderReport:
+        host, port, channel, _stream, username, password = _xm_target(camera, body)
+        return await xm_media.async_write(
+            host,
+            token=token,
+            encoding=encoding,
+            port=port,
+            username=username,
+            password=password,
+            channel=channel,
+            timeout=timeout,
+        )
+
+    async def over_onvif() -> EncoderReport:
+        base_url, username, password = _encoder_credentials(camera, body)
+        return await encoder_write(
+            base_url,
+            token=token,
+            encoding=encoding,
+            username=username,
+            password=password,
+            timeout=timeout,
+        )
+
+    if source == "xm":
+        return await over_vendor()
+    if source == "onvif":
+        return await over_onvif()
+    if xm_media.parse_token(token) is not None:
+        return await over_vendor()
+    report = await over_onvif()
+    if report.ok or report.error not in (ENCODER_NO_MEDIA, ENCODER_TOKEN_UNKNOWN):
+        return report
+    return await over_vendor()
+
+
 async def _encoder_failure(
     request: Request, code: str, detail: str = "", status: int = 502
 ) -> JSONResponse:
@@ -715,13 +851,7 @@ async def camera_encoder_read(request: Request) -> JSONResponse:
         return await _error(request, "not_found", 404)
 
     body = await _json_body(request)
-    base_url, username, password = _encoder_credentials(camera, body)
-    report = await encoder_read(
-        base_url,
-        username=username,
-        password=password,
-        timeout=encoder_timeout(body.get("timeout")),
-    )
+    report = await _encoder_read_report(camera, body, _encoder_source(body))
     return await _encoder_answer(request, report)
 
 
@@ -738,25 +868,19 @@ async def camera_encoder_write(request: Request) -> JSONResponse:
         return await _error(request, "not_found", 404)
 
     body = await _json_body(request)
-    base_url, username, password = _encoder_credentials(camera, body)
-    report = await encoder_write(
-        base_url,
-        token=body.get("token"),
-        encoding=body.get("encoding"),
-        username=username,
-        password=password,
-        timeout=encoder_timeout(body.get("timeout")),
-    )
+    report = await _encoder_write_report(camera, body, _encoder_source(body))
     if report.ok and report.changed:
         # The codec a camera sends is part of what the integration publishes; the health
         # check of the add-on reads it again within a minute.
         _LOGGER.info(
-            "encoder %s of %s switched to %s",
+            "encoder %s of %s switched to %s over %s",
             body.get("token"),
             camera.id,
             body.get("encoding"),
+            report.backend,
         )
     return await _encoder_answer(request, report)
+
 
 
 def _probe_timeout(value: Any) -> float:

@@ -54,6 +54,13 @@ MSG_LOGIN_REQUEST = 1000
 MSG_LOGIN_RESPONSE = 1001
 MSG_PTZ_REQUEST = 1400
 MSG_PTZ_RESPONSE = 1401
+#: A configuration document travels as a *named* JSON document: the request carries
+#: ``{"Name": <name>, "SessionID": ...}`` and the answer hands the document back under the
+#: key of that name, a write puts the document into the request under the same key. The
+#: reference client of the family uses one message type for both directions (it sets the
+#: channel titles the very same way), so the type below is used for a read and for a write.
+MSG_CONFIG_REQUEST = 1042
+MSG_CONFIG_RESPONSE = 1043
 LOGIN_OK = 100
 DEFAULT_PORT = 34567
 DEFAULT_TIMEOUT = 6.0
@@ -309,6 +316,124 @@ async def _async_try(
             await writer.wait_closed()
         except (OSError, RuntimeError):  # pragma: no cover - closing can fail
             pass
+
+
+async def async_config(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    name: str,
+    document: dict[str, Any] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    extra: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Read (no ``document``) or write one configuration document of a camera.
+
+    Returns the answer of the device and an error message. A read answers with the
+    document under the key of its name, a write only with the result code - which is why
+    the caller reads the device again to see what it kept (a device that acknowledges a
+    write and keeps its setting is what makes a panel that trusts the acknowledgement lie).
+
+    ``extra`` adds fields the device wants next to the name (the configuration commands
+    of this family are per channel, so a camera with more than one carries ``Channel``).
+    """
+    if not host:
+        return None, "no_host"
+    if not name:
+        return None, "no_name"
+    try:
+        return await asyncio.wait_for(
+            _async_config_session(host, port, username, password, name, document, extra),
+            timeout=float(timeout),
+        )
+    except TimeoutError:
+        return None, "timeout"
+    except (EOFError, OSError, ValueError) as err:
+        return None, str(err) or err.__class__.__name__
+
+
+async def _async_config_session(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    name: str,
+    document: dict[str, Any] | None,
+    extra: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Log in and read or write one configuration document on that one session."""
+    failure: tuple[dict[str, Any] | None, str | None] = (None, "login_failed")
+    for login_type in LOGIN_TYPES:
+        reader, writer, session, error, retry = await _async_login(
+            host, port, username, password, login_type
+        )
+        if reader is None or writer is None:
+            failure = (None, error)
+            if retry:
+                continue
+            return failure
+
+        try:
+            payload: dict[str, Any] = {"Name": name, "SessionID": f"0x{session:08X}"}
+            for key, value in (extra or {}).items():
+                payload[key] = value
+            if document is not None:
+                payload[name] = document
+            writer.write(pack(MSG_CONFIG_REQUEST, payload, session=session, sequence=1))
+            await writer.drain()
+            message_id, _session, answer = await _async_read(reader)
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (OSError, RuntimeError):  # pragma: no cover - closing can fail
+                pass
+
+        if message_id not in (MSG_CONFIG_REQUEST, MSG_CONFIG_RESPONSE):
+            return None, f"unexpected_reply_{message_id}"
+        ret = result_code(answer)
+        if ret != LOGIN_OK:
+            return None, f"config_failed_{ret}"
+        return answer, None
+    return failure
+
+
+async def _async_login(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    login_type: str,
+) -> tuple[
+    asyncio.StreamReader | None,
+    asyncio.StreamWriter | None,
+    int,
+    str | None,
+    bool,
+]:
+    """Open a connection and log in with one login type.
+
+    The last value tells whether another login type is worth a try: a device that only
+    dislikes the login type answers ``102`` or ``103`` and stays logged out. The caller
+    owns the connection and closes it.
+    """
+    reader, writer = await asyncio.open_connection(host, port)
+    try:
+        writer.write(pack(MSG_LOGIN_REQUEST, login_payload(username, password, login_type)))
+        await writer.drain()
+        message_id, session, payload = await _async_read(reader)
+    except (EOFError, OSError, ValueError) as err:
+        writer.close()
+        return None, None, 0, str(err) or err.__class__.__name__, False
+    if message_id != MSG_LOGIN_RESPONSE:
+        writer.close()
+        return None, None, 0, f"unexpected_reply_{message_id}", False
+    ret = result_code(payload)
+    if ret != LOGIN_OK:
+        writer.close()
+        return None, None, 0, f"login_failed_{ret}", ret in LOGIN_RETRY_CODES
+    return reader, writer, session_id(payload) or session, None, False
 
 
 def result_code(payload: dict[str, Any]) -> int:

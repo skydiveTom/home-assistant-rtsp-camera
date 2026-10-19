@@ -1166,6 +1166,12 @@
       .join(', ');
   }
 
+  function encoderBackend(report) {
+    /* Which service of the camera answered: ONVIF, or the vendor protocol of the
+       Xiongmai family for a firmware that ships no media service at all. */
+    return report.backend === 'xm' ? t('encoder.backend_xm') : t('encoder.backend_onvif');
+  }
+
   function renderEncoders(box, camera, report) {
     const configurations = report.configurations || [];
     document.getElementById('encoder-state').textContent = encoderStateLabel(configurations);
@@ -1177,6 +1183,10 @@
         text: configurations.length
           ? t('encoder.found', { count: configurations.length })
           : t('encoder.none'),
+      }),
+      el('p', {
+        class: 'note note--tight',
+        text: t('encoder.backend', { backend: encoderBackend(report) }),
       }),
     ];
 
@@ -1191,6 +1201,9 @@
         ],
         [t('encoder.gop'), item.gop ? String(item.gop) : '—'],
       ];
+      if (item.name && item.name !== item.token) {
+        pairs.unshift([t('encoder.name'), item.name]);
+      }
       const used = encoderProfiles(report, item);
       const select = el(
         'select',
@@ -1202,7 +1215,7 @@
         el('span', { text: t('encoder.set') }),
       ]);
       button.addEventListener('click', () => {
-        applyEncoding(camera, item.token, select.value, button);
+        applyEncoding(camera, item.token, select.value, button, report.backend);
       });
 
       children.push(
@@ -1253,13 +1266,13 @@
     }
   }
 
-  async function applyEncoding(camera, token, encoding, button) {
+  async function applyEncoding(camera, token, encoding, button, source) {
     const box = document.getElementById('encoder-result');
     button.disabled = true;
     try {
       const data = await api('api/cameras/' + camera.id + '/encoder', {
         method: 'POST',
-        body: Object.assign(encoderBody(), { token, encoding }),
+        body: Object.assign(encoderBody(), { token, encoding, source }),
       });
       const report = data.encoder || {};
       renderEncoders(box, camera, report);

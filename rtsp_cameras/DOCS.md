@@ -111,9 +111,10 @@ Buttons:
 - **Quick preview** – live picture in a modal. The preview process runs inside
   the add-on and stops as soon as you close the window (at the latest after 45
   seconds without playback requests).
-- **Stream codec (ONVIF)** – reads the encoders of the camera and switches the codec of
-  one of them, so a sub stream that sends H.265 can be turned into H.264 without the app
-  of the vendor (see *The codec of a stream*).
+- **Stream codec** – reads the encoders of the camera and switches the codec of one of
+  them, so a sub stream that sends H.265 can be turned into H.264 without the app of the
+  vendor. ONVIF first, and the vendor protocol of the Xiongmai family for a firmware that
+  ships no media service (see *The codec of a stream*).
 
 ### Which preview mode is used?
 
@@ -395,22 +396,34 @@ data:
 The preview window of the add-on shows a PTZ pad; hold an arrow to move, release to
 stop. The two speed fields next to it set the speed of the tilt and of the pan.
 
-### The codec of a stream (ONVIF)
+### The codec of a stream (ONVIF and Xiongmai DVRIP)
 
 Home Assistant does not transcode an RTSP stream - it copies the packets of the camera
 into HLS - so the codec inside decides whether a browser plays it. A sub stream in
 **H.265** (`hvc1`) plays in Safari and on iOS, while Chrome, Edge and Firefox keep a
 spinner; the playlist names it (`CODECS="hvc1.1.6.L63"`). The lever is the camera, and
-the camera editor reaches it over ONVIF:
+the camera editor reaches it over one of two services:
 
-1. Open the camera, expand **Stream codec (ONVIF)** and press **Read the encoders**. The
+1. Open the camera, expand **Stream codec** and press **Read the encoders**. The
    add-on asks the camera (`GetServices` → `GetVideoEncoderConfigurations` → `GetProfiles`)
    and lists every encoder it has: token, codec, picture, frame rate, bit rate and the
-   keyframe interval, next to the profile (the stream) that uses it.
+   keyframe interval, next to the profile (the stream) that uses it. The line under the
+   list names the service that answered: **ONVIF**, or **Xiongmai (DVRIP)** for a firmware
+   without a media service.
 2. Choose **H.264** for the encoder of the sub stream and press **Set codec**.
 3. The answer is the state the camera reports *after* the change: a write is only taken
    as done when the next read shows the new codec (a device that acknowledges a change and
    keeps its codec is not reported as a success).
+
+**A firmware without ONVIF.** The Xiongmai family (RTSP URLs like
+`rtsp://host:554/user=…&channel=1&stream=1.sdp`, DVRIP on TCP 34567) often ships no ONVIF
+media service at all: the media read then answers *the camera offers no encoder this
+add-on can read*, and the same request is made over the protocol the PTZ commands of the
+family already use. The encoders live in its configuration document `AVEnc` - the
+`MainFormat` block is the high resolution stream, `ExtraFormat` the sub stream, and the
+codec is `Video.Compression` inside them, so the write sends that document back with one
+word changed. The stream the RTSP URL of the camera serves is listed first, which is why
+the sub stream of a `stream=1` camera is the one on top.
 
 **Where the address and the credentials come from.** What the PTZ section of the same
 camera carries (HTTP address, user, password) is used first, otherwise the host and the
@@ -442,6 +455,10 @@ curl -X POST -H 'Content-Type: application/json' \
      -d '{"token": "V_ENC_001", "encoding": "H264"}' \
      http://<add-on>/api/cameras/<id>/encoder
 ```
+
+Both take an optional `"source"`: `auto` (the default) asks ONVIF and falls back to the
+vendor protocol of the Xiongmai family, `onvif` and `xm` pin one service. The answer names
+the one that answered in `backend`, so a script does not have to know the camera.
 
 After the change the camera restarts that stream. Home Assistant reconnects within a
 minute, the `codec` attribute of the entity follows the next health check, and a browser

@@ -68,7 +68,8 @@ w panelu dodatku.
   przycisk dla każdego presetu.
 - **Kodek strumienia bez aplikacji producenta** – kamera, której podstrumień nadaje
   **H.265**, zostaje czarna w Chrome, Edge i Firefox, bo Home Assistant kopiuje strumień
-  bez transkodowania. Edytor kamery odczytuje kodery przez **ONVIF** i przełącza ten od
+  bez transkodowania. Edytor kamery odczytuje kodery **przez ONVIF**, a gdy firmware nie ma
+  usługi mediów — przez protokół producenta rodziny Xiongmai, i przełącza ten od
   podstrumienia na H.264 — konfiguracja oddana przez kamerę wraca do niej ze zmienionym
   jednym słowem, a odpowiedzią jest kodek, który kamera zgłasza po zmianie.
 - **Działa od razu** – dodanie, zmiana nazwy, wyłączenie lub usunięcie kamery jest

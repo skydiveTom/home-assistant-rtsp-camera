@@ -115,16 +115,22 @@ class EncoderReport:
     detail: str = ""
     #: True when a write was accepted - the panel tells "already H.264" apart with it.
     changed: bool = False
+    #: Which service answered: ``onvif`` or the vendor protocol (``xm``). The panel shows
+    #: it and sends it back with a write, so a camera whose firmware only speaks one of
+    #: them needs no setting.
+    backend: str = "onvif"
 
     def to_dict(self) -> dict[str, Any]:
         """Return the representation the panel (and the tests) see."""
         payload: dict[str, Any] = {
             "ok": self.ok,
+            "backend": self.backend,
             "media_url": self.media_url,
             "configurations": [public_configuration(item) for item in self.configurations],
             "profiles": list(self.profiles),
             "changed": self.changed,
         }
+
         if self.error:
             payload["error"] = self.error
             payload["detail"] = self.detail

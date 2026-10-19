@@ -4,6 +4,34 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-10-18
+
+### Added
+
+- **The codec of a stream is switched on Xiongmai cameras whose firmware has no ONVIF
+  media service.** The family keeps the encoders in a configuration document of its own
+  protocol (`AVEnc`), one block per stream, and that document is now read and written over
+  the same DVRIP connection the PTZ commands of the family use: `MainFormat` is the high
+  resolution stream, `ExtraFormat` the sub stream, and `Video.Compression` is the word the
+  panel changes. Nothing has to be enabled on the camera, and no ONVIF user is needed.
+- **The panel shows which service answered** (*Read over ONVIF* / *Read over Xiongmai
+  (DVRIP)*) and lists the stream the RTSP URL of the camera serves first, so the encoder
+  that has to change is the one on top. The tokens of the vendor protocol (`xm:<channel>:
+  <main|extra>`) are routed back to that service by the write.
+- **Both encoder endpoints take `"source": "auto" | "onvif" | "xm"`.** `auto` asks ONVIF
+  and falls back to the vendor protocol when the camera answers `encoder_no_media` - the
+  exact answer of a firmware that has no media service. A device that refuses the ONVIF
+  credentials is still reported as such, because its media service is there.
+
+### Changed
+
+- **The encoder write verifies the way the camera reports it.** The document the camera
+  handed out goes back with the codec word replaced - everything else (resolution, frame
+  rate, bit rate, GOP, audio, the fields this module never heard of) survives the write -
+  and the device is read again before the answer names the new codec. A camera that
+  acknowledges the write and keeps its codec is reported as a fault (`codec_kept_H265`),
+  never as a success.
+
 ## [0.5.0] - 2026-10-18
 
 ### Added
