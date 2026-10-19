@@ -74,6 +74,22 @@ def _int(value: Any) -> int | None:
 
 #: The names a firmware may use for the codec word of a stream, most common first.
 CODEC_KEYS = ("Compression", "Compress", "Codec", "Encoding")
+#: The words the family uses for the two codecs, mapped to what the panel offers. The
+#: firmware of the test set writes ``H.265``, others write ``H265``, ``HEVC`` or ``AVC``.
+CODEC_ALIASES = {
+    "H264": "H264",
+    "H.264": "H264",
+    "AVC": "H264",
+    "H265": "H265",
+    "H.265": "H265",
+    "HEVC": "H265",
+}
+
+
+def normalize_encoding(value: Any) -> str:
+    """Return ``H264``, ``H265`` or an empty string for a codec word of a camera."""
+    text = str(value or "").strip().upper().replace(" ", "")
+    return CODEC_ALIASES.get(text, "")
 
 
 def _value(fields: Mapping[str, Any], name: str) -> Any:
@@ -311,6 +327,14 @@ def _set_codec(fields: dict[str, Any], encoding: str) -> None:
     fields["Compression"] = encoding
 
 
+def codec_spelling(current: str, wanted: str) -> str:
+    """Return the codec word in the spelling the camera itself used (``H.265`` / ``H265``)."""
+    raw = str(current or "").strip().upper()
+    if "." in raw:
+        return "H.264" if wanted == "H264" else "H.265"
+    return wanted
+
+
 def _follow(document: Any, path: tuple[str | int, ...]) -> dict[str, Any] | None:
     """Return the object a path points at, or None when the document has no such object."""
     node: Any = document
@@ -339,12 +363,14 @@ def parse_encoders(
     configurations: list[dict[str, Any]] = []
     for stream, path, video in stream_blocks(document, channel):
         width, height = _resolution(_value(video, "Resolution"))
+        raw_encoding = _codec_of(video)
         configurations.append(
             {
                 "token": token_of(channel, stream),
                 "name": _stream_label(stream),
                 "use_count": None,
-                "encoding": _codec_of(video),
+                "encoding": normalize_encoding(raw_encoding) or raw_encoding,
+                "raw_encoding": raw_encoding,
                 "width": width,
                 "height": height,
                 "quality": _number(_value(video, "Quality")),
@@ -527,7 +553,7 @@ async def async_write(
     video = _follow(written, current["path"])
     if video is None:
         return EncoderReport(error=ERROR_FAULT, detail="no_video_block", backend=BACKEND)
-    _set_codec(video, wanted)
+    _set_codec(video, codec_spelling(current.get("raw_encoding", ""), wanted))
 
     _answer, error = await dvrip.async_config(
         host,

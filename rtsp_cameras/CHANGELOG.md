@@ -4,6 +4,17 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2026-10-18
+
+### Fixed
+
+- **The codec word of the family is `H.265`, not `H265`.** The read reports the normalised
+  word the panel offers (`H264`/`H265`) while the write answers in the spelling the camera
+  itself used (`H.264`/`H.265`), so a firmware that writes the dotted form is not sent a
+  word it does not know - and the read after the write compares like with like.
+- The internals of a backend (the document object, the path to it, the codec word as the
+  camera spelled it) no longer show up in the answer of the panel.
+
 ## [0.5.7] - 2026-10-18
 
 ### Fixed

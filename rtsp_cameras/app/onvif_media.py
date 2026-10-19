@@ -142,9 +142,19 @@ class EncoderReport:
         return payload
 
 
+#: The keys of a configuration that belong to the backend, not to the panel: the document
+#: object itself, the path to it, and the codec word as the camera spelled it (the panel is
+#: given the normalised one).
+PRIVATE_CONFIGURATION_KEYS = ("element", "path", "raw_encoding")
+
+
 def public_configuration(configuration: Mapping[str, Any]) -> dict[str, Any]:
-    """Return one encoder configuration without the XML element behind it."""
-    return {key: value for key, value in configuration.items() if key != "element"}
+    """Return one encoder configuration without the document object behind it."""
+    return {
+        key: value
+        for key, value in configuration.items()
+        if key not in PRIVATE_CONFIGURATION_KEYS
+    }
 
 
 # ------------------------------------------------------------ SOAP documents

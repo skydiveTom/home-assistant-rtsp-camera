@@ -441,6 +441,57 @@ def test_read_accepts_another_name_of_the_codec_field(xm_cam: int) -> None:
     assert video == {"Codec": "H264", "Resolution": "640*360"}
 
 
+def test_read_normalizes_the_dotted_codec(xm_cam: int) -> None:
+    """The camera writes ``H.265``; the panel is offered the same word it writes."""
+    FakeXmCamera.document = {
+        "Encode": [
+            {
+                "MainFormat": {
+                    "Video": {"Compression": "H.265", "Resolution": "1920*1080"}
+                },
+                "ExtraFormat": {
+                    "Video": {"Compression": "H.265", "Resolution": "640*360"}
+                },
+            }
+        ]
+    }
+
+    report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
+
+    assert [item["encoding"] for item in report.configurations] == ["H265", "H265"]
+    assert report.configurations[0]["raw_encoding"] == "H.265"
+    assert "raw_encoding" not in report.to_dict()["configurations"][0]
+    assert "path" not in report.to_dict()["configurations"][0]
+
+
+def test_write_keeps_the_dotted_spelling_of_the_camera(xm_cam: int) -> None:
+    """The write answers in the spelling the firmware knows, not in the panel's."""
+    FakeXmCamera.document = {
+        "Encode": [
+            {
+                "MainFormat": {
+                    "Video": {"Compression": "H.265", "Resolution": "1920*1080"}
+                },
+                "ExtraFormat": {
+                    "Video": {"Compression": "H.265", "Resolution": "640*360"}
+                },
+            }
+        ]
+    }
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    document = FakeXmCamera.writes()[0]["payload"][xm_media.CONFIG_NAME]
+    assert document["Encode"][0]["ExtraFormat"]["Video"]["Compression"] == "H.264"
+    assert document["Encode"][0]["MainFormat"]["Video"]["Compression"] == "H.265"
+
+
 def test_read_reports_the_shape_of_streams_without_a_codec(xm_cam: int) -> None:
     """Streams that name no codec come with the shape of the document, not with silence."""
     FakeXmCamera.document = {
