@@ -427,6 +427,16 @@ that name answers the legacy `AVEnc` document instead, which is read and written
 way. The stream the RTSP URL of the camera serves is listed first, which is why the sub
 stream of a `stream=1` camera is the one on top.
 
+**A firmware can answer a write and keep its codec.** Measured on the camera of the test
+set (192.168.20.253): `Simplify.Encode` takes the payload of a write and ignores it
+completely (even `{"Nonsense": 1}` is answered with `Ret: 100` and the stored document),
+`AVEnc` takes a change on request type `1040` only and drops it again within a minute, and
+neither document reaches the running encoder - the RTSP stream keeps the codec it was
+started with, which is why the answer of a write that did not land is `encoder_fault` with
+`codec_kept_…` in the detail instead of a change that only exists in the document. The
+read is not affected: the panel lists what the camera says, and *Test* says what the
+stream really sends.
+
 **Where the address and the credentials come from.** What the PTZ section of the same
 camera carries (HTTP address, user, password) is used first, otherwise the host and the
 credentials of the stream URL - so a camera that never used PTZ works as well. Type the
