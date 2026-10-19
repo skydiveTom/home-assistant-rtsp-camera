@@ -1,4 +1,4 @@
-"""Tests for the Xiongmai encoder backend (``AVEnc`` over DVRIP).
+"""Tests for the Xiongmai encoder backend (``Simplify.Encode`` over DVRIP).
 
 The Xiongmai family keeps the codec of its streams in a configuration document of its own
 protocol, so the module is checked against a small DVRIP device that stands in for a camera
@@ -171,16 +171,63 @@ def avenc_channel_document() -> dict[str, Any]:
     }
 
 
+def simplify_document(
+    main: str = "H265", extra: str = "H265", channels: int = 1
+) -> list[dict[str, Any]]:
+    """Return the document of the newer layout: one entry per channel.
+
+    The vendor app of the family reads and writes this one (``Simplify.Encode``), and the
+    ``Video`` object of a stream names its codec exactly like the legacy document does.
+    """
+
+    def video(
+        compression: str, resolution: str, bitrate: int, quality: int
+    ) -> dict[str, Any]:
+        return {
+            "BitRate": bitrate,
+            "BitRateControl": 0,
+            "Compression": compression,
+            "FPS": 25,
+            "GOP": 50,
+            "Quality": quality,
+            "Resolution": resolution,
+        }
+
+    return [
+        {
+            "MainFormat": {
+                "AudioEnable": 0,
+                "Video": video(main, "1920*1080", 4096, 4),
+                "VideoEnable": 1,
+            },
+            "ExtraFormat": {
+                "AudioEnable": 0,
+                "Video": video(extra, "640*360", 512, 3),
+                "VideoEnable": 1,
+            },
+            "SnapFormat": {
+                "AudioEnable": 0,
+                "Video": video("JPEG", "1920*1080", 0, 4),
+                "VideoEnable": 1,
+            },
+        }
+        for _channel in range(channels)
+    ]
+
+
 class FakeXmCamera(socketserver.ThreadingTCPServer):
-    """Fake Xiongmai device: it logs in and answers the ``AVEnc`` document."""
+    """Fake Xiongmai device: it logs in and answers the encoder document."""
 
     allow_reuse_address = True
     #: A handler waiting on a socket the test left open must not keep the suite alive.
     daemon_threads = True
     block_on_close = False
-    document: dict[str, Any] = {}
+    document: dict[str, Any] | list[Any] = {}
     requests: list[dict[str, Any]] = []
     logins: list[dict[str, Any]] = []
+    #: The names of the configuration document this firmware knows: the document is
+    #: answered under the name it was asked for, and any other name is refused.
+    names: tuple[str, ...] = xm_media.CONFIG_NAMES
     #: A device that acknowledges a write and keeps its setting.
     keep_codec = False
     fail_login = False
@@ -199,7 +246,11 @@ class FakeXmCamera(socketserver.ThreadingTCPServer):
     @classmethod
     def writes(cls) -> list[dict[str, Any]]:
         """Return the writes the device received."""
-        return [item for item in cls.requests if xm_media.CONFIG_NAME in item["payload"]]
+        return [
+            item
+            for item in cls.requests
+            if any(name in item["payload"] for name in xm_media.CONFIG_NAMES)
+        ]
 
 
 class FakeXmHandler(socketserver.BaseRequestHandler):
@@ -227,19 +278,20 @@ class FakeXmHandler(socketserver.BaseRequestHandler):
             if message_id not in CONFIG_IDS:
                 self.request.sendall(reply(MSG_CONFIG_RESPONSE, {"Ret": 102}))
                 continue
-            if payload.get("Name") != xm_media.CONFIG_NAME:
+            name = payload.get("Name")
+            if name not in FakeXmCamera.names:
                 self.request.sendall(reply(MSG_CONFIG_RESPONSE, {"Ret": 607}))
                 continue
-            if xm_media.CONFIG_NAME in payload:
+            if name in payload:
                 if _write_taken(message_id, payload) and not FakeXmCamera.keep_codec:
-                    FakeXmCamera.document = copy.deepcopy(payload[xm_media.CONFIG_NAME])
+                    FakeXmCamera.document = copy.deepcopy(payload[name])
                 self.request.sendall(reply(MSG_CONFIG_RESPONSE, {"Ret": 100}))
                 continue
-            answer: dict[str, Any] = {"Ret": 100, "Name": xm_media.CONFIG_NAME}
+            answer: dict[str, Any] = {"Ret": 100, "Name": name}
             if FakeXmCamera.answer is not None:
                 answer.update(copy.deepcopy(FakeXmCamera.answer))
             else:
-                answer[xm_media.CONFIG_NAME] = copy.deepcopy(FakeXmCamera.document)
+                answer[name] = copy.deepcopy(FakeXmCamera.document)
             self.request.sendall(reply(MSG_CONFIG_RESPONSE, answer))
 
 
@@ -285,6 +337,7 @@ def xm_cam_fixture() -> Iterator[int]:
     FakeXmCamera.document = avenc_document()
     FakeXmCamera.requests = []
     FakeXmCamera.logins = []
+    FakeXmCamera.names = xm_media.CONFIG_NAMES
     FakeXmCamera.keep_codec = False
     FakeXmCamera.fail_login = False
     FakeXmCamera.accept_message_id = MSG_CONFIG_REQUEST
@@ -318,9 +371,13 @@ def test_token_names_its_group_stream_and_entry() -> None:
 def test_document_without_the_encoder_block_is_no_document() -> None:
     """Only an answer that carries a document is a document."""
     assert xm_media.document_of({"Ret": 100}) is None
-    assert xm_media.document_of({"Ret": 100, "AVEnc": {}}) is None
+    assert xm_media.document_of({"Ret": 100, "AVEnc": {}}, "AVEnc") is None
     assert xm_media.document_of(None) is None
-    assert xm_media.document_of({"AVEnc": {"Channel": 0}}) == {"Channel": 0}
+    assert xm_media.document_of({"AVEnc": {"Channel": 0}}, "AVEnc") == {"Channel": 0}
+    # The document of the newer layout is the list of the channels of the device.
+    channels = [{"MainFormat": {"Video": {"Compression": "H265"}}}]
+    assert xm_media.document_of({"Simplify.Encode": channels}) == channels
+    assert xm_media.document_of({"Simplify.Encode": []}) is None
 
 
 # -------------------------------------------------------------------- reading
@@ -378,6 +435,79 @@ def test_write_understands_the_encode_list_layout(xm_cam: int) -> None:
     assert document["Encode"][1]["Compression"] == "H264"
     assert document["Encode"][0]["Compression"] == "H265"
     assert document["EncodeEx"][1]["Compression"] == "H265"
+
+
+def test_read_understands_the_simplify_encode_layout(xm_cam: int) -> None:
+    """A document that is the list of the channels is read as one encoder per stream."""
+    FakeXmCamera.document = simplify_document(main="H265", extra="H264", channels=2)
+
+    report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
+
+    assert report.ok is True
+    tokens = [item["token"] for item in report.configurations]
+    assert tokens == [
+        "xm:1:main:1",
+        "xm:1:extra:1",
+        "xm:2:main:1",
+        "xm:2:extra:1",
+    ]
+    assert report.configurations[1]["encoding"] == "H264"
+    assert (report.configurations[1]["width"], report.configurations[1]["height"]) == (
+        640,
+        360,
+    )
+    assert report.configurations[1]["bitrate"] == 512
+
+
+def test_write_understands_the_simplify_encode_layout(xm_cam: int) -> None:
+    """The write of that layout changes one stream of one channel and nothing else."""
+    FakeXmCamera.document = simplify_document(channels=2)
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:2:extra:1", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    document = FakeXmCamera.writes()[0]["payload"][xm_media.CONFIG_NAME]
+    assert document[1]["ExtraFormat"]["Video"]["Compression"] == "H264"
+    assert document[0]["ExtraFormat"]["Video"]["Compression"] == "H265"
+    assert document[1]["MainFormat"]["Video"]["Compression"] == "H265"
+    assert len(document) == 2
+
+
+def test_read_falls_back_to_the_legacy_document(xm_cam: int) -> None:
+    """A firmware that knows only the legacy name is read on the second attempt."""
+    FakeXmCamera.names = ("AVEnc",)
+
+    report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
+
+    assert report.ok is True
+    assert [item["token"] for item in report.configurations] == [
+        "xm:1:main:1",
+        "xm:1:extra:1",
+    ]
+    asked = [item["payload"]["Name"] for item in FakeXmCamera.requests]
+    assert asked[:2] == [xm_media.CONFIG_NAME, "AVEnc"]
+
+
+def test_write_answers_under_the_name_the_camera_knew(xm_cam: int) -> None:
+    """The document goes back under the name it came from, not under the first name."""
+    FakeXmCamera.names = ("AVEnc",)
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra:1", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    write = FakeXmCamera.writes()[0]["payload"]
+    assert "AVEnc" in write
+    assert write["AVEnc"]["ExtraFormat"]["Video"]["Compression"] == "H264"
 
 
 def test_read_accepts_lower_case_field_names(xm_cam: int) -> None:
@@ -631,7 +761,7 @@ def test_read_without_a_document_is_a_camera_without_encoders(xm_cam: int) -> No
 
     assert report.ok is False
     assert report.error == "encoder_no_media"
-    assert report.detail.startswith("no_avenc")
+    assert report.detail.startswith("no_encode")
 
 
 def test_read_names_the_shape_of_an_unknown_document(xm_cam: int) -> None:

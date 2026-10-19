@@ -1,12 +1,19 @@
-"""Xiongmai encoders (``AVEnc`` over DVRIP): which codec every stream of the camera sends.
+"""Xiongmai encoders (``Simplify.Encode`` over DVRIP): which codec every stream sends.
 
 The Xiongmai family of cameras - the ones with an RTSP URL like
 ``rtsp://host:554/user=admin&password=&channel=1&stream=0.sdp`` - often has no ONVIF media
 service at all, so the encoder configurations of :mod:`app.onvif_media` cannot be read
 there. The firmware still keeps them in a configuration document that its own protocol
-hides behind the name ``AVEnc``: one block per stream, ``MainFormat`` for the high
-resolution stream and ``ExtraFormat`` for the sub stream, each with a ``Video`` object
-that names ``Compression`` next to ``Resolution``, ``FPS``, ``BitRate`` and ``GOP``.
+hides behind a name, and the vendor's own app asks for it as ``Simplify.Encode``: a list
+with one entry per channel, each carrying ``MainFormat`` for the high resolution stream,
+``ExtraFormat`` for the sub stream and ``SnapFormat`` for the still, with a ``Video``
+object that names ``Compression`` next to ``Resolution``, ``FPS``, ``BitRate`` and ``GOP``.
+
+The device of the test set acknowledges a write of the legacy ``AVEnc`` document and keeps
+the codec of its stream, while the vendor's app changes exactly the document above - so
+``Simplify.Encode`` is asked for first, and ``AVEnc`` is the fallback for a firmware that
+does not know that name (:data:`CONFIG_NAMES`). The write goes back under the name the
+camera answered.
 
 That document is read and written over the same DVRIP connection the PTZ commands of the
 family use (:mod:`app.dvrip`), so the codec of a stream is switched without a vendor app
@@ -38,11 +45,16 @@ from .onvif_media import (
     EncoderReport,
 )
 
+#: The names of the configuration document, the one the vendor app of the family asks for
+#: first. A firmware that does not know that name answers the legacy document of the family
+#: instead, so both are tried and the one that answers is the one written back to.
+CONFIG_NAMES: tuple[str, ...] = ("Simplify.Encode", "AVEnc")
+#: The name the module asks for first.
+CONFIG_NAME = CONFIG_NAMES[0]
 #: The name of the configuration document and the blocks of the streams inside it: the
 #: older layout names a block per stream, the newer one keeps a list under ``Encode`` with
 #: one entry for every stream. ``main`` is the high resolution stream the first RTSP
 #: channel serves, ``extra`` the sub stream of it, ``third`` the stream some devices add.
-CONFIG_NAME = "AVEnc"
 STREAMS: tuple[tuple[str, str, str], ...] = (
     ("MainFormat", "main", "Main stream"),
     ("ExtraFormat", "extra", "Sub stream"),
@@ -136,12 +148,20 @@ def _resolution(value: Any) -> tuple[int | None, int | None]:
     return None, None
 
 
-def document_of(answer: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Return the ``AVEnc`` document of a config answer, or None when it carries none."""
-    if not isinstance(answer, dict):
+def document_of(
+    answer: dict[str, Any] | None, name: str = CONFIG_NAME
+) -> dict[str, Any] | list[Any] | None:
+    """Return the document an answer carries under ``name``, or None when it carries none.
+
+    The document of the newer layout is the list of the channels of the device, the one of
+    the legacy layout is a mapping of blocks - both are a document of this module.
+    """
+    if not isinstance(answer, Mapping):
         return None
-    document = answer.get(CONFIG_NAME)
-    if isinstance(document, dict) and document:
+    document = answer.get(name)
+    if isinstance(document, Mapping) and document:
+        return document
+    if isinstance(document, list) and document:
         return document
     return None
 
@@ -154,18 +174,22 @@ def describe_document(document: Any) -> str:
     and blocks it did bring, nested a few levels deep. That is what a report of the panel
     and the next version of this module need, without a packet capture.
     """
+    if isinstance(document, list):
+        return _shape(document, 2)[:MAX_DESCRIPTION]
     if not isinstance(document, Mapping):
         return ""
     return _shape(document, 2)[:MAX_DESCRIPTION]
 
 
-def focus_document(document: Mapping[str, Any]) -> str:
+def focus_document(document: Any) -> str:
     """Return the shape of the part of a document that was expected to carry the streams.
 
     A document that keeps its streams in a list is shown at the first entry of it and a few
     levels deeper, because that is where the video fields of the camera live.
     """
-    entries = document.get(ENCODE_KEY)
+    if isinstance(document, list):
+        return _shape(document, 3)[:MAX_DESCRIPTION]
+    entries = document.get(ENCODE_KEY) if isinstance(document, Mapping) else None
     if isinstance(entries, list) and entries:
         return f"{ENCODE_KEY}[{len(entries)}]{_shape(entries[0], 3)}"[:MAX_DESCRIPTION]
     return describe_document(document)
@@ -206,24 +230,26 @@ def parse_token(token: Any) -> tuple[int, str, int] | None:
 
 
 def stream_blocks(
-    document: Mapping[str, Any],
+    document: Mapping[str, Any] | list[Any],
 ) -> list[tuple[int, str, int, tuple[str | int, ...], Mapping[str, Any]]]:
     """Return group, stream, index, path and video fields of every encoder of a document.
 
-    Three layouts are known and all are read: a block per stream directly in the document
-    (``MainFormat`` / ``ExtraFormat``), a list under ``Encode`` whose entries *are* the
-    streams, and a list under ``Encode`` whose entries carry the blocks - and there a block
-    is itself a list, one entry for every variant the firmware keeps (the device of the
-    test set repeats the whole group three times). Every entry is offered to the panel, so
-    the one that feeds the RTSP URL is the one the user picks; the token names the group,
-    the stream and the entry inside it. The path points at the object that holds
-    ``Compression``, so the write puts the codec word where the device keeps it.
+    Four layouts are known and all are read: a block per stream directly in the document
+    (``MainFormat`` / ``ExtraFormat``), a list of the channels as the document itself
+    (the ``Simplify.Encode`` of the vendor app - one entry per channel), a list under
+    ``Encode`` whose entries *are* the streams, and a list under ``Encode`` whose entries
+    carry the blocks - and there a block is itself a list, one entry for every variant the
+    firmware keeps (the device of the test set repeats the whole group three times). Every
+    entry is offered to the panel, so the one that feeds the RTSP URL is the one the user
+    picks; the token names the group, the stream and the entry inside it. The path points
+    at the object that holds ``Compression``, so the write puts the codec word where the
+    device keeps it.
     """
-    found = _entry_streams(document, ())
+    found = _entry_streams(document, ()) if isinstance(document, Mapping) else []
     if found:
         return [(1, stream, index, path, video) for stream, path, index, video in found]
 
-    entries = document.get(ENCODE_KEY)
+    entries = document.get(ENCODE_KEY) if isinstance(document, Mapping) else document
     if not isinstance(entries, list) or not entries:
         return []
 
@@ -231,11 +257,14 @@ def stream_blocks(
     for group, entry in enumerate(entries, start=1):
         if not isinstance(entry, Mapping):
             continue
+        # The document of the newer layout *is* the list, the legacy one keeps it under
+        # ``Encode`` - the path of the write has to hold whichever the camera answered.
+        prefix: tuple[str | int, ...] = (
+            (ENCODE_KEY, group - 1) if isinstance(document, Mapping) else (group - 1,)
+        )
         blocks.extend(
             (group, stream, index, path, video)
-            for stream, path, index, video in _entry_streams(
-                entry, (ENCODE_KEY, group - 1)
-            )
+            for stream, path, index, video in _entry_streams(entry, prefix)
         )
     if blocks:
         return blocks
@@ -362,8 +391,10 @@ def _follow(document: Any, path: tuple[str | int, ...]) -> dict[str, Any] | None
     return node if isinstance(node, dict) else None
 
 
-def parse_encoders(document: dict[str, Any], preferred: str = "") -> list[dict[str, Any]]:
-    """Read every encoder of an ``AVEnc`` document.
+def parse_encoders(
+    document: Mapping[str, Any] | list[Any], preferred: str = ""
+) -> list[dict[str, Any]]:
+    """Read every encoder of an encoder document.
 
     The stream the camera of the panel serves (``preferred``, taken from the ``stream=`` of
     its RTSP URL) is listed first, so the encoder that has to change is near the top; the
@@ -469,28 +500,44 @@ async def _read_document(
     username: str,
     password: str,
     timeout: float,
-) -> tuple[dict[str, Any] | None, EncoderReport | None]:
-    """Read the ``AVEnc`` document of a camera, or the failure of the read."""
-    answer, error = await dvrip.async_config(
-        host,
-        port,
-        username,
-        password,
-        CONFIG_NAME,
-        timeout=timeout,
-        extra={"Channel": REQUEST_CHANNEL},
-    )
-    if error is not None:
-        return None, _failure(error)
-    document = document_of(answer)
-    if document is None:
-        keys = ", ".join(sorted(answer)) if isinstance(answer, dict) else ""
-        return None, EncoderReport(
-            error=ERROR_NO_MEDIA,
-            detail=f"no_avenc ({keys})" if keys else "no_avenc",
-            backend=BACKEND,
+) -> tuple[dict[str, Any] | list[Any] | None, str, EncoderReport | None]:
+    """Read the encoder document of a camera, or the failure of the read.
+
+    The names of :data:`CONFIG_NAMES` are tried in order and the first one that answers
+    with a document wins; the name it answered under is returned next to the document, so
+    the write goes back the way the read came. A camera that answers none of them is
+    reported with the keys of the last answer it did bring.
+    """
+    first_error: str | None = None
+    keys: list[str] = []
+    for name in CONFIG_NAMES:
+        answer, error = await dvrip.async_config(
+            host,
+            port,
+            username,
+            password,
+            name,
+            timeout=timeout,
+            extra={"Channel": REQUEST_CHANNEL},
         )
-    return document, None
+        if error is not None:
+            first_error = first_error or error
+            continue
+        if isinstance(answer, Mapping):
+            keys.extend(str(key) for key in answer if key != "Ret")
+        document = document_of(answer, name)
+        if document is not None:
+            return document, name, None
+
+    if first_error is not None and not keys:
+        return None, "", _failure(first_error)
+    tried = ", ".join(CONFIG_NAMES)
+    detail = f"no_encode ({tried}: {', '.join(keys)})" if keys else f"no_encode ({tried})"
+    return None, "", EncoderReport(
+        error=ERROR_NO_MEDIA,
+        detail=detail[:MAX_DESCRIPTION],
+        backend=BACKEND,
+    )
 
 
 async def async_read(
@@ -505,7 +552,9 @@ async def async_read(
     """Read the encoders of a camera: the codec every stream of it sends."""
     if not host:
         return EncoderReport(error=ERROR_BAD_URL, detail="", backend=BACKEND)
-    document, failure = await _read_document(host, port, username, password, timeout)
+    document, _config, failure = await _read_document(
+        host, port, username, password, timeout
+    )
     if failure is not None:
         return failure
     configurations = parse_encoders(document or {}, preferred)
@@ -553,7 +602,9 @@ async def async_write(
     group, stream, index = parsed
     wanted_token = token_of(group, stream, index)
 
-    document, failure = await _read_document(host, port, username, password, timeout)
+    document, config_name, failure = await _read_document(
+        host, port, username, password, timeout
+    )
     if failure is not None:
         return failure
     configurations = parse_encoders(document or {})
@@ -566,12 +617,13 @@ async def async_write(
         # Nothing to do: the camera already sends the codec the panel asked for.
         return _report(configurations, host, port)
 
-    # The document the camera handed out goes back with one word replaced - and the pair
-    # of request type and codec word a camera accepts is found by trying them, because a
-    # device that answers "done" and keeps its codec is what the family does too.
+    # The document the camera handed out goes back under the name it answered - with one
+    # word replaced - and the pair of request type and codec word a camera accepts is found
+    # by trying them, because a device that answers "done" and keeps its codec is what the
+    # family does too.
     attempts: list[str] = []
     for message_id, word in write_variants(current.get("raw_encoding", ""), wanted):
-        written = {key: _copy(value) for key, value in (document or {}).items()}
+        written = _copy(document)
         video = _follow(written, current["path"])
         if video is None:
             return EncoderReport(
@@ -584,7 +636,7 @@ async def async_write(
             port,
             username,
             password,
-            CONFIG_NAME,
+            config_name,
             document=written,
             timeout=timeout,
             extra={"Channel": REQUEST_CHANNEL},
@@ -630,7 +682,9 @@ async def _read_after_write(
     failure: EncoderReport | None = None
     for _attempt in range(2):
         await asyncio.sleep(WRITE_SETTLE_SECONDS)
-        document, failure = await _read_document(host, port, username, password, timeout)
+        document, _config, failure = await _read_document(
+            host, port, username, password, timeout
+        )
 
         if failure is None:
             return document, None

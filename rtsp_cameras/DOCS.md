@@ -419,11 +419,13 @@ the camera editor reaches it over one of two services:
 `rtsp://host:554/user=…&channel=1&stream=1.sdp`, DVRIP on TCP 34567) often ships no ONVIF
 media service at all: the media read then answers *the camera offers no encoder this
 add-on can read*, and the same request is made over the protocol the PTZ commands of the
-family already use. The encoders live in its configuration document `AVEnc` - the
-`MainFormat` block is the high resolution stream, `ExtraFormat` the sub stream, and the
-codec is `Video.Compression` inside them, so the write sends that document back with one
-word changed. The stream the RTSP URL of the camera serves is listed first, which is why
-the sub stream of a `stream=1` camera is the one on top.
+family already use. The encoders live in its configuration document `Simplify.Encode` - one
+entry per channel, `MainFormat` for the high resolution stream, `ExtraFormat` for the sub
+stream, `SnapFormat` for the still, and the codec is `Video.Compression` inside them - so
+the write sends that document back with one word changed. A firmware that does not know
+that name answers the legacy `AVEnc` document instead, which is read and written the same
+way. The stream the RTSP URL of the camera serves is listed first, which is why the sub
+stream of a `stream=1` camera is the one on top.
 
 **Where the address and the credentials come from.** What the PTZ section of the same
 camera carries (HTTP address, user, password) is used first, otherwise the host and the

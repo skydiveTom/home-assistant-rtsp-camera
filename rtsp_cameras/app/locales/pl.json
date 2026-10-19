@@ -244,7 +244,7 @@
     "encoder_unreachable": "Ani usługa ONVIF, ani protokół producenta kamery nie odpowiada",
     "encoder_timeout": "Kamera nie odpowiedziała na żądanie kodera na czas",
     "encoder_auth": "Kamera odrzuciła dane logowania ONVIF",
-    "encoder_no_media": "Kamera nie udostępnia kodera, który umiemy odczytać (brak usługi mediów ONVIF i dokumentu AVEnc)",
+    "encoder_no_media": "Kamera nie udostępnia kodera, który umiemy odczytać (brak usługi mediów ONVIF i dokumentu kodera)",
     "encoder_fault": "Kamera odrzuciła żądanie zmiany kodera",
     "encoder_bad_encoding": "Nieznany kodek - H.264 albo H.265",
     "encoder_token_required": "Wybierz koder do zmiany",

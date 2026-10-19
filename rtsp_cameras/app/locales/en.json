@@ -244,7 +244,7 @@
     "encoder_unreachable": "Neither the ONVIF service nor the vendor protocol of the camera answers",
     "encoder_timeout": "The camera did not answer the encoder request in time",
     "encoder_auth": "The camera refused the ONVIF credentials",
-    "encoder_no_media": "The camera offers no encoder this add-on can read (no ONVIF media service, no AVEnc document)",
+    "encoder_no_media": "The camera offers no encoder this add-on can read (no ONVIF media service, no encoder document)",
     "encoder_fault": "The camera refused the encoder request",
     "encoder_bad_encoding": "Unknown codec - H.264 or H.265",
     "encoder_token_required": "Choose the encoder to change",

@@ -4,6 +4,22 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-19
+
+### Fixed
+
+- **The encoder document of the family is `Simplify.Encode`, not `AVEnc`.** The vendor app
+  of the test camera reads and writes the encoder of a channel as `Simplify.Encode` - a
+  list with one entry per channel, each carrying `MainFormat`/`ExtraFormat`/`SnapFormat` -
+  and the module asked for the legacy `AVEnc` instead. That document answers, it echoes
+  every write back, and no encoder of the camera ever listens to it: the codec reads back
+  as changed and the RTSP stream keeps sending H.265.
+- The read now asks for `Simplify.Encode` first and falls back to `AVEnc` for a firmware
+  that does not know that name; the write goes back under the name the camera answered.
+  The token is unchanged, so the panel lists `xm:<channel>:<stream>:<entry>` either way.
+- A document that *is* the list of the channels is read like the one that keeps the list
+  under `Encode`, and the write follows the path of that layout.
+
 ## [0.6.0] - 2026-10-18
 
 ### Changed
