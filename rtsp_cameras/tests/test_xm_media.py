@@ -374,6 +374,30 @@ def test_read_finds_the_video_fields_one_level_down(xm_cam: int) -> None:
     assert document["Encode"][0]["EncodeCfg"]["Compression"] == "H265"
 
 
+def test_read_accepts_another_name_of_the_codec_field(xm_cam: int) -> None:
+    """A firmware that calls the codec ``Codec`` is read and written the same way."""
+    FakeXmCamera.document = {
+        "Encode": [
+            {
+                "MainFormat": {"Video": {"Codec": "H265", "Resolution": "1920*1080"}},
+                "ExtraFormat": {"Video": {"Codec": "H265", "Resolution": "640*360"}},
+            }
+        ]
+    }
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    document = FakeXmCamera.writes()[0]["payload"][xm_media.CONFIG_NAME]
+    video = document["Encode"][0]["ExtraFormat"]["Video"]
+    assert video == {"Codec": "H264", "Resolution": "640*360"}
+
+
 def test_read_reports_the_shape_of_streams_without_a_codec(xm_cam: int) -> None:
     """Streams that name no codec come with the shape of the document, not with silence."""
     FakeXmCamera.document = {

@@ -4,6 +4,17 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2026-10-18
+
+### Added
+
+- **The codec field is found under the names firmwares actually use** (`Compression`,
+  `Compress`, `Codec`, `Encoding`, in any case) for the read and for the write, which keeps
+  the spelling of the key the device answered with.
+- **The shape of a document this add-on cannot read is reported three levels deep, at the
+  entry of the list that carries the streams** (`Encode[3]{MainFormat{…}}`), so a firmware
+  variant can be identified from the error detail alone.
+
 ## [0.5.5] - 2026-10-18
 
 ### Fixed

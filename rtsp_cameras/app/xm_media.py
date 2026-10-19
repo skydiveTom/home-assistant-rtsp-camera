@@ -72,6 +72,10 @@ def _int(value: Any) -> int | None:
         return None
 
 
+#: The names a firmware may use for the codec word of a stream, most common first.
+CODEC_KEYS = ("Compression", "Compress", "Codec", "Encoding")
+
+
 def _value(fields: Mapping[str, Any], name: str) -> Any:
     """Return a field of the document, whatever case the firmware writes its keys in."""
     if name in fields:
@@ -83,9 +87,18 @@ def _value(fields: Mapping[str, Any], name: str) -> Any:
     return None
 
 
+def _codec_of(fields: Mapping[str, Any]) -> str:
+    """Return the codec word of a video object, whatever the firmware calls the field."""
+    for name in CODEC_KEYS:
+        value = _value(fields, name)
+        if isinstance(value, str) and value.strip():
+            return value.strip().upper()
+    return ""
+
+
 def _holds_video(fields: Mapping[str, Any]) -> bool:
     """Return True when an object carries the video fields of a stream."""
-    return bool(_value(fields, "Compression")) or bool(_value(fields, "Resolution"))
+    return bool(_codec_of(fields)) or bool(_value(fields, "Resolution"))
 
 
 def _number(value: Any) -> float | None:
@@ -121,24 +134,34 @@ def describe_document(document: Any) -> str:
 
     The block names of the streams are the one thing this module cannot know - a firmware
     may call them differently - so an answer that carries no stream is shown as the keys
-    and blocks it did bring, including the keys of the first entry of a list. That is what
-    a report of the panel and the next version of this module need, without a packet
-    capture.
+    and blocks it did bring, nested a few levels deep. That is what a report of the panel
+    and the next version of this module need, without a packet capture.
     """
     if not isinstance(document, Mapping):
         return ""
-    parts = [
-        f"{key}{_shape(value, 2)}"
-        for key, value in sorted(document.items(), key=lambda item: str(item[0]))
-    ]
-    return "; ".join(parts)[:MAX_DESCRIPTION]
+    return _shape(document, 2)[:MAX_DESCRIPTION]
+
+
+def focus_document(document: Mapping[str, Any]) -> str:
+    """Return the shape of the part of a document that was expected to carry the streams.
+
+    A document that keeps its streams in a list is shown at the first entry of it and a few
+    levels deeper, because that is where the video fields of the camera live.
+    """
+    entries = document.get(ENCODE_KEY)
+    if isinstance(entries, list) and entries:
+        return f"{ENCODE_KEY}[{len(entries)}]{_shape(entries[0], 3)}"[:MAX_DESCRIPTION]
+    return describe_document(document)
 
 
 def _shape(value: Any, depth: int) -> str:
-    """Return the shape of one document value: the keys of an object, the length of a list."""
+    """Return the shape of a document value: its keys, nested a few levels deep."""
     if isinstance(value, Mapping):
-        keys = ", ".join(sorted(str(item) for item in value)[:12])
-        return "{" + keys + "}"
+        parts = []
+        for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))[:8]:
+            nested = _shape(item, depth - 1) if depth > 0 else ""
+            parts.append(f"{key}{nested}")
+        return "{" + ", ".join(parts) + "}"
     if isinstance(value, list):
         if not value:
             return "[]"
@@ -264,10 +287,11 @@ def _video_holder(
 
 def _set_codec(fields: dict[str, Any], encoding: str) -> None:
     """Write the codec word, keeping the spelling of the key the firmware uses."""
-    for key in fields:
-        if str(key).lower() == "compression":
-            fields[key] = encoding
-            return
+    for name in CODEC_KEYS:
+        for key in fields:
+            if str(key).lower() == name.lower():
+                fields[key] = encoding
+                return
     fields["Compression"] = encoding
 
 
@@ -304,7 +328,7 @@ def parse_encoders(
                 "token": token_of(channel, stream),
                 "name": _stream_label(stream),
                 "use_count": None,
-                "encoding": str(_value(video, "Compression") or "").strip().upper(),
+                "encoding": _codec_of(video),
                 "width": width,
                 "height": height,
                 "quality": _number(_value(video, "Quality")),
@@ -426,14 +450,14 @@ async def async_read(
     if not configurations:
         return EncoderReport(
             error=ERROR_NO_MEDIA,
-            detail=f"no_streams: {describe_document(document)}".rstrip(": "),
+            detail=f"no_streams: {focus_document(document or {})}".rstrip(": "),
             backend=BACKEND,
         )
     if not any(item["encoding"] for item in configurations):
         # The device answered streams, but none of them names a codec this module knows:
         # the shape of the document is what the panel reports and what a next version needs.
         return _report(
-            configurations, host, port, shape=describe_document(document)
+            configurations, host, port, shape=focus_document(document or {})
         )
     return _report(configurations, host, port)
 
