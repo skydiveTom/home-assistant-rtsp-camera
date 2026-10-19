@@ -4,6 +4,28 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-10-19
+
+### Fixed
+
+- **A camera that is simply not there is reported as unreachable, not as a fault of the
+  device.** The transport named a failure after the sentence the platform puts into an
+  `OSError`, and only Windows names the refusal in it: Linux answers a closed port with
+  `[Errno 111] Connect call failed ('127.0.0.1', 49737)`, which the suite on CI turned into
+  `encoder_fault`. The socket now names the failure (`refused`, `unreachable`, `timeout`)
+  and the text of the platform follows it for the log and the panel.
+
+### Changed
+
+- **The premise of 0.7.0 did not hold on the camera of the test set.** Measured from a shell
+  inside its network: `Simplify.Encode` answers every write with `Ret: 100` and hands the
+  unchanged document back (not even `{"Nonsense": 1}` makes it complain), `AVEnc` takes a
+  change on request type `1040` only and drops it again within a minute, and neither
+  document reaches the running encoder - both RTSP streams stayed H.265 while the documents
+  claimed 12 fps for them. The read is unaffected and the write keeps reporting what the
+  camera kept (`encoder_fault` with `codec_kept_…`), so the panel never shows a change that
+  only exists in the document; the documentation now says so as well.
+
 ## [0.7.0] - 2026-10-19
 
 ### Fixed
@@ -19,12 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The token is unchanged, so the panel lists `xm:<channel>:<stream>:<entry>` either way.
 - A document that *is* the list of the channels is read like the one that keeps the list
   under `Encode`, and the write follows the path of that layout.
-- **A camera that is simply not there is reported as unreachable, not as a fault of the
-  device.** The transport named a failure after the sentence the platform puts into an
-  `OSError`, and only Windows names the refusal in it: Linux answers a closed port with
-  `[Errno 111] Connect call failed ('127.0.0.1', 49737)`, which the suite on CI turned into
-  `encoder_fault`. The socket now names the failure (`refused`, `unreachable`, `timeout`)
-  and the text of the platform follows it for the log and the panel.
 
 ## [0.6.0] - 2026-10-18
 
