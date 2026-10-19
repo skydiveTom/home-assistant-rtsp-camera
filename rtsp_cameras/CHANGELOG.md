@@ -4,6 +4,32 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-10-19
+
+### Added
+
+- **A camera entity shows a picture before anything starts the stream.** Every card
+  that shows a camera (the entity row, a picture card, `camera.snapshot`) now asks the
+  add-on for one JPEG: the add-on pulls a single frame with its own ffmpeg, so no
+  stream is opened in Home Assistant, no keyframe is awaited and no H.265 problem has
+  to be solved for a still. The answer is kept for five seconds, so a dashboard that
+  repaints does not start ffmpeg in the add-on over and over. The stream stays the
+  fallback - a camera that the add-on cannot reach still answers from Home Assistant's
+  own stream, exactly as before.
+- The address of the add-on is asked from the Supervisor (container address first, the
+  add-on's ingress as the second door) and kept for five minutes, so a camera card
+  costs no Supervisor call per picture. A local add-on is found by the tail of its
+  slug (`97dbc456_rtsp_cameras`), not by the shipped `rtsp_cameras` alone.
+
+### Fixed
+
+- **The entity had no picture at all without a snapshot URL.** `entity_picture`
+  returned `None` unless the camera file named a snapshot URL, which suppressed the
+  picture Home Assistant builds for every camera entity (its camera proxy with the
+  access token inside). A picture card therefore had nothing to show until the stream
+  was running - the reason a camera could not be placed on a dashboard before its
+  first stream start.
+
 ## [0.7.1] - 2026-10-19
 
 ### Fixed

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Sequence
 from http import HTTPStatus
 from typing import Any
 
@@ -19,8 +20,10 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .addon import async_addon_urls, snapshot_url
 from .const import (
     ADD_CAMERA_URL,
+    ADDON_SNAPSHOT_TIMEOUT_SECONDS,
     ATTR_CAMERA_ID,
     ATTR_CODEC,
     ATTR_PTZ,
@@ -33,6 +36,7 @@ from .const import (
     KEYFRAME_WAIT_SECONDS,
     MANUFACTURER,
     PTZ_DIRECTIONS,
+    SNAPSHOT_CACHE_SECONDS,
     SNAPSHOT_TIMEOUT_SECONDS,
 )
 from .coordinator import RtspCamerasCoordinator
@@ -153,6 +157,8 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         self._definition = definition
         self._attr_name = definition.name
         self._attr_unique_id = f"{DOMAIN}_{definition.id}"
+        self._snapshot_lock = asyncio.Lock()
+        self._snapshot_cache: tuple[float, bytes] | None = None
         self.async_update_stream_options()
 
     @callback
@@ -224,8 +230,19 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
 
     @property
     def entity_picture(self) -> str | None:
-        """Return an optional snapshot URL for the entity picture."""
-        return self._definition.snapshot_url
+        """Return the picture a dashboard shows for this camera.
+
+        A snapshot URL known to the add-on wins: it is served by the camera or by
+        the network, so a browser loads it without Home Assistant. Without one the
+        entity picture of Home Assistant itself is used - a link to its camera
+        proxy with the access token inside - and the image behind it comes from
+        ``async_camera_image`` below. Returning ``None`` here (as this property did
+        before) left the entity without any picture at all, so a picture card had to
+        start the stream before it could show a camera that was not running yet.
+        """
+        if self._definition.snapshot_url:
+            return self._definition.snapshot_url
+        return super().entity_picture
 
     async def stream_source(self) -> str | None:
         """Return the stream URL handed over to the Home Assistant stream component.
@@ -242,21 +259,29 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
     ) -> bytes | None:
         """Return a still image for the camera card and ``camera.snapshot``.
 
-        Home Assistant grabs stills from the live stream with
-        ``Stream.async_get_image`` - but its ``use_stream_for_stills`` flag is a
-        plain property (``_attr_use_stream_for_stills`` does not exist in 2026.9),
-        and the first call right after a stream start often has no keyframe yet and
-        returns ``None`` (Home Assistant then reports "Unable to get image").
-        Therefore the still is taken here: the frame the running stream already
-        holds is used first (a stream that was open for a while answers at once),
-        then a keyframe is awaited with a bound timeout. Waiting first would cost
-        ``KEYFRAME_WAIT_SECONDS`` on every still of a stream that has been running
-        for hours. A snapshot URL known to the add-on has priority.
+        Three sources are asked, the cheapest one first:
+
+        1. a snapshot URL the camera publishes (a request to the camera itself),
+        2. the add-on, which pulls one frame with its own ffmpeg - two seconds at
+           worst and *no* stream in Home Assistant, so a dashboard shows the camera
+           before anything starts the live view,
+        3. Home Assistant's own stream, which ``use_stream_for_stills`` would have
+           used: the frame a running stream already holds answers at once, and only
+           a stream that was just started waits up to ``KEYFRAME_WAIT_SECONDS`` for
+           its first keyframe.
+
+        The add-on is asked before the stream on purpose: starting a stream costs
+        the camera a session, a keyframe wait and (for H.265) a picture no browser
+        can play, while one ffmpeg call in the add-on answers with a JPEG.
         """
         if self._definition.snapshot_url:
             image = await self._async_fetch_snapshot(self._definition.snapshot_url)
             if image is not None:
                 return image
+
+        image = await self._async_addon_image()
+        if image is not None:
+            return image
 
         stream = await self.async_create_stream()
         if stream is None:
@@ -276,20 +301,76 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
             image = None
         return image
 
+    async def _async_addon_image(self) -> bytes | None:
+        """Return a still the add-on rendered, or None when it cannot be reached.
+
+        The answer is kept for ``SNAPSHOT_CACHE_SECONDS``: a dashboard asks for a
+        picture of every camera on every view, and each request that misses the
+        cache runs ffmpeg in the add-on. A lock keeps a burst of requests for the
+        same camera down to one call.
+        """
+        cached = self._snapshot_cache
+        if cached is not None and time.monotonic() - cached[0] < SNAPSHOT_CACHE_SECONDS:
+            return cached[1]
+
+        async with self._snapshot_lock:
+            cached = self._snapshot_cache
+            if cached is not None and time.monotonic() - cached[0] < SNAPSHOT_CACHE_SECONDS:
+                return cached[1]
+
+            image = await self._async_fetch_addon_snapshot()
+            if image is None:
+                return None
+            self._snapshot_cache = (time.monotonic(), image)
+            return image
+
+    async def _async_fetch_addon_snapshot(self) -> bytes | None:
+        """Download a still from the API of the add-on.
+
+        The addresses come from the Supervisor and can be stale (a container that
+        was rebuilt gets a new one), so the second round asks for them again - a
+        still that fails once is not worth a warning, the stream still answers.
+        """
+        bases = await async_addon_urls(self.hass)
+        image = await self._async_try_addon_bases(bases)
+        if image is not None or not bases:
+            return image
+        # The address may be stale (a container that was rebuilt gets a new one).
+        return await self._async_try_addon_bases(
+            await async_addon_urls(self.hass, refresh=True)
+        )
+
+    async def _async_try_addon_bases(self, bases: Sequence[str]) -> bytes | None:
+        """Ask every known address of the add-on for one still."""
+        for base in bases:
+            image = await self._async_download(
+                snapshot_url(base, self._definition.id),
+                warn=False,
+                timeout=ADDON_SNAPSHOT_TIMEOUT_SECONDS,
+            )
+            if image is not None:
+                return image
+        return None
+
     async def _async_fetch_snapshot(self, url: str) -> bytes | None:
         """Download an image from the optional snapshot URL of the camera."""
+        return await self._async_download(url, warn=True)
+
+    async def _async_download(
+        self, url: str, *, warn: bool, timeout: float = SNAPSHOT_TIMEOUT_SECONDS
+    ) -> bytes | None:
+        """Download an image, reporting a failure as a warning or as debug."""
         session = async_get_clientsession(self.hass)
+        log = _LOGGER.warning if warn else _LOGGER.debug
         try:
-            async with asyncio.timeout(SNAPSHOT_TIMEOUT_SECONDS):
+            async with asyncio.timeout(timeout):
                 async with session.get(url) as response:
                     if response.status != HTTPStatus.OK:
-                        _LOGGER.warning(
-                            "Snapshot of %s returned HTTP %s", self.entity_id, response.status
-                        )
+                        log("Snapshot of %s returned HTTP %s", self.entity_id, response.status)
                         return None
                     return await response.read()
         except (TimeoutError, aiohttp.ClientError) as err:
-            _LOGGER.warning("Snapshot of %s failed: %s", self.entity_id, err)
+            log("Snapshot of %s failed: %s", self.entity_id, err)
             return None
 
     # ------------------------------------------------------------------- PTZ

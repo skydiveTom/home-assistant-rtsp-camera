@@ -77,6 +77,23 @@ SERVICE_PTZ_HOME = "ptz_home"
 KEYFRAME_WAIT_SECONDS = 8
 # Optional snapshot URL of a camera (downloaded by the integration for stills).
 SNAPSHOT_TIMEOUT_SECONDS = 10
+# The add-on grabs a frame with ffmpeg: connecting to the camera and waiting for a
+# keyframe took 2 to 9 s on the test set, so the add-on gets a little more room than
+# a plain HTTP snapshot - its own ffmpeg gives up after ``test_timeout`` + 5 s.
+ADDON_SNAPSHOT_TIMEOUT_SECONDS = 15
+# The add-on renders a still with its own ffmpeg (one frame of the camera, no
+# stream in Home Assistant), which is what a dashboard shows while nobody watches
+# the stream - a card asks for it again and again, so the answer is kept this long
+# before the add-on has to run ffmpeg once more.
+SNAPSHOT_CACHE_SECONDS = 5
+#: Path of the still inside the API of the add-on (JPEG, ``?height=`` optional).
+ADDON_SNAPSHOT_PATH = "/api/cameras/{camera_id}/snapshot.jpg"
+#: Port the add-on's web server listens on when the Supervisor does not say it.
+ADDON_API_PORT = 8099
+#: How long the address of the add-on is reused, and how long a failed lookup waits.
+ADDON_URL_RESOLVE_SECONDS = 300
+ADDON_URL_RETRY_SECONDS = 30
+DATA_ADDON_API_URLS = f"{DOMAIN}_addon_api_urls"
 
 
 def resolve_cameras_path(configured: str | None, config_dir: str | Path) -> Path:

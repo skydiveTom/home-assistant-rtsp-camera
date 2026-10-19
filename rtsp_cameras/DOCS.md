@@ -136,8 +136,15 @@ After the restart you get one device per camera:
 - `camera.<name>` with the **stream source** pointing directly at your RTSP URL,
   so Home Assistant handles the live view with its own stream component
   (HLS/WebRTC, exactly like the built-in Generic Camera).
-- Still images are generated from the stream by Home Assistant, so the add-on does
-  not have to run for a snapshot.
+- **A still is ready before the stream starts.** The card, a picture card and
+  `camera.snapshot` ask the add-on for one JPEG, which the add-on renders with its
+  own ffmpeg (one frame of the camera, five seconds of cache). No stream is opened
+  in Home Assistant for it, no keyframe is awaited, and a camera whose live view
+  stays black in the browser (H.265) still shows a picture. Only when the add-on
+  cannot be reached does the still fall back to Home Assistant's own stream.
+- The entity always has a picture: a snapshot URL of the camera file if there is
+  one, otherwise the camera proxy of Home Assistant (with the access token inside
+  the URL), so a picture card can show the camera as soon as the entity exists.
 - Attributes show the add-on camera id, the RTSP transport, the codec and the file
   the definition came from.
 
@@ -166,8 +173,9 @@ exceptions). Check the codec in the camera tile of the add-on:
   *Settings* of a camera card - has **Preload stream**: Home Assistant then keeps the
   stream running, from its own start on, and the cards are live as soon as they are shown.
   A camera whose RTSP server allows only a few sessions at a time should stay without it.
-- Still images (thumbnail, `camera.snapshot`) are taken from the live stream by the
-  integration: the frame a running stream already holds answers at once, and only a stream
+- Still images (thumbnail, `camera.snapshot`) come from the add-on and cost no stream
+  at all; only when the add-on does not answer is the still taken from Home Assistant's
+  own stream: the frame a running stream already holds answers at once, and a stream
   that was just started waits up to 8 seconds for its first keyframe.
 
 **PTZ (pan, tilt, zoom)**

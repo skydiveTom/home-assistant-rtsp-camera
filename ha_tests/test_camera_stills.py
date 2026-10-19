@@ -246,3 +246,90 @@ async def test_error_status_of_the_snapshot_url_falls_back(hass, entry, monkeypa
 
     assert stream.calls == [False, True]
     assert any("returned HTTP 404" in record.message for record in caplog.records)
+
+
+def use_addon(monkeypatch: pytest.MonkeyPatch, *bases: str) -> None:
+    """Make the integration believe the add-on answers on these addresses."""
+    monkeypatch.setattr(
+        camera_module,
+        "async_addon_urls",
+        lambda hass, refresh=False: _async_urls(list(bases)),
+    )
+
+
+async def _async_urls(bases: list[str]) -> list[str]:
+    """Return the addresses as the awaited helper of the integration would."""
+    return bases
+
+
+async def test_addon_still_answers_without_a_stream(hass, entry, monkeypatch):
+    """The add-on renders the still, so a card needs no live stream at all."""
+    payload = b"\xff\xd8\xff\xe0" + b"from-the-addon" + b"\xff\xd9"
+
+    camera = await setup_camera(hass, entry)
+    stream = FakeStream()
+    monkeypatch.setattr(camera, "async_create_stream", stream_factory(stream))
+    session = FakeSession(FakeResponse(body=payload))
+    use_session(monkeypatch, session)
+    use_addon(monkeypatch, "http://172.30.33.4:8099")
+
+    assert await camera.async_camera_image() == payload
+    assert session.urls == ["http://172.30.33.4:8099/api/cameras/front_door/snapshot.jpg"]
+    assert stream.calls == [], "no stream is started for a still of the add-on"
+
+
+async def test_addon_still_is_answered_from_the_cache(hass, entry, monkeypatch):
+    """A dashboard asks again and again: the add-on runs ffmpeg only once."""
+    camera = await setup_camera(hass, entry)
+    monkeypatch.setattr(camera, "async_create_stream", stream_factory(FakeStream()))
+    session = FakeSession(FakeResponse(body=JPEG))
+    use_session(monkeypatch, session)
+    use_addon(monkeypatch, "http://172.30.33.4:8099")
+
+    assert await camera.async_camera_image() == JPEG
+    assert await camera.async_camera_image() == JPEG
+    assert len(session.urls) == 1, "the second still comes from the cache"
+
+
+async def test_unreachable_addon_falls_back_to_the_stream(hass, entry, monkeypatch, caplog):
+    """An add-on that does not answer silently hands over to the stream."""
+    camera = await setup_camera(hass, entry)
+    stream = FakeStream()
+    monkeypatch.setattr(camera, "async_create_stream", stream_factory(stream))
+    use_session(monkeypatch, FakeSession(error=aiohttp.ClientError("no answer")))
+    use_addon(monkeypatch, "http://172.30.33.4:8099")
+
+    with caplog.at_level("DEBUG"):
+        assert await camera.async_camera_image() == JPEG
+
+    assert stream.calls == [False, True]
+    assert not [
+        record
+        for record in caplog.records
+        if record.levelname == "WARNING" and record.name == camera_module.__name__
+    ], "a still that the add-on cannot render is not a warning"
+
+
+async def test_entity_picture_is_the_camera_proxy_of_home_assistant(hass, entry, monkeypatch):
+    """Without a snapshot URL the entity still has a picture.
+
+    Home Assistant links its camera proxy (with the access token inside the URL),
+    so a picture card shows the still of ``async_camera_image`` - even when the
+    stream of the camera was never started.
+    """
+    camera = await setup_camera(hass, entry)
+
+    picture = camera.entity_picture
+
+    assert picture is not None
+    assert picture.startswith("/api/camera_proxy/camera.front_door?token=")
+
+
+async def test_entity_picture_prefers_the_snapshot_url(hass, entry, monkeypatch):
+    """A snapshot URL of the camera wins over the proxy of Home Assistant."""
+    url = "http://10.0.0.5/snapshot.jpg"
+
+    camera = await setup_camera(hass, entry, snapshot_url=url)
+
+    assert camera.entity_picture == url
+
