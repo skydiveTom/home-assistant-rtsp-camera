@@ -88,6 +88,49 @@ def avenc_list_document(
     }
 
 
+def avenc_group_document() -> dict[str, Any]:
+    """Return the layout of the test camera: one group whose formats are per channel lists."""
+
+    def fmt(size: str, gop: int, compression: str = "H265") -> dict[str, Any]:
+        return {
+            "Audio": {"BitRate": 64, "MaxVolume": 100, "SampleRate": 8000},
+            "AudioEnable": 0,
+            "Video": {
+                "BitRate": 4096,
+                "BitRateControl": 0,
+                "Compression": compression,
+                "FPS": 25,
+                "GOP": gop,
+                "Quality": 4,
+                "Resolution": size,
+                "VirtualGOP": 0,
+            },
+            "VideoEnable": 1,
+        }
+
+    def group(offset: int) -> dict[str, Any]:
+        return {
+            "EncodeStaticParam": [{"Level": 3, "Profile": 1}],
+            "MainFormat": [
+                fmt("1920*1080", 50 + offset),
+                fmt("1280*720", 40 + offset),
+                fmt("640*360", 30 + offset),
+            ],
+            "ExtraFormat": [
+                fmt("640*360", 25 + offset),
+                fmt("640*360", 25 + offset),
+                fmt("640*360", 25 + offset),
+            ],
+            "SnapFormat": [fmt("640*360", 25), fmt("640*360", 25), fmt("640*360", 25)],
+        }
+
+    return {
+        "DefinitionCfgTable": {"Table": []},
+        "Encode": [group(0), group(1), group(2)],
+        "EncodeEx": [{"Dst3irdFmt": 0, "Dst4rthFmt": 0}],
+    }
+
+
 def avenc_channel_document() -> dict[str, Any]:
     """Return the layout of the test camera: a list of channels, each with its blocks."""
 
@@ -408,6 +451,44 @@ def test_read_reports_the_shape_of_streams_without_a_codec(xm_cam: int) -> None:
 
     assert report.ok is True
     assert report.to_dict()["shape"].startswith("Encode[2]{Resolution}")
+
+
+def test_read_understands_the_per_channel_lists(xm_cam: int) -> None:
+    """A block that is a list over channels is read at the entry of that channel."""
+    FakeXmCamera.document = avenc_group_document()
+
+    first = asyncio.run(
+        xm_media.async_read("127.0.0.1", port=xm_cam, channel=1, preferred="extra")
+    )
+    second = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam, channel=2))
+
+    assert first.ok is True
+    assert [item["token"] for item in first.configurations] == ["xm:1:extra", "xm:1:main"]
+    main = first.configurations[1]
+    assert (main["width"], main["height"]) == (1920, 1080)
+    assert main["gop"] == 50
+    assert main["bitrate"] == 4096
+    assert second.configurations[0]["gop"] == 40
+
+
+def test_write_understands_the_per_channel_lists(xm_cam: int) -> None:
+    """The codec word lands in the channel entry of the block that was read."""
+    FakeXmCamera.document = avenc_group_document()
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    document = FakeXmCamera.writes()[0]["payload"][xm_media.CONFIG_NAME]
+    assert document["Encode"][0]["ExtraFormat"][0]["Video"]["Compression"] == "H264"
+    assert document["Encode"][0]["MainFormat"][0]["Video"]["Compression"] == "H265"
+    assert document["Encode"][0]["ExtraFormat"][1]["Video"]["Compression"] == "H265"
+    assert document["Encode"][1]["ExtraFormat"][0]["Video"]["Compression"] == "H265"
+    assert document["Encode"][0]["SnapFormat"][0]["Video"]["Compression"] == "H265"
 
 
 def test_read_finds_the_streams_of_the_configured_channel(xm_cam: int) -> None:

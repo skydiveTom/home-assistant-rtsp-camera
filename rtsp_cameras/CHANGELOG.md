@@ -4,6 +4,17 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2026-10-18
+
+### Fixed
+
+- **The blocks of a stream are a list over the channels on the firmware of the test set**
+  (`Encode[3]{MainFormat[3]{Video{Compression, …}, Audio, VideoEnable}}`), not a single
+  object: the block of the configured channel is read from that list now, and the write
+  puts the codec word inside the same entry. Both other lists the family uses - an entry
+  per channel and an entry per stream - are still recognized, so a firmware that answered
+  before answers the same way.
+
 ## [0.5.6] - 2026-10-18
 
 ### Added

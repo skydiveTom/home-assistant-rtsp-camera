@@ -199,7 +199,7 @@ def stream_blocks(
     entry of the configured channel is the one that is read. The path points at the object
     that holds ``Compression``, so the write puts the codec word where the device keeps it.
     """
-    blocks = _block_streams(document)
+    blocks = _block_streams(document, channel)
     if blocks:
         return blocks
 
@@ -207,12 +207,27 @@ def stream_blocks(
     if not isinstance(entries, list) or not entries:
         return []
 
-    index = _channel_index(entries, channel)
-    if index is not None:
-        return [
-            (stream, (ENCODE_KEY, index, *path), video)
-            for stream, path, video in _block_streams(entries[index])
-        ]
+    # A list of channels: every entry carries the blocks of its own streams.
+    carrying = [
+        position
+        for position, entry in enumerate(entries)
+        if isinstance(entry, Mapping)
+        and any(isinstance(entry.get(key), Mapping) for key, _stream, _label in STREAMS)
+    ]
+    if carrying:
+        wanted = max(0, channel - 1)
+        position = wanted if wanted in carrying else carrying[0]
+        blocks = _block_streams(entries[position], channel, prefix=(ENCODE_KEY, position))
+        if blocks:
+            return blocks
+
+    # A list of groups: the blocks of a group are lists over the channels of the device.
+    for group, entry in enumerate(entries):
+        if not isinstance(entry, Mapping):
+            continue
+        blocks = _block_streams(entry, channel, prefix=(ENCODE_KEY, group))
+        if blocks:
+            return blocks
 
     for position, entry in enumerate(entries):
         if not isinstance(entry, Mapping) or not entry:
@@ -228,38 +243,39 @@ def stream_blocks(
 
 
 def _block_streams(
-    document: Mapping[str, Any],
+    document: Mapping[str, Any], channel: int = 1, prefix: tuple[str | int, ...] = ()
 ) -> list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]]:
-    """Return the streams of a block layout (``MainFormat`` / ``ExtraFormat``)."""
+    """Return the streams of a block layout (``MainFormat`` / ``ExtraFormat``).
+
+    A block is either the object of the stream or a *list* over the channels of the device
+    - the firmware of the test set keeps three entries in every block - so the entry of the
+    configured channel is taken from it.
+    """
     blocks: list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]] = []
     for key, stream, _label in STREAMS:
         block = document.get(key)
+        path: tuple[str | int, ...] = (*prefix, key)
+        if isinstance(block, list):
+            index = _list_index(block, channel)
+            if index is None:
+                continue
+            block = block[index]
+            path = (*path, index)
         if not isinstance(block, Mapping):
             continue
         holder = _video_holder(block)
         if holder is None:
             continue
-        blocks.append((stream, (key, *holder[0]), holder[1]))
+        blocks.append((stream, (*path, *holder[0]), holder[1]))
     return blocks
 
 
-def _channel_index(entries: list[Any], channel: int) -> int | None:
-    """Return the entry of a list that keeps a stream block per channel.
-
-    A list whose entries carry ``MainFormat``/``ExtraFormat`` is a list of *channels*, so
-    the entry of the configured channel is wanted - and the first entry that carries
-    blocks is the fallback of a firmware whose channel numbering differs.
-    """
-    carrying = [
-        position
-        for position, entry in enumerate(entries)
-        if isinstance(entry, Mapping)
-        and any(isinstance(entry.get(key), Mapping) for key, _stream, _label in STREAMS)
-    ]
-    if not carrying:
+def _list_index(entries: list[Any], channel: int) -> int | None:
+    """Return the entry of a per channel list, or the first one when the numbering differs."""
+    if not entries:
         return None
     wanted = max(0, channel - 1)
-    return wanted if wanted in carrying else carrying[0]
+    return wanted if wanted < len(entries) else 0
 
 
 def _video_holder(
