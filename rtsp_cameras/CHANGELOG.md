@@ -4,6 +4,21 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-10-18
+
+### Added
+
+- **The encoder document is read in both layouts the family uses.** The firmware of the
+  test set keeps its streams in a list under `Encode` (one entry per stream, the video
+  fields in the entry itself), while older devices name a block per stream
+  (`MainFormat`/`ExtraFormat`, the fields under `Video`). Both are read now, the write puts
+  the codec word where the device keeps it, and the lists some firmwares add next to it
+  (`EncodeEx`, `SmartH264`) travel back untouched - the document is only changed at that
+  one path.
+- **The shape an unknown document is reported with goes one level deeper**: a list shows
+  the keys of its first entry (`Encode[3]{Compression, FPS, GOP, …}`), so a firmware with a
+  third layout can be identified from the error detail alone.
+
 ## [0.5.2] - 2026-10-18
 
 ### Added

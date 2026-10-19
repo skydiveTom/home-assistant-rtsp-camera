@@ -37,14 +37,25 @@ from .onvif_media import (
     EncoderReport,
 )
 
-#: The name of the configuration document and the blocks of the streams inside it, in the
-#: order the panel lists them. ``main`` is the high resolution stream the first RTSP
-#: channel serves, ``extra`` the sub stream of it.
+#: The name of the configuration document and the blocks of the streams inside it: the
+#: older layout names a block per stream, the newer one keeps a list under ``Encode`` with
+#: one entry for every stream. ``main`` is the high resolution stream the first RTSP
+#: channel serves, ``extra`` the sub stream of it, ``third`` the stream some devices add.
 CONFIG_NAME = "AVEnc"
 STREAMS: tuple[tuple[str, str, str], ...] = (
     ("MainFormat", "main", "Main stream"),
     ("ExtraFormat", "extra", "Sub stream"),
 )
+ENCODE_KEY = "Encode"
+STREAM_NAMES = ("main", "extra", "third")
+STREAM_LABELS = ("Main stream", "Sub stream", "Third stream")
+
+
+def _stream_label(stream: str) -> str:
+    """Return the name the panel shows for a stream of the document."""
+    if stream in STREAM_NAMES:
+        return STREAM_LABELS[STREAM_NAMES.index(stream)]
+    return f"Stream {stream}"
 DEFAULT_PORT = dvrip.DEFAULT_PORT
 #: The backend name the panel shows and the write routes on.
 BACKEND = "xm"
@@ -94,21 +105,30 @@ def describe_document(document: Any) -> str:
 
     The block names of the streams are the one thing this module cannot know - a firmware
     may call them differently - so an answer that carries no stream is shown as the keys
-    and blocks it did bring. That is what a report of the panel and the next version of
-    this module need, without a packet capture.
+    and blocks it did bring, including the keys of the first entry of a list. That is what
+    a report of the panel and the next version of this module need, without a packet
+    capture.
     """
     if not isinstance(document, Mapping):
         return ""
-    parts: list[str] = []
-    for key in sorted(document, key=str):
-        value = document[key]
-        if isinstance(value, Mapping):
-            parts.append(f"{key}{{{', '.join(sorted(str(item) for item in value))}}}")
-        elif isinstance(value, list):
-            parts.append(f"{key}[{len(value)}]")
-        else:
-            parts.append(f"{key}={value}")
+    parts = [
+        f"{key}{_shape(value, 2)}"
+        for key, value in sorted(document.items(), key=lambda item: str(item[0]))
+    ]
     return "; ".join(parts)[:MAX_DESCRIPTION]
+
+
+def _shape(value: Any, depth: int) -> str:
+    """Return the shape of one document value: the keys of an object, the length of a list."""
+    if isinstance(value, Mapping):
+        keys = ", ".join(sorted(str(item) for item in value)[:12])
+        return "{" + keys + "}"
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        head = _shape(value[0], depth - 1) if depth > 0 else ""
+        return f"[{len(value)}]{head}"
+    return ""
 
 
 def token_of(channel: int, stream: str) -> str:
@@ -128,6 +148,58 @@ def parse_token(token: Any) -> tuple[int, str] | None:
     return channel, stream
 
 
+def stream_blocks(
+    document: Mapping[str, Any],
+) -> list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]]:
+    """Return stream, path and video fields of every stream the document carries.
+
+    Two layouts are known and both are read: a block per stream (``MainFormat`` /
+    ``ExtraFormat``, the video fields under ``Video``) and a list under ``Encode`` with one
+    entry per stream, where the video fields sit in the entry itself or under its
+    ``Video``. The path points at the object that holds ``Compression``, so the write puts
+    the codec word where the device keeps it.
+    """
+    blocks: list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]] = []
+    for key, stream, _label in STREAMS:
+        block = document.get(key)
+        if not isinstance(block, Mapping):
+            continue
+        video = block.get("Video")
+        if isinstance(video, Mapping) and video:
+            blocks.append((stream, (key, "Video"), video))
+    if blocks:
+        return blocks
+
+    entries = document.get(ENCODE_KEY)
+    if not isinstance(entries, list):
+        return blocks
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, Mapping) or not entry:
+            continue
+        stream = STREAM_NAMES[index] if index < len(STREAM_NAMES) else str(index)
+        video = entry.get("Video")
+        if isinstance(video, Mapping) and video:
+            blocks.append((stream, (ENCODE_KEY, index, "Video"), video))
+        else:
+            blocks.append((stream, (ENCODE_KEY, index), entry))
+    return blocks
+
+
+def _follow(document: Any, path: tuple[str | int, ...]) -> dict[str, Any] | None:
+    """Return the object a path points at, or None when the document has no such object."""
+    node: Any = document
+    for step in path:
+        if isinstance(step, int):
+            if not isinstance(node, list) or step >= len(node):
+                return None
+            node = node[step]
+        else:
+            if not isinstance(node, Mapping):
+                return None
+            node = node.get(step)
+    return node if isinstance(node, dict) else None
+
+
 def parse_encoders(
     document: dict[str, Any], channel: int, preferred: str = ""
 ) -> list[dict[str, Any]]:
@@ -135,22 +207,16 @@ def parse_encoders(
 
     The stream the camera of the panel serves first (``preferred``, taken from the
     ``stream=`` of its RTSP URL) is listed first, so the encoder the user has to change is
-    the one on top. The ``element`` of every entry is the ``Video`` object of the document:
-    the write sends the document back with that one field replaced.
+    the one on top. The ``element`` of every entry is the object of the document that holds
+    the video fields: the write sends the document back with that one field replaced.
     """
     configurations: list[dict[str, Any]] = []
-    for key, stream, label in STREAMS:
-        block = document.get(key)
-        if not isinstance(block, dict):
-            continue
-        video = block.get("Video")
-        if not isinstance(video, dict) or not video:
-            continue
+    for stream, path, video in stream_blocks(document):
         width, height = _resolution(video.get("Resolution"))
         configurations.append(
             {
                 "token": token_of(channel, stream),
-                "name": label,
+                "name": _stream_label(stream),
                 "use_count": None,
                 "encoding": str(video.get("Compression") or "").strip().upper(),
                 "width": width,
@@ -163,7 +229,7 @@ def parse_encoders(
                 "profile": str(video.get("Profile") or "").strip(),
                 "element": video,
                 "stream": stream,
-                "key": key,
+                "path": path,
             }
         )
     if preferred:
@@ -324,11 +390,8 @@ async def async_write(
 
     # The document the camera handed out goes back with one word replaced.
     written = {key: _copy(value) for key, value in (document or {}).items()}
-    block = written.get(current["key"])
-    if not isinstance(block, dict):
-        return EncoderReport(error=ERROR_FAULT, detail="no_stream_block", backend=BACKEND)
-    video = block.get("Video")
-    if not isinstance(video, dict):
+    video = _follow(written, current["path"])
+    if video is None:
         return EncoderReport(error=ERROR_FAULT, detail="no_video_block", backend=BACKEND)
     video["Compression"] = wanted
 

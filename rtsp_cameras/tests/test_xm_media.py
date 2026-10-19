@@ -66,6 +66,28 @@ def avenc_document(main: str = "H265", extra: str = "H265") -> dict[str, Any]:
     }
 
 
+def avenc_list_document(
+    compressions: tuple[str, ...] = ("H265", "H265", "H264"),
+) -> dict[str, Any]:
+    """Return the newer layout of the document: one entry per stream under ``Encode``."""
+    resolutions = ("1920*1080", "640*360", "1920*1080")
+    return {
+        "DefinitionCfgTable": {"Table": []},
+        "Encode": [
+            {
+                "Compression": compression,
+                "Resolution": resolutions[index],
+                "FPS": 25,
+                "GOP": 50,
+                "BitRate": 4096,
+                "Quality": 4,
+            }
+            for index, compression in enumerate(compressions)
+        ],
+        "EncodeEx": [{"Compression": compression} for compression in compressions],
+    }
+
+
 class FakeXmCamera(socketserver.ThreadingTCPServer):
     """Fake Xiongmai device: it logs in and answers the ``AVEnc`` document."""
 
@@ -221,6 +243,41 @@ def test_read_reports_every_stream_of_the_camera(xm_cam: int) -> None:
     assert report.to_dict()["backend"] == "xm"
 
 
+def test_read_understands_the_encode_list_layout(xm_cam: int) -> None:
+    """A firmware that keeps one entry per stream under ``Encode`` is read as well."""
+    FakeXmCamera.document = avenc_list_document()
+
+    report = asyncio.run(
+        xm_media.async_read("127.0.0.1", port=xm_cam, preferred="extra")
+    )
+
+    assert report.ok is True
+    tokens = [item["token"] for item in report.configurations]
+    assert tokens == ["xm:1:extra", "xm:1:main", "xm:1:third"]
+    extra = report.configurations[0]
+    assert extra["name"] == "Sub stream"
+    assert (extra["width"], extra["height"]) == (640, 360)
+    assert [item["encoding"] for item in report.configurations] == ["H265", "H265", "H264"]
+
+
+def test_write_understands_the_encode_list_layout(xm_cam: int) -> None:
+    """The write puts the codec word inside the entry the camera keeps it in."""
+    FakeXmCamera.document = avenc_list_document()
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    document = FakeXmCamera.writes()[0]["payload"][xm_media.CONFIG_NAME]
+    assert document["Encode"][1]["Compression"] == "H264"
+    assert document["Encode"][0]["Compression"] == "H265"
+    assert document["EncodeEx"][1]["Compression"] == "H265"
+
+
 def test_read_lists_the_stream_of_the_url_first(xm_cam: int) -> None:
     """The stream the RTSP URL of the camera serves is the one on top."""
     report = asyncio.run(
@@ -256,7 +313,11 @@ def test_read_names_the_shape_of_an_unknown_document(xm_cam: int) -> None:
     """A firmware that names its stream blocks differently is shown with its own shape."""
     FakeXmCamera.answer = {
         "Ret": 100,
-        xm_media.CONFIG_NAME: {"Channel": 0, "Video": {"Compression": "H264"}, "Extra": [1]},
+        xm_media.CONFIG_NAME: {
+            "Channel": 0,
+            "Video": {"Compression": "H264"},
+            "Extra": [{"FPS": 25}],
+        },
     }
 
     report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
@@ -265,8 +326,8 @@ def test_read_names_the_shape_of_an_unknown_document(xm_cam: int) -> None:
     assert report.error == "encoder_no_media"
     assert report.detail.startswith("no_streams:")
     assert "Video{Compression}" in report.detail
-    assert "Extra[1]" in report.detail
-    assert "Channel=0" in report.detail
+    assert "Extra[1]{FPS}" in report.detail
+    assert "Channel" in report.detail
 
 
 def test_read_reports_refused_credentials(xm_cam: int) -> None:
