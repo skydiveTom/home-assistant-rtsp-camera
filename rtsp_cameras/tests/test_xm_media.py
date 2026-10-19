@@ -252,6 +252,23 @@ def test_read_without_a_document_is_a_camera_without_encoders(xm_cam: int) -> No
     assert report.detail.startswith("no_avenc")
 
 
+def test_read_names_the_shape_of_an_unknown_document(xm_cam: int) -> None:
+    """A firmware that names its stream blocks differently is shown with its own shape."""
+    FakeXmCamera.answer = {
+        "Ret": 100,
+        xm_media.CONFIG_NAME: {"Channel": 0, "Video": {"Compression": "H264"}, "Extra": [1]},
+    }
+
+    report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
+
+    assert report.ok is False
+    assert report.error == "encoder_no_media"
+    assert report.detail.startswith("no_streams:")
+    assert "Video{Compression}" in report.detail
+    assert "Extra[1]" in report.detail
+    assert "Channel=0" in report.detail
+
+
 def test_read_reports_refused_credentials(xm_cam: int) -> None:
     """A device that refuses the login is an authentication failure."""
     FakeXmCamera.fail_login = True

@@ -4,6 +4,17 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-10-18
+
+### Added
+
+- **An encoder answer that this add-on does not understand names its own shape.** A
+  firmware whose configuration document calls its stream blocks something else than
+  `MainFormat`/`ExtraFormat` answered `encoder_no_media` with `no_streams` and nothing to
+  work with; the error now carries the keys and blocks the device did bring
+  (`no_streams: Channel=0; Video{Compression,Resolution}`), so the next version - and a
+  bug report - know what the camera sends without a packet capture.
+
 ## [0.5.1] - 2026-10-18
 
 ### Added

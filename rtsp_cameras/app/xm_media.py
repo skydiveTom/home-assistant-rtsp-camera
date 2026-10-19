@@ -19,6 +19,7 @@ exactly what a panel that trusts the acknowledgement shows as done.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from . import dvrip
@@ -47,6 +48,8 @@ STREAMS: tuple[tuple[str, str, str], ...] = (
 DEFAULT_PORT = dvrip.DEFAULT_PORT
 #: The backend name the panel shows and the write routes on.
 BACKEND = "xm"
+#: How much of a document shape an error detail may carry (the panel shows one line).
+MAX_DESCRIPTION = 400
 
 
 # ------------------------------------------------------------------ parsing
@@ -84,6 +87,28 @@ def document_of(answer: dict[str, Any] | None) -> dict[str, Any] | None:
     if isinstance(document, dict) and document:
         return document
     return None
+
+
+def describe_document(document: Any) -> str:
+    """Return a one line shape of a configuration document (for an error detail).
+
+    The block names of the streams are the one thing this module cannot know - a firmware
+    may call them differently - so an answer that carries no stream is shown as the keys
+    and blocks it did bring. That is what a report of the panel and the next version of
+    this module need, without a packet capture.
+    """
+    if not isinstance(document, Mapping):
+        return ""
+    parts: list[str] = []
+    for key in sorted(document, key=str):
+        value = document[key]
+        if isinstance(value, Mapping):
+            parts.append(f"{key}{{{', '.join(sorted(str(item) for item in value))}}}")
+        elif isinstance(value, list):
+            parts.append(f"{key}[{len(value)}]")
+        else:
+            parts.append(f"{key}={value}")
+    return "; ".join(parts)[:MAX_DESCRIPTION]
 
 
 def token_of(channel: int, stream: str) -> str:
@@ -245,7 +270,11 @@ async def async_read(
         return failure
     configurations = parse_encoders(document or {}, channel, preferred)
     if not configurations:
-        return EncoderReport(error=ERROR_NO_MEDIA, detail="no_streams", backend=BACKEND)
+        return EncoderReport(
+            error=ERROR_NO_MEDIA,
+            detail=f"no_streams: {describe_document(document)}".rstrip(": "),
+            backend=BACKEND,
+        )
     return _report(configurations, host, port)
 
 
