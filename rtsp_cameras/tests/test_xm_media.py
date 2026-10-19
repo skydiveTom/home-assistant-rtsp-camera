@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import errno
 import json
 import socket
 import socketserver
@@ -22,7 +23,7 @@ from typing import Any
 import pytest
 from starlette.testclient import TestClient
 
-from app import xm_media
+from app import dvrip, xm_media
 from app.dvrip import (
     MSG_CONFIG_REQUEST,
     MSG_CONFIG_RESPONSE,
@@ -823,6 +824,12 @@ def test_read_reports_a_camera_that_is_not_there() -> None:
             "actively refused it",
             "encoder_unreachable",
         ),
+        # What Linux puts into the same failure: the word "refused" is not in it, so the
+        # socket names the failure and the text only follows (see ``dvrip.failure_word``).
+        (
+            "refused: [Errno 111] Connect call failed ('127.0.0.1', 49737)",
+            "encoder_unreachable",
+        ),
         ("something the family never said", "encoder_fault"),
     ],
 )
@@ -830,6 +837,30 @@ def test_failures_are_named(detail: str, error: str) -> None:
     """Every failure of the transport gets the error code the panel translates."""
     assert xm_media._failure(detail).error == error
     assert xm_media._failure(detail).backend == "xm"
+
+
+def test_a_closed_port_is_named_after_the_socket_not_after_the_platform() -> None:
+    """A refusal reads the same on every platform, because the socket says which it is.
+
+    The same closed port answers "[Errno 111] Connect call failed" on Linux and "No
+    connection could be made because the target machine actively refused it" on Windows,
+    and only the second sentence carries the word the encoder endpoints used to look for -
+    which is why a run of the suite on Linux reported a camera that was simply not there
+    as a fault of the device.
+    """
+    linux = ConnectionRefusedError(111, "Connect call failed ('127.0.0.1', 49737)")
+    windows = ConnectionRefusedError(
+        10061, "No connection could be made because the target machine actively refused it"
+    )
+
+    assert dvrip.failure_word(linux).startswith(dvrip.FAILURE_REFUSED)
+    assert dvrip.failure_word(windows).startswith(dvrip.FAILURE_REFUSED)
+    assert "Connect call failed" in dvrip.failure_word(linux), "the text is kept for the log"
+    assert dvrip.failure_word(TimeoutError("timed out")) == dvrip.FAILURE_TIMEOUT
+    assert dvrip.failure_word(OSError(errno.EHOSTUNREACH, "No route to host")).startswith(
+        dvrip.FAILURE_UNREACHABLE
+    )
+    assert dvrip.failure_word(ValueError("broken answer")) == "broken answer"
 
 
 # -------------------------------------------------------------------- writing

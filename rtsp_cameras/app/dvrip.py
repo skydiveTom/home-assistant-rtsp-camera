@@ -35,6 +35,7 @@ structure up. A hand written payload that already carries ``Name`` is sent as it
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 import json
 import logging
@@ -107,6 +108,48 @@ PTZ_TEMPLATE: dict[str, Any] = {
 #: the command under any other key - ``PTZControl``, which this file used to send - is
 #: answered with ``Ret: 100`` and then ignored: the device has no member of that name.
 PTZ_MESSAGE = "OPPTZControl"
+
+
+#: The words a failure of the socket is reported with. The encoder endpoints and the PTZ
+#: probe map them onto their error codes, so a failure must not be named after the
+#: sentence a platform puts into an ``OSError``: Windows answers a closed port with "No
+#: connection could be made because the target machine actively refused it", Linux with
+#: "[Errno 111] Connect call failed ('127.0.0.1', 49737)" - only the first one names the
+#: refusal, and a panel that read the text would call the second a fault of the device.
+FAILURE_REFUSED = "refused"
+FAILURE_TIMEOUT = "timeout"
+FAILURE_UNREACHABLE = "unreachable"
+#: The ``errno`` values of a host that does not answer (``EHOSTDOWN`` and ``ENETDOWN``
+#: are missing on some platforms, hence the ``getattr``).
+UNREACHABLE_ERRNOS = tuple(
+    code
+    for code in (
+        getattr(errno, "EHOSTUNREACH", None),
+        getattr(errno, "ENETUNREACH", None),
+        getattr(errno, "EHOSTDOWN", None),
+        getattr(errno, "ENETDOWN", None),
+    )
+    if code is not None
+)
+
+
+def failure_word(err: BaseException) -> str:
+    """Return the word a failure of the socket of a camera is reported with.
+
+    The word comes first and the text of the platform follows it, so a caller reads the
+    meaning instead of searching a sentence it cannot know, while the panel and the log
+    still carry what the operating system said.
+    """
+    if isinstance(err, TimeoutError):
+        return FAILURE_TIMEOUT
+    if isinstance(err, ConnectionRefusedError):
+        return f"{FAILURE_REFUSED}: {err}"
+    code = getattr(err, "errno", None)
+    if code in UNREACHABLE_ERRNOS:
+        return f"{FAILURE_UNREACHABLE}: {err}"
+    if code == errno.ETIMEDOUT:
+        return FAILURE_TIMEOUT
+    return str(err) or err.__class__.__name__
 
 
 def hash_password(password: str) -> str:
@@ -247,9 +290,9 @@ async def async_send_many(
             timeout=sequence_timeout(timeout, payloads),
         )
     except TimeoutError:
-        return False, "timeout"
+        return False, FAILURE_TIMEOUT
     except (EOFError, OSError, ValueError) as err:
-        return False, str(err) or err.__class__.__name__
+        return False, failure_word(err)
 
 
 async def _async_session(
@@ -353,9 +396,9 @@ async def async_config(
             timeout=float(timeout),
         )
     except TimeoutError:
-        return None, "timeout"
+        return None, FAILURE_TIMEOUT
     except (EOFError, OSError, ValueError) as err:
-        return None, str(err) or err.__class__.__name__
+        return None, failure_word(err)
 
 
 async def _async_config_session(
@@ -445,7 +488,7 @@ async def _async_login(
         message_id, session, payload = await _async_read(reader)
     except (EOFError, OSError, ValueError) as err:
         writer.close()
-        return None, None, 0, str(err) or err.__class__.__name__, False
+        return None, None, 0, failure_word(err), False
     if message_id != MSG_LOGIN_RESPONSE:
         writer.close()
         return None, None, 0, f"unexpected_reply_{message_id}", False

@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The token is unchanged, so the panel lists `xm:<channel>:<stream>:<entry>` either way.
 - A document that *is* the list of the channels is read like the one that keeps the list
   under `Encode`, and the write follows the path of that layout.
+- **A camera that is simply not there is reported as unreachable, not as a fault of the
+  device.** The transport named a failure after the sentence the platform puts into an
+  `OSError`, and only Windows names the refusal in it: Linux answers a closed port with
+  `[Errno 111] Connect call failed ('127.0.0.1', 49737)`, which the suite on CI turned into
+  `encoder_fault`. The socket now names the failure (`refused`, `unreachable`, `timeout`)
+  and the text of the platform follows it for the log and the panel.
 
 ## [0.6.0] - 2026-10-18
 
