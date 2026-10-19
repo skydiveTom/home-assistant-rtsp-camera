@@ -72,6 +72,22 @@ def _int(value: Any) -> int | None:
         return None
 
 
+def _value(fields: Mapping[str, Any], name: str) -> Any:
+    """Return a field of the document, whatever case the firmware writes its keys in."""
+    if name in fields:
+        return fields[name]
+    lowered = name.lower()
+    for key, value in fields.items():
+        if str(key).lower() == lowered:
+            return value
+    return None
+
+
+def _holds_video(fields: Mapping[str, Any]) -> bool:
+    """Return True when an object carries the video fields of a stream."""
+    return bool(_value(fields, "Compression")) or bool(_value(fields, "Resolution"))
+
+
 def _number(value: Any) -> float | None:
     """Return a number out of a configuration value, or None."""
     try:
@@ -164,9 +180,11 @@ def stream_blocks(
         block = document.get(key)
         if not isinstance(block, Mapping):
             continue
-        video = block.get("Video")
-        if isinstance(video, Mapping) and video:
-            blocks.append((stream, (key, "Video"), video))
+        holder = _video_holder(block)
+        if holder is None:
+            continue
+        relative, video = holder
+        blocks.append((stream, (key, *relative), video))
     if blocks:
         return blocks
 
@@ -177,12 +195,39 @@ def stream_blocks(
         if not isinstance(entry, Mapping) or not entry:
             continue
         stream = STREAM_NAMES[index] if index < len(STREAM_NAMES) else str(index)
-        video = entry.get("Video")
-        if isinstance(video, Mapping) and video:
-            blocks.append((stream, (ENCODE_KEY, index, "Video"), video))
-        else:
-            blocks.append((stream, (ENCODE_KEY, index), entry))
+        holder = _video_holder(entry)
+        if holder is None:
+            continue
+        relative, video = holder
+        blocks.append((stream, (ENCODE_KEY, index, *relative), video))
     return blocks
+
+
+def _video_holder(
+    entry: Mapping[str, Any],
+) -> tuple[tuple[str, ...], Mapping[str, Any]] | None:
+    """Return the path and the object of an encoder entry that holds the video fields.
+
+    The entries of the list layout keep them either directly or one level down (a block
+    per stream inside the entry), so both are looked for before the entry is given up.
+    """
+    if isinstance(entry.get("Video"), Mapping) and _holds_video(entry["Video"]):
+        return ("Video",), entry["Video"]
+    if _holds_video(entry):
+        return (), entry
+    for key, value in entry.items():
+        if isinstance(value, Mapping) and _holds_video(value):
+            return (str(key),), value
+    return None
+
+
+def _set_codec(fields: dict[str, Any], encoding: str) -> None:
+    """Write the codec word, keeping the spelling of the key the firmware uses."""
+    for key in fields:
+        if str(key).lower() == "compression":
+            fields[key] = encoding
+            return
+    fields["Compression"] = encoding
 
 
 def _follow(document: Any, path: tuple[str | int, ...]) -> dict[str, Any] | None:
@@ -212,21 +257,21 @@ def parse_encoders(
     """
     configurations: list[dict[str, Any]] = []
     for stream, path, video in stream_blocks(document):
-        width, height = _resolution(video.get("Resolution"))
+        width, height = _resolution(_value(video, "Resolution"))
         configurations.append(
             {
                 "token": token_of(channel, stream),
                 "name": _stream_label(stream),
                 "use_count": None,
-                "encoding": str(video.get("Compression") or "").strip().upper(),
+                "encoding": str(_value(video, "Compression") or "").strip().upper(),
                 "width": width,
                 "height": height,
-                "quality": _number(video.get("Quality")),
-                "fps": _number(video.get("FPS")),
+                "quality": _number(_value(video, "Quality")),
+                "fps": _number(_value(video, "FPS")),
                 "encoding_interval": None,
-                "bitrate": _int(video.get("BitRate")),
-                "gop": _int(video.get("GOP")),
-                "profile": str(video.get("Profile") or "").strip(),
+                "bitrate": _int(_value(video, "BitRate")),
+                "gop": _int(_value(video, "GOP")),
+                "profile": str(_value(video, "Profile") or "").strip(),
                 "element": video,
                 "stream": stream,
                 "path": path,
@@ -262,6 +307,7 @@ def _report(
     *,
     changed: bool = False,
     detail: str = "",
+    shape: str = "",
 ) -> EncoderReport:
     """Return a successful report of the encoders of a camera."""
     return EncoderReport(
@@ -272,6 +318,7 @@ def _report(
         changed=changed,
         detail=detail,
         backend=BACKEND,
+        shape=shape,
     )
 
 
@@ -341,6 +388,12 @@ async def async_read(
             detail=f"no_streams: {describe_document(document)}".rstrip(": "),
             backend=BACKEND,
         )
+    if not any(item["encoding"] for item in configurations):
+        # The device answered streams, but none of them names a codec this module knows:
+        # the shape of the document is what the panel reports and what a next version needs.
+        return _report(
+            configurations, host, port, shape=describe_document(document)
+        )
     return _report(configurations, host, port)
 
 
@@ -393,7 +446,7 @@ async def async_write(
     video = _follow(written, current["path"])
     if video is None:
         return EncoderReport(error=ERROR_FAULT, detail="no_video_block", backend=BACKEND)
-    video["Compression"] = wanted
+    _set_codec(video, wanted)
 
     _answer, error = await dvrip.async_config(
         host,

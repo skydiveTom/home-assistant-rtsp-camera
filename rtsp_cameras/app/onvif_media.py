@@ -119,6 +119,9 @@ class EncoderReport:
     #: it and sends it back with a write, so a camera whose firmware only speaks one of
     #: them needs no setting.
     backend: str = "onvif"
+    #: The shape of a document that was read but could not be understood (a stream without
+    #: a codec word): it is what a report of the panel and the next version need.
+    shape: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Return the representation the panel (and the tests) see."""
@@ -130,6 +133,8 @@ class EncoderReport:
             "profiles": list(self.profiles),
             "changed": self.changed,
         }
+        if self.shape:
+            payload["shape"] = self.shape
 
         if self.error:
             payload["error"] = self.error

@@ -4,6 +4,19 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-10-18
+
+### Added
+
+- **The video fields of an encoder entry are found wherever the firmware keeps them**:
+  the field names are matched regardless of case (`compression` as well as `Compression`),
+  and an entry whose fields sit in a block of its own is read through that block. The
+  write follows the same path and keeps the spelling of the key, so a lower case document
+  is not sent back with a duplicate field.
+- **A read that finds streams but no codec word reports the shape of the document**
+  (`shape` in the answer of `encoder/inspect`) instead of looking like a camera with empty
+  encoders - that is what the next firmware variant has to be built from.
+
 ## [0.5.3] - 2026-10-18
 
 ### Added

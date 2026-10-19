@@ -278,6 +278,76 @@ def test_write_understands_the_encode_list_layout(xm_cam: int) -> None:
     assert document["EncodeEx"][1]["Compression"] == "H265"
 
 
+def test_read_accepts_lower_case_field_names(xm_cam: int) -> None:
+    """A firmware that writes its keys in lower case is read the same way."""
+    FakeXmCamera.document = {
+        "Encode": [
+            {"compression": "H265", "resolution": "1280*720", "fps": 25, "gop": 50},
+            {"compression": "H264", "resolution": "640*360", "fps": 15, "gop": 25},
+        ]
+    }
+
+    report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
+
+    assert report.ok is True
+    assert [item["encoding"] for item in report.configurations] == ["H265", "H264"]
+    assert report.configurations[1]["fps"] == 15
+    assert (report.configurations[1]["width"], report.configurations[1]["height"]) == (640, 360)
+
+
+def test_write_keeps_the_spelling_of_the_codec_key(xm_cam: int) -> None:
+    """A lower case key is written in its own spelling, not duplicated."""
+    FakeXmCamera.document = {
+        "Encode": [
+            {"compression": "H265", "resolution": "1280*720"},
+            {"compression": "H265", "resolution": "640*360"},
+        ]
+    }
+
+    asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+        )
+    )
+
+    entry = FakeXmCamera.writes()[0]["payload"][xm_media.CONFIG_NAME]["Encode"][1]
+    assert entry == {"compression": "H264", "resolution": "640*360"}
+
+
+def test_read_finds_the_video_fields_one_level_down(xm_cam: int) -> None:
+    """An entry that keeps its fields in a block of its own is read and written as well."""
+    FakeXmCamera.document = {
+        "Encode": [
+            {"EncodeCfg": {"Compression": "H265", "Resolution": "1920*1080"}},
+            {"EncodeCfg": {"Compression": "H265", "Resolution": "640*360"}},
+        ]
+    }
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    document = FakeXmCamera.writes()[0]["payload"][xm_media.CONFIG_NAME]
+    assert document["Encode"][1]["EncodeCfg"]["Compression"] == "H264"
+    assert document["Encode"][0]["EncodeCfg"]["Compression"] == "H265"
+
+
+def test_read_reports_the_shape_of_streams_without_a_codec(xm_cam: int) -> None:
+    """Streams that name no codec come with the shape of the document, not with silence."""
+    FakeXmCamera.document = {
+        "Encode": [{"Resolution": "1920*1080"}, {"Resolution": "640*360"}]
+    }
+
+    report = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam))
+
+    assert report.ok is True
+    assert report.to_dict()["shape"].startswith("Encode[2]{Resolution}")
+
+
 def test_read_lists_the_stream_of_the_url_first(xm_cam: int) -> None:
     """The stream the RTSP URL of the camera serves is the one on top."""
     report = asyncio.run(
