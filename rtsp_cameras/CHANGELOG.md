@@ -4,6 +4,17 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-10-18
+
+### Fixed
+
+- **The list under `Encode` is a list of channels, not of streams.** The firmware of the
+  test set keeps one entry per channel, and every entry carries the blocks of its own
+  streams (`MainFormat`, `ExtraFormat`, `SnapFormat`) - so the encoders of the configured
+  channel are read from that entry now, and the write puts the codec word there. The
+  layouts of 0.5.3 and 0.5.4 (a block per stream in the document, a list of streams under
+  `Encode`) are still read, so nothing that worked before changes.
+
 ## [0.5.4] - 2026-10-18
 
 ### Added

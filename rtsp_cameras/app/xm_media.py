@@ -165,16 +165,49 @@ def parse_token(token: Any) -> tuple[int, str] | None:
 
 
 def stream_blocks(
-    document: Mapping[str, Any],
+    document: Mapping[str, Any], channel: int = 1
 ) -> list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]]:
     """Return stream, path and video fields of every stream the document carries.
 
-    Two layouts are known and both are read: a block per stream (``MainFormat`` /
-    ``ExtraFormat``, the video fields under ``Video``) and a list under ``Encode`` with one
-    entry per stream, where the video fields sit in the entry itself or under its
-    ``Video``. The path points at the object that holds ``Compression``, so the write puts
-    the codec word where the device keeps it.
+    Three layouts are known and all are read: a block per stream directly in the document
+    (``MainFormat`` / ``ExtraFormat``), a list under ``Encode`` whose entries *are* the
+    streams, and a list under ``Encode`` whose entries are the *channels* - the firmware of
+    the test set keeps ``MainFormat`` / ``ExtraFormat`` inside every entry of it, so the
+    entry of the configured channel is the one that is read. The path points at the object
+    that holds ``Compression``, so the write puts the codec word where the device keeps it.
     """
+    blocks = _block_streams(document)
+    if blocks:
+        return blocks
+
+    entries = document.get(ENCODE_KEY)
+    if not isinstance(entries, list) or not entries:
+        return []
+
+    index = _channel_index(entries, channel)
+    if index is not None:
+        return [
+            (stream, (ENCODE_KEY, index, *path), video)
+            for stream, path, video in _block_streams(entries[index])
+        ]
+
+    for position, entry in enumerate(entries):
+        if not isinstance(entry, Mapping) or not entry:
+            continue
+        holder = _video_holder(entry)
+        if holder is None:
+            continue
+        stream = (
+            STREAM_NAMES[position] if position < len(STREAM_NAMES) else str(position)
+        )
+        blocks.append((stream, (ENCODE_KEY, position, *holder[0]), holder[1]))
+    return blocks
+
+
+def _block_streams(
+    document: Mapping[str, Any],
+) -> list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]]:
+    """Return the streams of a block layout (``MainFormat`` / ``ExtraFormat``)."""
     blocks: list[tuple[str, tuple[str | int, ...], Mapping[str, Any]]] = []
     for key, stream, _label in STREAMS:
         block = document.get(key)
@@ -183,41 +216,49 @@ def stream_blocks(
         holder = _video_holder(block)
         if holder is None:
             continue
-        relative, video = holder
-        blocks.append((stream, (key, *relative), video))
-    if blocks:
-        return blocks
-
-    entries = document.get(ENCODE_KEY)
-    if not isinstance(entries, list):
-        return blocks
-    for index, entry in enumerate(entries):
-        if not isinstance(entry, Mapping) or not entry:
-            continue
-        stream = STREAM_NAMES[index] if index < len(STREAM_NAMES) else str(index)
-        holder = _video_holder(entry)
-        if holder is None:
-            continue
-        relative, video = holder
-        blocks.append((stream, (ENCODE_KEY, index, *relative), video))
+        blocks.append((stream, (key, *holder[0]), holder[1]))
     return blocks
 
 
+def _channel_index(entries: list[Any], channel: int) -> int | None:
+    """Return the entry of a list that keeps a stream block per channel.
+
+    A list whose entries carry ``MainFormat``/``ExtraFormat`` is a list of *channels*, so
+    the entry of the configured channel is wanted - and the first entry that carries
+    blocks is the fallback of a firmware whose channel numbering differs.
+    """
+    carrying = [
+        position
+        for position, entry in enumerate(entries)
+        if isinstance(entry, Mapping)
+        and any(isinstance(entry.get(key), Mapping) for key, _stream, _label in STREAMS)
+    ]
+    if not carrying:
+        return None
+    wanted = max(0, channel - 1)
+    return wanted if wanted in carrying else carrying[0]
+
+
 def _video_holder(
-    entry: Mapping[str, Any],
+    entry: Mapping[str, Any], depth: int = 2
 ) -> tuple[tuple[str, ...], Mapping[str, Any]] | None:
     """Return the path and the object of an encoder entry that holds the video fields.
 
-    The entries of the list layout keep them either directly or one level down (a block
-    per stream inside the entry), so both are looked for before the entry is given up.
+    The entries of the list layout keep them either directly or inside a block of their
+    own (``Video``, or the ``MainFormat`` of a channel), so the entry is searched a few
+    levels deep before it is given up.
     """
     if isinstance(entry.get("Video"), Mapping) and _holds_video(entry["Video"]):
         return ("Video",), entry["Video"]
     if _holds_video(entry):
         return (), entry
+    if depth <= 0:
+        return None
     for key, value in entry.items():
-        if isinstance(value, Mapping) and _holds_video(value):
-            return (str(key),), value
+        if isinstance(value, Mapping):
+            inner = _video_holder(value, depth - 1)
+            if inner is not None:
+                return (str(key), *inner[0]), inner[1]
     return None
 
 
@@ -256,7 +297,7 @@ def parse_encoders(
     the video fields: the write sends the document back with that one field replaced.
     """
     configurations: list[dict[str, Any]] = []
-    for stream, path, video in stream_blocks(document):
+    for stream, path, video in stream_blocks(document, channel):
         width, height = _resolution(_value(video, "Resolution"))
         configurations.append(
             {

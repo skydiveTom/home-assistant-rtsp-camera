@@ -88,6 +88,44 @@ def avenc_list_document(
     }
 
 
+def avenc_channel_document() -> dict[str, Any]:
+    """Return the layout of the test camera: a list of channels, each with its blocks."""
+
+    def channel(size: str, gop: int) -> dict[str, Any]:
+        return {
+            "MainFormat": {
+                "Video": {
+                    "Compression": "H265",
+                    "Resolution": size,
+                    "FPS": 25,
+                    "GOP": gop,
+                    "BitRate": 4096,
+                }
+            },
+            "ExtraFormat": {
+                "Video": {
+                    "Compression": "H265",
+                    "Resolution": "640*360",
+                    "FPS": 25,
+                    "GOP": 25,
+                    "BitRate": 512,
+                }
+            },
+            "SnapFormat": {"Video": {"Compression": "JPEG", "Resolution": "640*360"}},
+            "EncodeStaticParam": {"IsTrans": 0, "Level": 3, "Profile": 1},
+        }
+
+    return {
+        "DefinitionCfgTable": {"Table": []},
+        "Encode": [
+            channel("1920*1080", 50),
+            channel("1280*720", 40),
+            channel("640*360", 30),
+        ],
+        "EncodeEx": [{"Dst3irdFmt": 0, "Dst4rthFmt": 0}],
+    }
+
+
 class FakeXmCamera(socketserver.ThreadingTCPServer):
     """Fake Xiongmai device: it logs in and answers the ``AVEnc`` document."""
 
@@ -346,6 +384,44 @@ def test_read_reports_the_shape_of_streams_without_a_codec(xm_cam: int) -> None:
 
     assert report.ok is True
     assert report.to_dict()["shape"].startswith("Encode[2]{Resolution}")
+
+
+def test_read_finds_the_streams_of_the_configured_channel(xm_cam: int) -> None:
+    """A list of channels is read at the entry of the camera's own channel."""
+    FakeXmCamera.document = avenc_channel_document()
+
+    first = asyncio.run(
+        xm_media.async_read("127.0.0.1", port=xm_cam, channel=1, preferred="extra")
+    )
+    second = asyncio.run(xm_media.async_read("127.0.0.1", port=xm_cam, channel=2))
+
+    assert first.ok is True
+    assert [item["token"] for item in first.configurations] == ["xm:1:extra", "xm:1:main"]
+    assert (first.configurations[1]["width"], first.configurations[1]["height"]) == (
+        1920,
+        1080,
+    )
+    assert [item["token"] for item in second.configurations] == ["xm:2:main", "xm:2:extra"]
+    assert second.configurations[0]["gop"] == 40
+
+
+def test_write_changes_only_the_configured_channel(xm_cam: int) -> None:
+    """The codec word lands in the block of that channel and nothing else changes."""
+    FakeXmCamera.document = avenc_channel_document()
+
+    report = asyncio.run(
+        xm_media.async_write(
+            "127.0.0.1", port=xm_cam, token="xm:1:extra", encoding="H264"
+        )
+    )
+
+    assert report.ok is True
+    assert report.changed is True
+    document = FakeXmCamera.writes()[0]["payload"][xm_media.CONFIG_NAME]
+    assert document["Encode"][0]["ExtraFormat"]["Video"]["Compression"] == "H264"
+    assert document["Encode"][0]["MainFormat"]["Video"]["Compression"] == "H265"
+    assert document["Encode"][1]["ExtraFormat"]["Video"]["Compression"] == "H265"
+    assert document["Encode"][0]["SnapFormat"]["Video"]["Compression"] == "JPEG"
 
 
 def test_read_lists_the_stream_of_the_url_first(xm_cam: int) -> None:
