@@ -850,19 +850,22 @@ def _step_slot(value: Any) -> int | None:
 def _steps(value: Any) -> dict[str, list[int]]:
     """Return a clean ladder: per axis the slots, in the order they were walked.
 
-    A ladder is cut at ``MAX_STEP_SLOTS``, a slot is used once, and an axis that is not one
-    of ``STEP_AXES`` (or a value that is not a mapping) is dropped.
+    A ladder is cut at ``MAX_STEP_SLOTS`` and a slot is used **once, in both ladders**: a
+    preset is a whole position, so a slot belongs to one axis only and a config that names
+    it for two axes cannot be walked.
     """
     ladder: dict[str, list[int]] = {}
     if not isinstance(value, Mapping):
         return ladder
+    used: set[int] = set()
     for axis in STEP_AXES:
         slots: list[int] = []
         for item in value.get(axis) or []:
             slot = _step_slot(item)
-            if slot is None or slot in slots:
+            if slot is None or slot in used:
                 continue
             slots.append(slot)
+            used.add(slot)
             if len(slots) >= MAX_STEP_SLOTS:
                 break
         if slots:

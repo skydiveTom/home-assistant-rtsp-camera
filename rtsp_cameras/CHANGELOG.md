@@ -4,6 +4,20 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-10-20
+
+### Fixed
+
+- **The two ladders of a camera cannot end up in the same presets.** A preset of the
+  Xiongmai family is a whole position - pan, tilt and zoom together - so the slots of
+  `210` and up are one namespace of the device, while the add-on keeps a ladder per axis
+  and filled it with the first slot *that axis* did not use yet. The pan ladder therefore
+  overwrote the tilt rungs of the same numbers, and holding a tilt arrow afterwards drove
+  the camera to a pan position: measured on the test set, whose tilt rungs 210 to 216 were
+  replaced by the pan rungs of the same slots. A new rung now takes the first slot **no
+  axis** uses, and a camera file that names one slot for two axes keeps it on the first
+  axis only.
+
 ## [0.7.3] - 2026-10-20
 
 ### Changed

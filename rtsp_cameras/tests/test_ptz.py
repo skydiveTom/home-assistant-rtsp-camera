@@ -1914,13 +1914,15 @@ def test_the_panel_stores_a_step_position(client: TestClient, dvrip_cam: int) ->
     assert second["slot"] == FIRST_STEP_SLOT + 1, "a second rung takes the next free slot"
     assert second["steps"] == {"vertical": [FIRST_STEP_SLOT, FIRST_STEP_SLOT + 1]}
 
-    # The rungs of the other axis are a ladder of their own.
+    # The rungs of the other axis are a ladder of their own, and a preset is a whole
+    # position: a slot the tilt already walks may not carry a pan rung as well.
     horizontal = client.post(
         f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "horizontal", "mode": "add"}
     ).json()
+    assert horizontal["slot"] == FIRST_STEP_SLOT + 2, "a slot belongs to one axis"
     assert horizontal["steps"] == {
         "vertical": [FIRST_STEP_SLOT, FIRST_STEP_SLOT + 1],
-        "horizontal": [FIRST_STEP_SLOT],
+        "horizontal": [FIRST_STEP_SLOT + 2],
     }
 
 
@@ -2131,6 +2133,25 @@ def test_a_long_ladder_is_cut() -> None:
 
     assert config is not None
     assert config["steps"]["vertical"] == slots[:MAX_STEP_SLOTS]
+
+
+def test_a_slot_of_one_axis_is_no_rung_of_the_other() -> None:
+    """A preset is a whole position, so a slot named for two axes is kept once.
+
+    The device keeps one namespace of presets: a pan rung stored under a slot the tilt
+    already walks would put the camera at a rung of the *other* ladder. Exactly that
+    happened to the two ladders of the test set, which ended up in the same slots.
+    """
+    config = normalize_ptz(
+        {
+            "profile": "xiongmai_dvrip",
+            "steps": {"vertical": [210, 211], "horizontal": [211, 212, "212", 213]},
+        },
+        RTSP_URL,
+    )
+
+    assert config is not None
+    assert config["steps"] == {"vertical": [210, 211], "horizontal": [212, 213]}
 
 
 def test_a_step_walks_the_ladder_of_its_axis() -> None:

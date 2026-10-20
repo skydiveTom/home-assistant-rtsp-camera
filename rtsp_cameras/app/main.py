@@ -606,7 +606,13 @@ async def camera_ptz_steps(request: Request) -> JSONResponse:
     else:
         if not (camera.ptz.get("commands") or {}).get("store"):
             return await _error(request, "ptz_store_missing", 400)
-        slot = first_free_step_slot(slots)
+        # A preset is a whole position - pan, tilt and zoom together - so the slots are
+        # one namespace of the device and not one per axis: a slot that another axis
+        # already walks would put the camera at a rung of *that* ladder (measured: the
+        # tilt rungs of the test set were overwritten by the pan rungs of the same
+        # numbers). A new rung therefore takes the first slot no axis uses.
+        used = sorted({item for slots in ladder.values() for item in slots})
+        slot = first_free_step_slot(used)
         if slot is None or len(slots) >= MAX_STEP_SLOTS:
             return await _error(request, "ptz_steps_full", 400)
         result = await ptz_run(camera.ptz, "store", preset=str(slot))
