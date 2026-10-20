@@ -57,10 +57,20 @@ exactly one place — the add-on panel.
   from the RTSP URL**, so they are never typed twice. The **PTZ test mode** finds the
   right variant for you: enter the IP of the camera (or nothing at all), one button
   asks every variant and the one that answers becomes the main handling - without
-  moving the camera, because the test only sends stop commands. A camera whose moves cannot be
-  stopped (the Xiongmai family) gets **step by step arrows**: the position of the moment is
-  stored as a step of an axis, a short press of an arrow walks one rung of that ladder and the
-  step field walks several - a bounded move, without the travel to a limit. Home Assistant
+  moving the camera, because the test only sends stop commands. The Xiongmai family answers
+  **no stop payload**: the vendor SDK has no stop command either - its `stop` flag is the
+  same direction command again, which this firmware reads as "drive to the end of the
+  axis". A released arrow is therefore ended by a **capture** - the position of the release
+  is stored in a preset of the add-on and the camera returns to it. A camera of this family
+  therefore gets **step by step arrows**: the position of the moment is stored as a step of
+  an axis, a short press of an arrow walks one rung of that ladder and the step field walks
+  several - a bounded move, without the travel to a limit. **Holding** such an arrow does not
+  start that travel either: the panel walks the ladder rung by rung for as long as the key is
+  down, and a release ends the walk at the rung the camera is on (a camera whose stop really
+  halts an axis keeps the continuous move and its capture). The **camera entity in Home
+  Assistant follows the same rule**: a move of such a camera walks the ladder for
+  `continuous_duration` seconds - rung by rung, never a sweep to the limit - while a
+  camera whose stop halts keeps its own move and stop. Home Assistant
   receives `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset.
 - **The codec of a stream, without the vendor app** – a camera whose sub stream sends

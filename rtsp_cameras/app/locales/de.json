@@ -215,6 +215,7 @@
     "clear_steps": "Schritte löschen",
     "steps_empty": "Noch keine Schritte: Kamera ausrichten und einen Schritt speichern - ein kurzer Druck auf einen Pfeil fährt die Kamera dann zum nächsten, ohne die lange Fahrt.",
     "steps_note": "Schritte: {vertical} hoch/runter, {horizontal} links/rechts - ein kurzer Druck geht einen, halten bewegt weiter.",
+    "steps_note_walk": "Schritte: {vertical} hoch/runter, {horizontal} links/rechts - ein kurzer Druck geht einen, halten geht Sprosse für Sprosse weiter: diese Kamera kann eine Fahrt nicht anhalten.",
     "step_reached": "Schritt {index} von {rungs}",
     "step_stored": "Schritt gespeichert"
   },

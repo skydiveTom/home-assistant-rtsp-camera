@@ -166,6 +166,61 @@ def test_ptz_config_without_axis_speeds_uses_the_general_one(models: ModuleType)
     assert config.axis_speed(True) == 6
 
 
+def test_ptz_config_reads_the_ladder_of_steps(models: ModuleType) -> None:
+    """The ladders the panel stores survive the way into Home Assistant, per axis.
+
+    A rung is a preset slot; a slot that is used twice or that is no slot at all is
+    dropped, so a hand written camera file cannot turn a walk into a loop.
+    """
+    config = models.PtzConfig.from_dict(
+        {
+            "enabled": True,
+            "commands": {"up": "GET {base}/ptz?code=Up"},
+            "steps": {
+                "vertical": [210, 211],
+                "horizontal": [210, "212", 210, 0, 999, None],
+                "zoom": [220],
+            },
+        }
+    )
+
+    assert config is not None
+    assert config.step_slots("vertical") == (210, 211)
+    assert config.step_slots("horizontal") == (210, 212)
+    assert config.step_slots("zoom") == (), "there is no ladder of a zoom"
+
+    plain = models.PtzConfig.from_dict({"commands": {"up": "GET {base}/ptz?code=Up"}})
+    assert plain is not None
+    assert plain.step_slots("vertical") == (), "a camera without a ladder stays as it was"
+
+
+def test_ptz_config_knows_whether_a_stop_can_halt_an_axis(models: ModuleType) -> None:
+    """A stop that stores a position is read as what it is: a capture, not a halt."""
+    capture = models.PtzConfig.from_dict(
+        {
+            "enabled": True,
+            "commands": {
+                "up": 'DVRIP {"Command":"DirectionUp","Step":{speed_vertical}}',
+                "stop": 'DVRIP {"Command":"SetPreset","Preset":201} '
+                'DVRIP {"Command":"GotoPreset","Preset":201}',
+            },
+        }
+    )
+    halting = models.PtzConfig.from_dict(
+        {
+            "enabled": True,
+            "commands": {
+                "up": "GET {base}/ptz?code=Up",
+                "stop": "GET {base}/ptz?code=Stop",
+            },
+        }
+    )
+
+    assert capture is not None and halting is not None
+    assert capture.stops_in_place is False, "the capture drags the camera back afterwards"
+    assert halting.stops_in_place is True
+
+
 def test_add_camera_link_points_to_the_documentation(
     integration_const: ModuleType, models: ModuleType
 ) -> None:

@@ -1498,6 +1498,10 @@
 
   //: How long an arrow has to be held to count as a move instead of a step.
   const STEP_TAP_MS = 220;
+  //: The pause between two rungs of a held arrow, on top of the time the device needs to
+  //: answer the last one (a ``GotoPreset`` is answered when the camera has arrived). It is
+  //: only used by an axis whose stop has to drag the camera back (see :func:`walksTheLadder`).
+  const STEP_WALK_MS = 120;
 
   function stepRungs(action, camera) {
     const axis = PTZ_AXIS_SPEED[action];
@@ -1514,8 +1518,12 @@
     document.getElementById('btn-ptz-step-horizontal').disabled = !canStore;
     document.getElementById('btn-ptz-step-clear').disabled = !vertical && !horizontal;
     const note = document.getElementById('ptz-steps-note');
+    // A camera whose stop has to drag the axis back walks the ladder during a hold instead of
+    // starting a move it cannot end, and the note says so (see ``walksTheLadder``).
+    const walkKey =
+      ptz && ptz.stops_in_place === false ? 'ptz.steps_note_walk' : 'ptz.steps_note';
     note.textContent = vertical || horizontal
-      ? t('ptz.steps_note', { vertical, horizontal })
+      ? t(walkKey, { vertical, horizontal })
       : t('ptz.steps_empty');
   }
 
@@ -1531,9 +1539,13 @@
     box.textContent = errorText(code) + errorDetail(err);
   }
 
-  async function sendStep(direction) {
+  async function sendStep(direction, options) {
+    /* Walk one step of the ladder of an axis and return the rung the camera reached (``null``
+       when the request failed). ``options.quiet`` keeps the toast of a single step out of a
+       *walk*: a held arrow walks many rungs, and a message per rung would cover the picture. */
+    const quiet = Boolean(options && options.quiet);
     const cameraId = state.preview.cameraId;
-    if (!cameraId) return false;
+    if (!cameraId) return null;
     try {
       const data = await api('api/cameras/' + cameraId + '/ptz', {
         method: 'POST',
@@ -1541,14 +1553,44 @@
       });
       const step = data.step || {};
       document.getElementById('ptz-error').hidden = true;
-      toast(
-        t('ptz.step_reached', { index: (step.index || 0) + 1, rungs: step.rungs || 0 }),
-        'ok',
-      );
-      return true;
+      if (!quiet) {
+        toast(
+          t('ptz.step_reached', { index: (step.index || 0) + 1, rungs: step.rungs || 0 }),
+          'ok',
+        );
+      }
+      return step;
     } catch (err) {
       showPtzError(err);
-      return false;
+      return null;
+    }
+  }
+
+  /* A hold on an axis whose stop has to *drag* the camera back must not start a move at all.
+     This is the Xiongmai DVRIP family: every direction command drives the axis to its limit
+     and no payload of the family halts one on the way (``.smoke/dvrip-protocol.md``, and the
+     stop of profile ``xiongmai_dvrip`` is a capture for that reason), so a hold there walks
+     the rungs of the ladder - one bounded preset move at a time - and a release ends the walk
+     at the rung the camera is on. Every other camera keeps the continuous move and its stop. */
+  function walksTheLadder(action, camera) {
+    if (!camera || !camera.ptz) return false;
+    return camera.ptz.stops_in_place === false && stepRungs(action, camera).length > 0;
+  }
+
+  async function walkSteps(action, held) {
+    let index = null;
+    while (held()) {
+      const started = Date.now();
+      // The promise of the request settles when the device has *arrived*, so a walk paces
+      // itself and never queues a rung behind the one the camera is travelling to.
+      const step = await sendStep(action, { quiet: true });
+      if (!step) return;
+      // The end of the ladder: the request is clamped to the last rung and the camera does
+      // not move any more, so the walk ends instead of asking for the same slot again.
+      if (index !== null && step.index === index) return;
+      index = step.index;
+      const pause = STEP_WALK_MS - (Date.now() - started);
+      if (pause > 0) await new Promise((done) => window.setTimeout(done, pause));
     }
   }
 
@@ -2093,8 +2135,10 @@
       const action = button.dataset.ptz;
       if (button.dataset.ptzHold) {
         /* A short press walks one step of the ladder of this axis - a bounded move to a
-           position that was stored before - and only a press that stays becomes the
-           continuous move. The delay is there only for an axis that really has rungs. */
+           position that was stored before. A press that stays is the continuous move, unless
+           the stop of the camera cannot halt an axis: then it walks the ladder rung by rung
+           for as long as the arrow is held (see ``walksTheLadder``). The delay is there only
+           for an axis that really has rungs. */
         let timer = null;
         let moving = false;
         const release = () => {
@@ -2115,6 +2159,14 @@
           if (stepRungs(action, camera).length) {
             timer = window.setTimeout(() => {
               timer = null;
+              if (walksTheLadder(action, camera)) {
+                /* The walk keeps the button lit while the arrow is down and ends when the
+                   class is gone, so a release ends it at the rung the camera is on. */
+                walkSteps(action, () => button.classList.contains('is-active')).catch((err) =>
+                  showPtzError(err),
+                );
+                return;
+              }
               moving = true;
               sendPtz(action);
             }, STEP_TAP_MS);

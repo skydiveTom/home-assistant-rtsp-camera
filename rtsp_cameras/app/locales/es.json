@@ -215,6 +215,7 @@
     "clear_steps": "Borrar los pasos",
     "steps_empty": "Aún no hay pasos: orienta la cámara y guarda un paso; una pulsación corta de una flecha llevará la cámara al siguiente, sin el recorrido largo.",
     "steps_note": "Pasos: {vertical} arriba/abajo, {horizontal} izquierda/derecha - una pulsación corta avanza uno, mantener pulsado sigue moviendo.",
+    "steps_note_walk": "Pasos: {vertical} arriba/abajo, {horizontal} izquierda/derecha - una pulsación corta avanza uno y mantener pulsado avanza peldaño a peldaño: esta cámara no puede detener un movimiento.",
     "step_reached": "Paso {index} de {rungs}",
     "step_stored": "Paso guardado"
   },

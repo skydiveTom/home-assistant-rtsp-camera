@@ -215,6 +215,7 @@
     "clear_steps": "Clear the steps",
     "steps_empty": "No steps yet: point the camera and store a step - a short press of an arrow then walks the camera to the next one, without the long travel.",
     "steps_note": "Steps: {vertical} up/down, {horizontal} left/right - a short press walks one, holding moves on.",
+    "steps_note_walk": "Steps: {vertical} up/down, {horizontal} left/right - a short press walks one, and a hold walks on rung by rung: this camera cannot stop a move on the way.",
     "step_reached": "Step {index} of {rungs}",
     "step_stored": "Step stored"
   },

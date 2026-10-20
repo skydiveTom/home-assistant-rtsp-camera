@@ -61,6 +61,7 @@ from app.ptz import (
     public_config,
     split_userinfo,
     step_target,
+    stops_in_place,
 )
 from app.ptz import (
     async_discover_onvif_token as discover_onvif_token,
@@ -418,6 +419,49 @@ def test_dvrip_profile_builds_the_payloads() -> None:
     assert build_command(config, "preset", preset="3") == (
         'DVRIP {"Command":"GotoPreset","Preset":3,"Channel":1}'
     )
+
+
+def test_the_api_says_whether_a_stop_halts_a_move() -> None:
+    """A panel has to know whether a stop ends a move, or drags the camera back to a position.
+
+    Every direction command of the Xiongmai family drives an axis to its limit, and no payload
+    of the family halts one on the way: a ``Stop`` of any shape, ``Step: 0``, ``Preset: -1``
+    (the stop of ``dbuezas/icsee-ptz``), ``Preset: 65504`` and ``Pattern: "Stop"`` were all
+    measured on the device, on the session of the move as well (``.smoke/dvrip-protocol.md``).
+    The stop of the bundled profile is a *capture* for that reason, and a hold on such an axis
+    has to walk the ladder of stored positions instead of starting a move it cannot end - so
+    the panel is told which kind of stop the camera has.
+    """
+    dvrip = normalize_ptz({"profile": "xiongmai_dvrip"}, RTSP_URL)
+    assert dvrip is not None
+    assert stops_in_place(dvrip) is False
+    masked = public_config(dvrip)
+    assert masked is not None and masked["stops_in_place"] is False
+
+    # A stop that stores a position cannot halt anything, whatever slot it names.
+    other_slot = normalize_ptz(
+        {
+            "commands": {
+                "stop": 'DVRIP {"Command":"SetPreset","Preset":7,"Channel":1} '
+                'DVRIP {"Command":"GotoPreset","Preset":7,"Channel":1}'
+            }
+        },
+        RTSP_URL,
+    )
+    assert other_slot is not None and stops_in_place(other_slot) is False
+
+    # Every other transport stops an axis where it stands, and so does a plain DVRIP stop
+    # that a user wrote by hand - the panel keeps the continuous move there.
+    for profile in ("axis", "dahua", "onvif", "xiongmai"):
+        config = normalize_ptz({"profile": profile}, RTSP_URL)
+        assert config is not None, profile
+        assert stops_in_place(config) is True, profile
+
+    plain = normalize_ptz(
+        {"commands": {"stop": 'DVRIP {"Command":"Stop","Step":0,"Channel":1}'}}, RTSP_URL
+    )
+    assert plain is not None and stops_in_place(plain) is True
+    assert stops_in_place(None) is True, "a camera without a stop claims nothing"
 
 
 def test_axis_speeds_default_to_the_general_speed() -> None:

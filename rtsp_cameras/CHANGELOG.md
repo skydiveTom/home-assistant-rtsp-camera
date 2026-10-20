@@ -4,6 +4,45 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-10-20
+
+### Changed
+
+- **The camera entity of Home Assistant follows the same rule as the panel.** A
+  `rtsp_cameras.ptz` move of a camera whose stop cannot halt an axis used to send the
+  direction command and then the capture - the camera travelled to the end of its axis and
+  came back afterwards. The integration now reads the ladder of step positions the add-on
+  publishes (and the same `SetPreset` marker of the stop) and walks that ladder for
+  `continuous_duration` seconds instead: one bounded `GotoPreset` per rung, asked only after
+  the camera has arrived, ending on the rung it reaches. Nothing is sent when the axis has
+  no rung, so a camera without a ladder keeps its move and its capture. A `GotoPreset` that
+  lands on a rung tells the walk where the camera stands; any other preset, the home key and
+  a stop forget it, exactly like the panel's own memory.
+
+- **The stop of the Xiongmai family is described as it behaves.** Both READMEs said a
+  camera "whose moves cannot be stopped" gets step by step arrows, which left the reason
+  open: the family answers **no stop payload at all**, and the vendor SDK has no stop
+  command either - its `stop` flag sends the same direction command again, which this
+  firmware reads as "drive to the end of the axis". A released arrow is ended by a
+  **capture** (the position of the release is stored in a preset of the add-on and the
+  camera returns to it), and only a camera that should not travel to a limit at all uses
+  the step by step arrows. The docstring of the stop records the last shape that looked
+  like a way out - the branch of the SDK builder that writes `Preset: 65504` with
+  `Pattern: "SetBegin"` - as measured: the device accepts it and travels on, a hold of
+  one second and one of three ended at the same limit of the axis.
+- **A held arrow of a camera that cannot halt a move walks the ladder instead.** The
+  Xiongmai family answers no stop payload at all, so holding an arrow of such a camera used
+  to start a move and leave the ending to the capture behind it - the camera travelled to
+  the end of its axis first. The API now says which kind of stop a camera has
+  (`stops_in_place`, read from the stored `stop`: a stop that writes a `SetPreset` cannot
+  halt anything), and on such a camera a hold walks the rungs of the step ladder for as long
+  as the arrow is down: one bounded `GotoPreset` at a time, the next one asked only after
+  the camera has arrived, and a release ends the walk at the rung the camera is on. Every
+  other camera keeps the continuous move and its own stop. Behind it: the stop of
+  `dbuezas/icsee-ptz` (`DirectionUp` with `Preset: -1`), `Step: 0` sent on the session of
+  the move and `Pattern: "Stop"` all leave a sweep of `balkon-2` running to its limit
+  (`vs top` 71.8, 70.8 and 74.4, against a bottom limit of 62 to 75).
+
 ## [0.7.2] - 2026-10-19
 
 ### Added

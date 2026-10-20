@@ -101,6 +101,32 @@ def ptz_block(**overrides: Any) -> dict[str, Any]:
     return block
 
 
+def ladder_block(**overrides: Any) -> dict[str, Any]:
+    """Return the PTZ block of a camera whose stop cannot halt an axis.
+
+    The stop stores the position of the moment and drives back to it (a ``SetPreset``,
+    the stop of the Xiongmai DVRIP family), so every direction command of this camera
+    runs to the end of its axis. The block carries the ladder of step positions the user
+    stored with the panel, which is the only bounded move the camera has.
+    """
+    block = ptz_block(
+        profile="xiongmai_json",
+        commands={
+            "up": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=Up&arg2={speed_vertical}",
+            "down": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=Down&arg2={speed_vertical}",
+            "left": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=Left&arg2={speed_horizontal}",
+            "right": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=Right&arg2={speed_horizontal}",
+            "stop": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=SetPreset&arg2=201",
+            "store": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=SetPreset&arg2={preset}",
+            "preset": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=GotoPreset&arg2={preset}",
+        },
+        stop_codes={"up": "Up", "down": "Down", "left": "Left", "right": "Right"},
+        steps={"vertical": [210, 211], "horizontal": [210]},
+    )
+    block.update(overrides)
+    return block
+
+
 def write_cameras_file(hass: HomeAssistant, camera: dict[str, Any]) -> None:
     """Publish one camera the way the add-on does."""
     path = Path(hass.config.path("rtsp_cameras", "cameras.json"))
@@ -109,6 +135,7 @@ def write_cameras_file(hass: HomeAssistant, camera: dict[str, Any]) -> None:
 
 
 @pytest.fixture(name="entry")
+
 def entry_fixture(hass: HomeAssistant) -> MockConfigEntry:
     """Create the config entry the add-on ships with its integration."""
     entry = MockConfigEntry(
@@ -122,19 +149,21 @@ def entry_fixture(hass: HomeAssistant) -> MockConfigEntry:
 
 @pytest.fixture(autouse=True)
 def clean_axis_memory() -> Iterator[None]:
-    """Start every test without a remembered axis.
+    """Start every test without a remembered axis or rung.
 
     The integration keeps the axis of the last move per camera, so a stop without a
-    direction can name it. That memory lives in the module, which would let one test
-    depend on the next.
+    direction can name it, and the rung a walk stands on. Both memories live in the
+    module, which would let one test depend on the next.
     """
     ptz_module._LAST_DIRECTION.clear()
+    ptz_module._STEP_INDEX.clear()
     yield
     ptz_module._LAST_DIRECTION.clear()
+    ptz_module._STEP_INDEX.clear()
 
 
 async def setup_camera(
-    hass: HomeAssistant, entry: MockConfigEntry, **overrides: Any
+    hass: HomeAssistant, entry: MockConfigEntry, block: dict[str, Any] | None = None, **overrides: Any
 ) -> Any:
     """Set the integration up with one camera and return its entity object."""
     write_cameras_file(
@@ -145,7 +174,7 @@ async def setup_camera(
             "url": "rtsp://10.0.0.5:554/stream1",
             "rtsp_transport": "tcp",
             "enabled": True,
-            "ptz": ptz_block(**overrides),
+            "ptz": block if block is not None else ptz_block(**overrides),
         },
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -721,3 +750,118 @@ async def test_onvif_commands_use_soap(hass, entry, monkeypatch):
     assert session.requests[0]["method"] == "POST"
     assert session.requests[0]["headers"]["Content-Type"].startswith("application/soap+xml")
     assert "<tptz:PresetToken>3</tptz:PresetToken>" in session.requests[0]["body"]
+
+
+async def test_a_move_walks_the_ladder_when_a_stop_cannot_halt_an_axis(hass, entry, monkeypatch):
+    """The arrows of such a camera walk the rungs instead of starting a move.
+
+    A direction command of this family drives the axis to its limit and the capture of the
+    stop only drags the camera back afterwards, so a move is answered with one bounded
+    ``GotoPreset`` per rung of the step ladder - and no direction command and no capture.
+    """
+    await setup_camera(hass, entry, block=ladder_block())
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0.3},
+        blocking=True,
+    )
+
+    urls = [request["url"] for request in session.requests]
+    assert urls, "a move of this camera says something"
+    assert all("code=GotoPreset" in url for url in urls), "no direction command"
+    assert "arg2=210" in urls[0], "the first up lands on the lowest rung"
+    assert "arg2=211" in urls[-1], "the walk climbs the ladder"
+    assert not any("code=Up" in url for url in urls), "the axis is never swept"
+    assert not any("code=SetPreset" in url for url in urls), "and never captured"
+
+
+async def test_the_walk_ends_at_the_last_rung_and_never_repeats_it(hass, entry, monkeypatch):
+    """A duration longer than the ladder asks for each rung once."""
+    await setup_camera(hass, entry, block=ladder_block())
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 30},
+        blocking=True,
+    )
+
+    urls = [request["url"] for request in session.requests]
+    assert ["arg2=210" in url for url in urls] == [True, False], "the bottom rung"
+    assert len(urls) == 2, "the ladder has two rungs - the walk stops at the top"
+
+
+async def test_the_walk_turns_around_and_walks_down(hass, entry, monkeypatch):
+    """A move down walks the ladder the other way, from the top."""
+    await setup_camera(hass, entry, block=ladder_block())
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "DOWN", "continuous_duration": 0.3},
+        blocking=True,
+    )
+
+    urls = [request["url"] for request in session.requests]
+    assert urls, "a move of this camera says something"
+    assert "arg2=211" in urls[0], "the first down lands on the highest rung"
+    assert all("code=Down" not in url for url in urls), "the axis is never swept"
+
+
+async def test_a_preset_that_is_a_rung_keeps_the_walk_where_it_is(hass, entry, monkeypatch):
+    """A GotoPreset to a rung tells the walk where the camera stands.
+
+    A preset that is no rung leaves the camera between two rungs, and the next move starts
+    from the end of the ladder again - a walk may not begin from a position it cannot name.
+    """
+    await setup_camera(hass, entry, block=ladder_block())
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "move_mode": "GotoPreset", "preset": "210"},
+        blocking=True,
+    )
+    session.requests.clear()
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    assert session.requests, "the walk says something"
+    assert "arg2=211" in session.requests[0]["url"], "the rung above the preset"
+
+
+async def test_a_camera_without_a_ladder_keeps_its_move_and_its_capture(hass, entry, monkeypatch):
+    """A capture stop without a rung to walk keeps the continuous move of the camera.
+
+    Nothing bounds the axis of such a camera, and the capture behind the move is the only
+    ending it has - so the arrows still send the move instead of doing nothing at all.
+    """
+    await setup_camera(hass, entry, block=ladder_block(steps={}))
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    assert len(session.requests) == 2, "the move and its capture"
+    assert "code=Up" in session.requests[0]["url"]
+    assert "code=SetPreset" in session.requests[1]["url"]

@@ -69,6 +69,15 @@ DVRIP_TIMEOUT_SECONDS = 25
 DEFAULT_DVRIP_PORT = 34567
 #: Seconds a continuous move runs when the caller does not say it (ONVIF uses 0.5).
 PTZ_DEFAULT_DURATION = 0.5
+#: Which axis a direction walks. A *ladder* of step positions is kept per axis, and the
+#: arrows of an axis walk it from one end to the other: ``up``/``down`` climb the
+#: ``vertical`` ladder, ``left``/``right`` the ``horizontal`` one.
+PTZ_STEP_AXES = {"vertical": ("up", "down"), "horizontal": ("left", "right")}
+#: Seconds between two rungs of a walk, counted from the moment the rung was asked. The
+#: answer of a camera usually comes when it has arrived, so the rungs never queue; this
+#: keeps a device that acknowledges at once from being asked for a whole ladder in one
+#: burst.
+PTZ_STEP_PAUSE_SECONDS = 0.12
 SERVICE_PTZ = "ptz"
 SERVICE_PTZ_HOME = "ptz_home"
 # Stills: Home Assistant's stream needs a decoded keyframe before it can hand out

@@ -25,7 +25,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DVRIP_TIMEOUT_SECONDS, PTZ_TIMEOUT_SECONDS
+from .const import (
+    DVRIP_TIMEOUT_SECONDS,
+    PTZ_DEFAULT_DURATION,
+    PTZ_STEP_AXES,
+    PTZ_STEP_PAUSE_SECONDS,
+    PTZ_TIMEOUT_SECONDS,
+)
 from .models import PtzConfig
 
 _LOGGER = logging.getLogger(__name__)
@@ -108,6 +114,104 @@ def remember_direction(camera_id: str, action: str) -> None:
 def last_direction(camera_id: str) -> str | None:
     """Return the axis a camera was moved along last, when it is known."""
     return _LAST_DIRECTION.get(camera_id) if camera_id else None
+
+
+#: Which rung of its ladder each camera stands on, per camera id and axis. A step is a
+#: *position* - the only bounded move a camera without a stop has - so a walk has to know
+#: where it starts. Anything that leaves the camera between two rungs forgets the memory
+#: (see ``forget_step``); the panel of the add-on keeps the same memory on its side.
+_STEP_INDEX: dict[str, dict[str, int]] = {}
+
+
+def step_axis(action: str) -> str | None:
+    """Return the axis a direction walks, or None when it is no direction."""
+    for axis, arrows in PTZ_STEP_AXES.items():
+        if action in arrows:
+            return axis
+    return None
+
+
+def forget_step(camera_id: str) -> None:
+    """Forget where a camera stands on its ladders - it was moved outside one."""
+    if camera_id:
+        _STEP_INDEX.pop(camera_id, None)
+
+
+def step_slots(config: PtzConfig | None, action: str) -> tuple[int, ...]:
+    """Return the ladder a direction walks, empty when the axis has none."""
+    axis = step_axis(action)
+    if config is None or axis is None:
+        return ()
+    return config.step_slots(axis)
+
+
+def rung_of(config: PtzConfig | None, preset: Any) -> tuple[str, int] | None:
+    """Return the axis and index of the rung a preset slot is, or None."""
+    text = str(preset or "").strip()
+    if config is None or not text:
+        return None
+    for axis in PTZ_STEP_AXES:
+        for index, slot in enumerate(config.step_slots(axis)):
+            if str(slot) == text:
+                return axis, index
+    return None
+
+
+def remember_preset(camera_id: str, config: PtzConfig | None, preset: Any) -> None:
+    """Remember the rung a preset leaves the camera on, or forget the ladder.
+
+    A ``GotoPreset`` is the only bounded move a camera without a stop has, so a preset that
+    *is* a rung keeps the walk where it is. Every other preset - and the home key, and a
+    stop, which leaves the camera where it was released - leaves it between two rungs, and
+    a walk may not start from there.
+    """
+    rung = rung_of(config, preset)
+    if rung is None:
+        forget_step(camera_id)
+        return
+    axis, index = rung
+    _STEP_INDEX.setdefault(camera_id, {})[axis] = index
+
+
+def walks_the_ladder(config: PtzConfig | None, action: str) -> bool:
+    """Return True when a move has to walk the ladder instead of starting one.
+
+    A camera whose stop cannot halt an axis (``PtzConfig.stops_in_place``) is driven to the
+    limit of the axis by every direction command, and the capture behind it only drags the
+    camera back afterwards. Such a camera is moved rung by rung along the ladder of stored
+    positions instead - one bounded ``GotoPreset`` at a time - which is exactly what the
+    panel of the add-on does while an arrow is held. A camera without a rung on that axis
+    keeps its move and its own stop.
+    """
+    if config is None or config.stops_in_place:
+        return False
+    return bool(step_slots(config, action))
+
+
+def next_step(
+    camera_id: str, config: PtzConfig | None, action: str, count: int = 1
+) -> tuple[int, int] | None:
+    """Return the rung a step of ``action`` lands on, together with its index.
+
+    ``None`` means the axis has no ladder. When the camera's rung is unknown (the first
+    step of a session, or a move outside the ladder) the walk starts at the end the
+    direction comes from: the first ``up`` lands on the lowest rung, the first ``down`` on
+    the highest. A step that would leave the ladder stops on its first or its last rung, so
+    a press always moves the camera somewhere it knows.
+    """
+    slots = step_slots(config, action)
+    axis = step_axis(action)
+    if axis is None or not slots:
+        return None
+    forward = action == PTZ_STEP_AXES[axis][0]
+    index = _STEP_INDEX.setdefault(camera_id, {}).get(axis)
+    start = index if isinstance(index, int) and index >= 0 else None
+    if start is None:
+        start = -1 if forward else len(slots)
+    count = max(1, abs(int(count)))
+    target = max(0, min(len(slots) - 1, start + (count if forward else -count)))
+    _STEP_INDEX[camera_id][axis] = target
+    return slots[target], target
 
 
 def needs_direction(config: PtzConfig, action: str) -> bool:
@@ -368,6 +472,51 @@ async def async_move(
         await async_execute(
             hass, config, "stop", speed=speed, direction=direction, seconds=pause or None
         )
+    return outcome
+
+
+async def async_walk_steps(
+    hass: HomeAssistant,
+    config: PtzConfig,
+    camera_id: str,
+    direction: str,
+    *,
+    duration: float | None = None,
+    speed: int | None = None,
+) -> PtzOutcome | None:
+    """Walk the ladder of stored positions of an axis, for ``duration`` seconds.
+
+    One ``GotoPreset`` at a time: the answer of the camera comes when it has arrived, so
+    the rungs never queue, and the walk ends on the rung the camera reaches when the time
+    is over - what a release of an arrow does in the panel of the add-on. No direction
+    command and no capture is sent: neither of them can end a move on a camera whose stop
+    is a capture (see ``walks_the_ladder``).
+
+    A duration of zero still walks one rung: a move that asks for nothing has to move the
+    camera somewhere it knows, not start a sweep of the whole axis. The end of the ladder
+    ends the walk, so a long duration can never ask for the same rung again and again.
+    """
+    pause = PTZ_DEFAULT_DURATION if duration is None else max(0.0, float(duration))
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + pause
+    previous: int | None = None
+    outcome: PtzOutcome | None = None
+    while True:
+        started = loop.time()
+        landed = next_step(camera_id, config, direction)
+        if landed is None:
+            break
+        slot, index = landed
+        if index == previous:
+            # The rung does not move any more: the ladder ends here.
+            break
+        previous = index
+        outcome = await async_execute(hass, config, "preset", speed=speed, preset=str(slot))
+        if loop.time() >= deadline:
+            break
+        rest = PTZ_STEP_PAUSE_SECONDS - (loop.time() - started)
+        if rest > 0:
+            await asyncio.sleep(rest)
     return outcome
 
 

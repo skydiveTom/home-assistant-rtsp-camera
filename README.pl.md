@@ -60,10 +60,19 @@ w panelu dodatku.
   RTSP**, więc nie wpisujesz ich drugi raz. **Tryb testowania PTZ** sam znajdzie
   właściwy wariant: wpisz IP kamery (albo nic), jeden przycisk odpytuje wszystkie
   warianty, a ten który odpowie staje się główną obsługą — bez ruszania kamery, bo test
-  wysyła tylko komendy stop. Kamera, której ruchu nie da się zatrzymać (rodzina Xiongmai),
-  dostaje **kroki na strzałkach**: pozycja z chwili zapisania staje się krokiem osi, krótkie
-  naciśnięcie strzałki przechodzi o jeden krok dalej, a pole kroków o kilka — ruch ograniczony,
-  bez jazdy do krańca. Home Assistant dostaje usługę
+  wysyła tylko komendy stop. Rodzina Xiongmai **nie przyjmuje żadnego payloadu stopu**: SDK
+  producenta też nie ma komendy stop — jego flaga `stop` to ta sama komenda kierunku,
+  którą ten firmware czyta jako „jedź do końca osi”. Puszczona strzałka kończy się więc
+  **przechwyceniem**: pozycja z chwili puszczenia trafia do presetu dodatku, a kamera do
+  niego wraca. Taka kamera dostaje **kroki na strzałkach**: pozycja z chwili zapisania staje
+  się krokiem osi, krótkie naciśnięcie strzałki przechodzi o jeden krok dalej, a pole kroków
+  o kilka — ruch ograniczony, bez jazdy do krańca. **Przytrzymanie** strzałki nie zaczyna już
+  jazdy do krańca: panel idzie po drabince szczebel po szczeblu, dopóki klawisz jest wciśnięty,
+  a puszczenie kończy spacer na tym szczeblu, na którym kamera stoi (kamera, której stop
+  naprawdę zatrzymuje oś, zachowuje ruch ciągły i przechwycenie). **Encja kamery w Home
+  Assistant trzyma się tej samej reguły**: ruch takiej kamery idzie po drabince przez
+  `continuous_duration` sekund — szczebel po szczeblu, nigdy jazdą do krańca — a kamera,
+  której stop zatrzymuje oś, zachowuje własny ruch i stop. Home Assistant dostaje usługę
   `rtsp_cameras.ptz` (te same pola co `onvif.ptz`), `rtsp_cameras.ptz_home` oraz
   przycisk dla każdego presetu.
 - **Kodek strumienia bez aplikacji producenta** – kamera, której podstrumień nadaje

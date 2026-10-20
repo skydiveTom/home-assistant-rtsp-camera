@@ -14,8 +14,14 @@ from .const import (
     PTZ_ACTIONS,
     PTZ_DEFAULT_SPEED,
     PTZ_MAX_SPEED,
+    PTZ_STEP_AXES,
     SUPPORTED_SCHEMES,
 )
+
+#: How many rungs of a ladder are read. The add-on stores at most twelve, and a ladder
+#: longer than this would only make a walk of a few seconds ask for rungs it never
+#: reaches.
+MAX_STEP_SLOTS = 12
 
 
 def _positive_int(value: Any, fallback: int, maximum: int = PTZ_MAX_SPEED) -> int:
@@ -33,6 +39,34 @@ def _host_from_base(base: Any) -> str:
     """Return the host of a ``http://host:port`` base URL."""
     parts = urlsplit(str(base or ""))
     return parts.hostname or ""
+
+
+def _step_ladders(value: Any) -> dict[str, tuple[int, ...]]:
+    """Return the ladders of step positions of a camera, per axis.
+
+    The add-on publishes ``steps`` inside the PTZ block: per axis the slots the user
+    stored while placing the camera, in the order the arrows walk them. A slot is used
+    once and a ladder is cut at ``MAX_STEP_SLOTS``; everything else is dropped, so a hand
+    written camera file cannot turn a walk into a loop.
+    """
+    ladders: dict[str, tuple[int, ...]] = {}
+    if not isinstance(value, Mapping):
+        return ladders
+    for axis in PTZ_STEP_AXES:
+        slots: list[int] = []
+        for item in value.get(axis) or ():
+            try:
+                slot = int(str(item).strip())
+            except (TypeError, ValueError):
+                continue
+            if not 0 < slot < 256 or slot in slots:
+                continue
+            slots.append(slot)
+            if len(slots) >= MAX_STEP_SLOTS:
+                break
+        if slots:
+            ladders[axis] = tuple(slots)
+    return ladders
 
 
 def redact_url(url: str) -> str:
@@ -57,6 +91,11 @@ class PtzConfig:
     commands: Mapping[str, str] = field(default_factory=dict)
     stop_codes: Mapping[str, str] = field(default_factory=dict)
     presets: tuple[tuple[str, str], ...] = ()
+    #: The ladders of step positions per axis (``vertical``/``horizontal``): the slots the
+    #: add-on stored with ``store``, in the order the arrows walk them. A camera that
+    #: cannot halt a moving axis is moved rung by rung along this ladder instead of by a
+    #: direction command (see ``ptz.walks_the_ladder``).
+    steps: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
     host: str = ""
     port: int = DEFAULT_DVRIP_PORT
     channel: int = 1
@@ -68,6 +107,23 @@ class PtzConfig:
     def enabled(self) -> bool:
         """Return True when the camera can be moved."""
         return bool(self.commands)
+
+    @property
+    def stops_in_place(self) -> bool:
+        """Return True when the stop of this camera halts an axis where it stands.
+
+        A stop that has to *store* the position of the moment and drive back to it (a
+        ``SetPreset``, the stop of the Xiongmai DVRIP profile) cannot halt anything: every
+        direction command of that family drives an axis to its limit, and the capture only
+        drags the camera back afterwards. Such a camera is moved rung by rung along its
+        ladder of step positions instead - the same decision the panel of the add-on makes
+        while an arrow is held.
+        """
+        return "SetPreset" not in str(self.commands.get("stop") or "")
+
+    def step_slots(self, axis: str) -> tuple[int, ...]:
+        """Return the rungs of one axis, empty when the axis has no ladder."""
+        return tuple(self.steps.get(axis) or ())
 
     def axis_speed(self, horizontal: bool) -> int:
         """Return the speed of one axis, falling back to the general speed."""
@@ -124,6 +180,7 @@ class PtzConfig:
             commands=commands,
             stop_codes=stop_codes,
             presets=tuple(presets),
+            steps=_step_ladders(data.get("steps")),
             host=str(data.get("host") or _host_from_base(data.get("base_url")) or "").strip(),
             port=_positive_int(data.get("port"), DEFAULT_DVRIP_PORT, 65535),
             channel=_positive_int(data.get("channel"), 1, 16),

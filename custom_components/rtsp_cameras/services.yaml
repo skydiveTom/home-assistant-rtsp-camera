@@ -6,6 +6,9 @@ ptz:
     Direction fields (pan/tilt/zoom) start a movement, the camera is stopped
     automatically after continuous_duration seconds (default 0.5). Use
     move_mode: Stop to stop immediately, or action: left with no other field.
+    A camera whose stop cannot halt an axis (a capture, like the Xiongmai DVRIP
+    profile) does not start a movement at all: it walks its stored step positions
+    for continuous_duration seconds instead, one position at a time.
   target:
     entity:
       integration: rtsp_cameras

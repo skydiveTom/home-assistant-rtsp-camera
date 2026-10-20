@@ -215,6 +215,7 @@
     "clear_steps": "Wyczyść kroki",
     "steps_empty": "Nie ma jeszcze kroków: ustaw kamerę i zapisz krok - krótkie naciśnięcie strzałki przejdzie wtedy do następnego, bez długiej jazdy.",
     "steps_note": "Kroki: {vertical} góra/dół, {horizontal} lewo/prawo - krótkie naciśnięcie to jeden krok, przytrzymanie porusza dalej.",
+    "steps_note_walk": "Kroki: {vertical} góra/dół, {horizontal} lewo/prawo - krótkie naciśnięcie to jeden krok, a przytrzymanie idzie dalej szczebel po szczeblu: ta kamera nie umie zatrzymać ruchu w połowie.",
     "step_reached": "Krok {index} z {rungs}",
     "step_stored": "Krok zapisany"
   },

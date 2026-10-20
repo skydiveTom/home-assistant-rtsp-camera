@@ -333,6 +333,24 @@ def _dvrip_capture_stop(preset: int = DVRIP_STOP_PRESET) -> str:
       id it does not know, is accepted and ignored as well (``.smoke/jog_probe.py``,
       ``stop-empty``), and so is ``StopTour`` (``stop-tour``).
 
+    The stop of the vendor SDK is none of these, and it is not a stop here either: a
+    ``PtzCtrlInfoBean`` whose ``stop`` is set reaches the wire as the **same** direction
+    command. ``DeviceManager.devPTZControl`` hands it to
+    ``FunSDK.DevPTZControl(hUser, devId, nChnIndex, nPTZCommand, bStop, nSpeed, nSeq)``,
+    the native ``FUN_DevPTZControl`` writes the flag into the parameter object that
+    ``NewPTZControlPTL`` turns into ``Step``, and the fourteen names of the builder
+    (``EPTZCMD`` of the Java layer) hold no stop at all. A released arrow therefore asks
+    for ``Step: 0`` of the axis it was moving - and ``Step: 0`` on this device means "drive
+    to the zero position of that axis", which is the very direction the axis is already
+    going. The payload cannot be told apart from "keep going" (measured, ``down-0`` and
+    ``up-0`` of ``.smoke/stop_probe.py``, 4.5 s into a sweep), so there is nothing of the
+    SDK's stop to apply here. The one payload of that builder that no probe had carried -
+    the branch of ``NewPTZControlPTL`` that writes ``Preset: 65504`` instead of ``-1``,
+    with its constant ``Pattern: "SetBegin"`` and the speed left in ``Step`` - was stored as
+    the ``stop`` of this profile and replayed: a hold of one second and a hold of three
+    seconds ended at the **same** place, the limit of the axis (``balkon-2`` of the test
+    set, 2026-10-20), which is what "no stop" does.
+
     What the device *does* have is a position, and the two payloads of this stop use it:
     the ``SetPreset`` is served immediately - measured on a running axis, answered in 0.3 s
     - and stores where the camera stands at that moment (it does hold the axis for the
@@ -1431,6 +1449,28 @@ def _post_soap(
         return None, str(err) or err.__class__.__name__, ""
 
 
+def stops_in_place(config: Mapping[str, Any] | None) -> bool:
+    """Whether the stop of a camera halts a moving axis where it stands.
+
+    Every ``DirectionX`` of the Xiongmai DVRIP family drives an axis to its *limit*, and no
+    payload of the family halts one on the way: a ``Stop`` of any shape is acknowledged and
+    ignored, ``Step: 0`` drives the axis to its zero position, ``Preset: -1`` (the stop of
+    ``dbuezas/icsee-ptz``) and ``Preset: 65504`` (the branch of the SDK builder) do nothing,
+    and neither does ``Pattern: "Stop"`` - measured on the device of the test set, on the
+    session of the move as well (``.smoke/dvrip-protocol.md``). The stop of that profile is
+    therefore a **capture**: it writes the position of the release into a preset and drives
+    back to it, so the camera travels to the end of its axis before it returns.
+
+    A panel that holds an arrow has to know the difference. A stop that stores a position
+    cannot halt anything, so ``SetPreset`` in it is what tells the panel to walk the ladder
+    of stored positions during a hold instead of starting a move it will not be able to end.
+    """
+    if not config:
+        return True
+    command = str((config.get("commands") or {}).get("stop") or "")
+    return "SetPreset" not in command
+
+
 def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Return the PTZ configuration with masked credentials for the web interface.
 
@@ -1461,6 +1501,9 @@ def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
         # "store this position" button of the axes that have one.
         "steps": steps_of(config),
         "actions": configured_actions(config),
+        # Whether the stop of this camera halts an axis where it stands, or has to drag it
+        # back to a captured position (see :func:`stops_in_place`).
+        "stops_in_place": stops_in_place(config),
     }
 
 

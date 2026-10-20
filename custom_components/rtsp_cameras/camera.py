@@ -43,7 +43,8 @@ from .coordinator import RtspCamerasCoordinator
 from .models import PtzConfig, RtspCameraDefinition, redact_url
 from .ptz import async_execute as ptz_async_execute
 from .ptz import async_move as ptz_async_move
-from .ptz import last_direction, remember_direction
+from .ptz import async_walk_steps as ptz_async_walk_steps
+from .ptz import forget_step, last_direction, remember_direction, remember_preset, walks_the_ladder
 from .services import default_duration, resolve_action, resolve_duration, resolve_speed
 
 _LOGGER = logging.getLogger(__name__)
@@ -397,17 +398,36 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
                 raise HomeAssistantError(
                     translation_domain=DOMAIN, translation_key="ptz_preset_missing"
                 )
+            # A preset leaves the ladder unless it *is* a rung: only a rung the camera is
+            # at can be walked on (see ``ptz.remember_preset``).
+            remember_preset(self._definition.id, config, preset)
             await ptz_async_execute(self.hass, config, "preset", speed=speed, preset=preset)
             return
 
         if action in PTZ_DIRECTIONS:
             remember_direction(self._definition.id, action)
+            pause = duration if duration is not None else default_duration()
+            if config is not None and walks_the_ladder(config, action):
+                # This camera cannot halt a moving axis: a direction command would drive it
+                # to the limit of the axis and the capture behind it would only drag it back
+                # afterwards. The arrows walk the ladder of stored positions instead, for as
+                # long as the call lasts (see ``ptz.async_walk_steps``).
+                await ptz_async_walk_steps(
+                    self.hass,
+                    config,
+                    self._definition.id,
+                    action,
+                    duration=pause,
+                    speed=speed,
+                )
+                return
+            forget_step(self._definition.id)
             await ptz_async_move(
                 self.hass,
                 config,  # type: ignore[arg-type]
                 action,
                 speed=speed,
-                duration=duration if duration is not None else default_duration(),
+                duration=pause,
             )
             return
 
@@ -415,6 +435,7 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
             # A stop stops the axis that was moved last: a direction that has to be
             # guessed is no direction - a Xiongmai camera drives to its top position
             # when a stop tells it "up" (see ``ptz.last_direction``).
+            forget_step(self._definition.id)
             await ptz_async_execute(
                 self.hass,
                 config,
@@ -424,6 +445,7 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
             )
             return
 
+        forget_step(self._definition.id)
         await ptz_async_execute(self.hass, config, action, speed=speed)
 
     async def async_ptz_home(self, **kwargs: Any) -> None:
