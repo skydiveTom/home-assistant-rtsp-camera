@@ -71,8 +71,11 @@ DEFAULT_DVRIP_PORT = 34567
 PTZ_DEFAULT_DURATION = 0.5
 #: Which axis a direction walks. A *ladder* of step positions is kept per axis, and the
 #: arrows of an axis walk it from one end to the other: ``up``/``down`` climb the
-#: ``vertical`` ladder, ``left``/``right`` the ``horizontal`` one.
-PTZ_STEP_AXES = {"vertical": ("up", "down"), "horizontal": ("left", "right")}
+#: ``vertical`` ladder, ``left``/``right`` the ``horizontal`` one. The first arrow of a pair
+#: is the one that walks the ladder *forward* - to the end it was stored towards - and the
+#: add-on stores a ladder from the end its first arrow walks away from (``ptz.STEP_AXES``):
+#: ``up`` climbs towards the last rung, ``right`` too, which is why ``right`` comes first.
+PTZ_STEP_AXES = {"vertical": ("up", "down"), "horizontal": ("right", "left")}
 #: Seconds between two rungs of a walk, counted from the moment the rung was asked. The
 #: answer of a camera usually comes when it has arrived, so the rungs never queue; this
 #: keeps a device that acknowledges at once from being asked for a whole ladder in one

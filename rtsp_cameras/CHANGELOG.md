@@ -4,6 +4,18 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-10-21
+
+### Fixed
+
+- **A held `right` arrow of the camera entity walked the camera to the left.** The add-on
+  walks a horizontal ladder with `right` first (`ptz.STEP_AXES`), because that is the end the
+  ladder is stored from, while the integration had the pair the other way round
+  (`PTZ_STEP_AXES`): the entity walked the rungs backwards, so a `right` hold ended on the
+  left end of the pan and a `left` hold on the right one. Measured on the test set, where a
+  6 s `right` hold of a camera standing on the middle rung arrived at the wall behind the
+  balcony. Both sides now share one order, and a test of the entity pins it.
+
 ## [0.7.4] - 2026-10-20
 
 ### Fixed

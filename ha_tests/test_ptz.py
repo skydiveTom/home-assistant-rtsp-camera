@@ -816,6 +816,42 @@ async def test_the_walk_turns_around_and_walks_down(hass, entry, monkeypatch):
     assert all("code=Down" not in url for url in urls), "the axis is never swept"
 
 
+async def test_the_horizontal_walk_follows_the_arrow_it_was_given(hass, entry, monkeypatch):
+    """A pan walks the ladder the way its arrow points.
+
+    The add-on stores a horizontal ladder from its left end, so ``right`` - the first arrow
+    of that axis (``PTZ_STEP_AXES``) - has to walk the rungs *forward* and ``left`` back. A
+    flipped pair walked the camera into the arrow it was not given, which the add-on, whose
+    ``STEP_AXES`` is the other way round, does not do.
+    """
+    await setup_camera(hass, entry, block=ladder_block(steps={"horizontal": [217, 218]}))
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 30},
+        blocking=True,
+    )
+
+    urls = [request["url"] for request in session.requests]
+    assert urls, "a pan of this camera says something"
+    assert "arg2=217" in urls[0], "the first right lands on the left end"
+    assert "arg2=218" in urls[-1], "and the walk goes to the right"
+    assert not any("code=Right" in url for url in urls), "the axis is never swept"
+
+    session.requests.clear()
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "LEFT", "continuous_duration": 0.3},
+        blocking=True,
+    )
+
+    assert "arg2=217" in session.requests[0]["url"], "left walks the ladder back"
+
+
 async def test_a_preset_that_is_a_rung_keeps_the_walk_where_it_is(hass, entry, monkeypatch):
     """A GotoPreset to a rung tells the walk where the camera stands.
 
