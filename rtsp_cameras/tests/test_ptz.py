@@ -49,6 +49,7 @@ from app.ptz import (
     PROBE_STATUS_UNSUPPORTED,
     PTZ_PROFILES,
     _probe_outcome,
+    apply_inversion,
     async_probe_ptz,
     async_run,
     async_send,
@@ -2023,6 +2024,108 @@ def test_a_step_of_one_axis_forgets_the_rung_of_the_other(
     assert down.json()["step"]["slot"] == FIRST_STEP_SLOT
 
 
+def test_a_mirrored_axis_sends_the_other_command(client: TestClient, ptz_cam: str) -> None:
+    """A camera that is mounted the other way round moves where the arrow of the picture points.
+
+    ``invert_horizontal`` turns the pan around, so a ``right`` of the panel sends the command
+    of ``left`` - and the stop names the axis that really moved, not the one the panel asked
+    for: a stop of the wrong axis does not stop a camera, it moves it.
+    """
+    camera = add_camera(
+        client,
+        url=RTSP_URL,
+        ptz={"profile": "dahua", "base_url": ptz_cam, "invert_horizontal": True},
+    )
+
+    moved = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "right"})
+    stopped = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "stop", "direction": "right"}
+    )
+
+    assert moved.status_code == 200, moved.text
+    assert "code=Left" in moved.json()["ptz"]["command"], "the mirrored right is a left"
+    assert stopped.status_code == 200, stopped.text
+    assert "code=Left" in stopped.json()["ptz"]["command"], (
+        "the stop names the axis that really moved"
+    )
+
+
+def test_a_mirrored_axis_walks_its_ladder_the_other_way(
+    client: TestClient, dvrip_cam: int
+) -> None:
+    """A mirrored axis walks its rungs backwards, so the arrow matches the picture.
+
+    A rung is a position, so the ladder is stored in the order the camera is walked along it:
+    turning the arrows of the axis around has to turn the walk around as well, or a ``up`` of
+    the picture would still climb the ladder the other way.
+    """
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 3)
+    mirrored = client.post(
+        f"/api/cameras/{camera['id']}/ptz/invert", json={"axis": "vertical"}
+    )
+    assert mirrored.status_code == 200, mirrored.text
+    assert mirrored.json()["inverted"] is True
+    DvripCamera.received.clear()
+
+    step = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"}
+    )
+
+    assert step.status_code == 200, step.text
+    assert step.json()["step"]["axis"] == "vertical"
+    assert step.json()["step"]["arrow"] == "down", "the mirrored up is a down"
+    assert step.json()["step"]["index"] == 1, (
+        "the camera stood on the top rung of its ladder and walks one rung down"
+    )
+
+
+def test_the_panel_mirrors_an_axis_on_the_camera(
+    client: TestClient, settings: Settings, dvrip_cam: int
+) -> None:
+    """The mirror button of the pad flips the axis and keeps it on the camera.
+
+    The flag is a property of the camera, not of the pad that happens to press it: the entity
+    of Home Assistant and every automation follow it, so it is stored in the PTZ block - which
+    is also what the camera file the integration reads is built from.
+    """
+    camera = add_dvrip_camera(client, dvrip_cam)
+
+    first = client.post(f"/api/cameras/{camera['id']}/ptz/invert", json={"axis": "horizontal"})
+    assert first.status_code == 200, first.text
+    assert first.json()["inverted"] is True
+    assert first.json()["camera"]["ptz"]["invert_horizontal"] is True
+    assert first.json()["camera"]["ptz"]["invert_vertical"] is False
+
+    # A body without the value flips the axis - that is what the button does.
+    second = client.post(f"/api/cameras/{camera['id']}/ptz/invert", json={"axis": "horizontal"})
+    assert second.json()["inverted"] is False
+
+    # A body with it sets the flag, which is what a script that knows the bracket wants.
+    set_value = client.post(
+        f"/api/cameras/{camera['id']}/ptz/invert",
+        json={"axis": "vertical", "inverted": True},
+    )
+    assert set_value.json()["inverted"] is True
+    assert set_value.json()["camera"]["ptz"]["invert_vertical"] is True
+
+    # The camera file the integration reads carries the flag as well.
+    published = json.loads(settings.published_file.read_text(encoding="utf-8"))["cameras"]
+    assert published[0]["ptz"]["invert_vertical"] is True
+    assert published[0]["ptz"]["invert_horizontal"] is False
+
+
+def test_the_mirror_endpoint_reports_an_unknown_axis(client: TestClient, dvrip_cam: int) -> None:
+    """Only the two axes of a camera can be mirrored."""
+    camera = add_dvrip_camera(client, dvrip_cam)
+
+    response = client.post(f"/api/cameras/{camera['id']}/ptz/invert", json={"axis": "zoom"})
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error"] == "ptz_axis_required"
+
+
+
 def test_a_step_without_a_ladder_is_refused(client: TestClient, dvrip_cam: int) -> None:
     """A camera without rungs cannot step: the panel is told instead of moving nothing."""
     camera = add_dvrip_camera(client, dvrip_cam)
@@ -2154,7 +2257,54 @@ def test_a_ladder_survives_a_save_of_the_camera_editor() -> None:
     assert cleared["steps"] == {}
 
 
-def test_a_ladder_is_cleaned_and_cut() -> None:
+def test_a_mirror_survives_a_save_of_the_camera_editor() -> None:
+    """The flags of a mirrored axis are kept when the editor saves the camera.
+
+    The mirror is a button of the preview pad, so a camera editor that does not speak about
+    the flags at all - a hand written file, or the form of an older release - keeps what the
+    camera carries, exactly like the ladder of step positions.
+    """
+    first = normalize_ptz({"profile": "xiongmai_dvrip", "invert_horizontal": True}, RTSP_URL)
+    assert first is not None
+    assert first["invert_horizontal"] is True
+    assert first["invert_vertical"] is False
+    assert public_config(first)["invert_horizontal"] is True, "the pad has to see the flag"
+    assert public_config(first)["invert_vertical"] is False
+
+    saved = normalize_ptz({"profile": "xiongmai_dvrip", "speed": 6}, RTSP_URL, first)
+    assert saved is not None
+    assert saved["invert_horizontal"] is True, "a block without the flag keeps it"
+    assert saved["invert_vertical"] is False
+
+    off = normalize_ptz(
+        {"profile": "xiongmai_dvrip", "invert_horizontal": False}, RTSP_URL, first
+    )
+    assert off is not None
+    assert off["invert_horizontal"] is False, "a flag that is sent wins over the camera"
+
+
+def test_the_flags_turn_the_arrows_of_their_axis_around() -> None:
+    """The mirror of an axis swaps its two arrows and leaves everything else alone."""
+    config = normalize_ptz(
+        {
+            "profile": "xiongmai_dvrip",
+            "invert_horizontal": "true",
+            "invert_vertical": 1,
+        },
+        RTSP_URL,
+    )
+    assert config is not None
+
+    assert apply_inversion(config, "left") == "right"
+    assert apply_inversion(config, "right") == "left"
+    assert apply_inversion(config, "up") == "down"
+    assert apply_inversion(config, "down") == "up"
+    for untouched in ("zoom_in", "zoom_out", "home", "stop", "preset", "store"):
+        assert apply_inversion(config, untouched) == untouched
+    assert apply_inversion(None, "left") == "left"
+    assert apply_inversion({}, "left") == "left"
+
+
     """Garbage in a ladder is dropped: no step may ever point at a preset of the panel."""
     config = normalize_ptz(
         {

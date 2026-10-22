@@ -80,17 +80,21 @@ from .ptz import (
     DIRECTION_ACTIONS,
     MAX_PROBE_TIMEOUT,
     MAX_STEP_SLOTS,
+    MIRROR_KEYS,
     PROBE_TIMEOUT,
     STEP_AXES,
+    apply_inversion,
     async_discover_onvif_token,
     async_probe_ptz,
     base_url_for,
     credentials_from_url,
     first_free_step_slot,
+    mirrored,
     needs_direction,
     normalize_action,
     probe_base_url,
     profile_list,
+    read_flag,
     step_axis,
     step_target,
     steps_of,
@@ -144,6 +148,7 @@ API_ERRORS = (
     "encoder_bad_encoding",
     "encoder_token_required",
     "encoder_token_unknown",
+    "ptz_axis_required",
 )
 
 
@@ -493,10 +498,16 @@ async def camera_ptz(request: Request) -> JSONResponse:
     action = normalize_action(body.get("action"))
     if action is None:
         return await _error(request, "ptz_action_required", 400)
+    # A camera can be mounted the other way round, so the arrows of the picture are turned
+    # around before anything else looks at them: the command that is sent, the ladder the
+    # axis walks and the axis a stop has to name are all those of the device.
+    action = apply_inversion(camera.ptz, action)
     if action == "step":
         return await _camera_step(request, context, camera, body)
 
-    direction = str(body.get("direction") or "").strip() or None
+    direction = (
+        apply_inversion(camera.ptz, str(body.get("direction") or "").strip()) or None
+    )
     if action in DIRECTION_ACTIONS:
         context.ptz_directions[camera.id] = action
         # A continuous move leaves the ladder of step positions: the camera stands between
@@ -550,8 +561,12 @@ async def _camera_step(
     device has is the ``GotoPreset`` of a slot a position was written into before - a rung
     of the ladder the panel stores with :func:`camera_ptz_steps`. The answer carries the
     rung the camera stands on now, and the add-on remembers it for the next step.
+
+    The arrow is turned around for an axis the camera is mounted the other way round (see
+    ``ptz.apply_inversion``): the step walks the ladder the way the *picture* asks for, so
+    the ``arrow`` of the answer and the direction of the walk are those of the device.
     """
-    arrow = str(body.get("direction") or "").strip().lower()
+    arrow = apply_inversion(camera.ptz, str(body.get("direction") or "").strip().lower())
     axis = step_axis(arrow)
     if axis is None:
         return await _error(request, "ptz_steps_axis", 400)
@@ -661,6 +676,45 @@ async def camera_ptz_steps(request: Request) -> JSONResponse:
         steps=(updated.ptz or {}).get("steps") or {},
         index=(context.ptz_steps.get(camera.id) or {}).get(axis),
         camera=updated.to_api_dict(),
+    )
+
+
+async def camera_ptz_invert(request: Request) -> JSONResponse:
+    """Turn the arrows of an axis around, for a camera that is mounted the other way round.
+
+    A camera on a ceiling bracket, on its side or behind a mirror moves the other way: the
+    arrows of the panel and a call of the entity name what the *picture* shows, so the add-on
+    sends the opposite command of that axis and walks its ladder the other way (see
+    ``ptz.apply_inversion``). The flag belongs to the camera, so the pad, the entity and every
+    automation follow it, and it survives a restart of the add-on.
+
+    A body without ``inverted`` flips the axis - what the button of the pad does - and one
+    with it sets the flag, which is what a script that knows the bracket of a camera wants.
+    """
+    context = _ctx(request)
+    camera = context.store.get(request.path_params["camera_id"])
+    if camera is None:
+        return await _error(request, "not_found", 404)
+    if not camera.ptz:
+        return await _error(request, "ptz_not_configured", 400)
+
+    body = await _json_body(request)
+    axis = str(body.get("axis") or "").strip().lower()
+    if axis not in MIRROR_KEYS:
+        return await _error(request, "ptz_axis_required", 400)
+    requested = body.get("inverted")
+    inverted = (not mirrored(camera.ptz, axis)) if requested is None else read_flag(requested)
+
+    updated = context.store.update(
+        camera.id, ptz={**camera.ptz, MIRROR_KEYS[axis]: inverted}
+    )
+    if updated is None:
+        return await _error(request, "not_found", 404)
+    return _ok(
+        axis=axis,
+        inverted=inverted,
+        camera=updated.to_api_dict(),
+        cameras=_cameras_payload(context),
     )
 
 
@@ -1758,6 +1812,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
         Route("/api/cameras/{camera_id}/test", camera_test, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz", camera_ptz, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz/steps", camera_ptz_steps, methods=["POST"]),
+        Route("/api/cameras/{camera_id}/ptz/invert", camera_ptz_invert, methods=["POST"]),
         Route("/api/cameras/{camera_id}/ptz/probe", ptz_probe, methods=["POST"]),
         Route(
             "/api/cameras/{camera_id}/encoder/inspect",

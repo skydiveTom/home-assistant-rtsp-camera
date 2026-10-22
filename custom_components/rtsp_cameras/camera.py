@@ -391,6 +391,12 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         action = resolve_action(kwargs)
         speed = resolve_speed(kwargs)
         duration = resolve_duration(kwargs)
+        if config is not None:
+            # A camera can be mounted the other way round: the arrows of the picture are
+            # turned around here, before anything else looks at them, so the command that is
+            # sent, the ladder the axis walks and the axis a stop names afterwards are those
+            # of the device (see ``PtzConfig.mirror``).
+            action = config.mirror(action)
 
         if action == "preset":
             preset = str(kwargs.get("preset") or "").strip()

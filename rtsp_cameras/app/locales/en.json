@@ -217,7 +217,12 @@
     "steps_note": "Steps: {vertical} up/down, {horizontal} left/right - a short press walks one, holding moves on.",
     "steps_note_walk": "Steps: {vertical} up/down, {horizontal} left/right - a short press walks one, and a hold walks on rung by rung: this camera cannot stop a move on the way.",
     "step_reached": "Step {index} of {rungs}",
-    "step_stored": "Step stored"
+    "step_stored": "Step stored",
+    "invert_horizontal": "Mirror left/right",
+    "invert_vertical": "Mirror up/down",
+    "invert_hint": "Camera mounted upside down, on its side or behind a mirror? Mirror an axis so its arrows match the picture - the pad, the entity in Home Assistant and every automation follow it.",
+    "invert_on": "The arrows of that axis are mirrored",
+    "invert_off": "The arrows of that axis are back to normal"
   },
   "encoder": {
     "title": "Stream codec",
@@ -279,7 +284,8 @@
     "ptz_steps_missing": "This camera has no steps yet - store the first one",
     "ptz_steps_axis": "Unknown step axis",
     "ptz_steps_full": "The step list of this axis is full",
-    "ptz_store_missing": "This camera profile cannot store a position"
+    "ptz_store_missing": "This camera profile cannot store a position",
+    "ptz_axis_required": "Unknown axis - choose left/right or up/down"
   },
   "common": {
     "close": "Close",

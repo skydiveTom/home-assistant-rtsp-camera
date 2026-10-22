@@ -1451,6 +1451,7 @@
     select.disabled = presets.length === 0;
     document.getElementById('btn-ptz-preset').disabled = presets.length === 0;
     renderPtzSteps(ptz);
+    renderPtzMirror(ptz);
   }
 
   // Which speed field belongs to the arrows of an axis: the tilt (up/down) and the pan
@@ -1462,6 +1463,26 @@
     left: 'horizontal',
     right: 'horizontal',
   };
+
+  // The arrows a mirror flag of the camera turns around. A camera on a ceiling bracket, on
+  // its side or behind a mirror moves the other way, so the pad offers a button per axis
+  // that turns its arrows around; the flag lives in the PTZ block of the camera, so the
+  // entity of Home Assistant and every automation follow it as well.
+  const PTZ_MIRROR_AXES = {
+    horizontal: ['left', 'right'],
+    vertical: ['up', 'down'],
+  };
+
+  function renderPtzMirror(ptz) {
+    const actions = (ptz && ptz.actions) || [];
+    Object.keys(PTZ_MIRROR_AXES).forEach((axis) => {
+      const button = document.getElementById('btn-ptz-invert-' + axis);
+      button.setAttribute('aria-pressed', ptz && ptz['invert_' + axis] ? 'true' : 'false');
+      button.disabled = !PTZ_MIRROR_AXES[axis].some(
+        (action) => actions.indexOf(action) >= 0,
+      );
+    });
+  }
 
   async function sendPtz(action, extra) {
     const cameraId = state.preview.cameraId;
@@ -1605,6 +1626,26 @@
       await reload();
       renderPtzPad(cameraById(cameraId));
       toast(t('ptz.step_stored'), 'ok');
+    } catch (err) {
+      showPtzError(err);
+    }
+  }
+
+  /* Turn the arrows of an axis around: a camera that is mounted the other way round moves
+     the other way, and the flag belongs to the camera, so the panel, the entity of Home
+     Assistant and every automation read the arrows the way the picture shows them. */
+  async function toggleInvert(axis) {
+    const cameraId = state.preview.cameraId;
+    if (!cameraId) return;
+    try {
+      const data = await api('api/cameras/' + cameraId + '/ptz/invert', {
+        method: 'POST',
+        body: { axis },
+      });
+      const camera = cameraById(cameraId);
+      if (camera && data.camera) Object.assign(camera, data.camera);
+      renderPtzPad(camera);
+      toast(t(data.inverted ? 'ptz.invert_on' : 'ptz.invert_off'), 'ok');
     } catch (err) {
       showPtzError(err);
     }
@@ -2190,6 +2231,11 @@
     });
     document.getElementById('btn-ptz-step-clear').addEventListener('click', () => {
       clearSteps();
+    });
+    Object.keys(PTZ_MIRROR_AXES).forEach((axis) => {
+      document.getElementById('btn-ptz-invert-' + axis).addEventListener('click', () => {
+        toggleInvert(axis);
+      });
     });
     document.getElementById('btn-ptz-preset').addEventListener('click', () => {
       const preset = document.getElementById('ptz-preset-select').value;

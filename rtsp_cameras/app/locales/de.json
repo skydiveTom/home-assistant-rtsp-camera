@@ -217,7 +217,12 @@
     "steps_note": "Schritte: {vertical} hoch/runter, {horizontal} links/rechts - ein kurzer Druck geht einen, halten bewegt weiter.",
     "steps_note_walk": "Schritte: {vertical} hoch/runter, {horizontal} links/rechts - ein kurzer Druck geht einen, halten geht Sprosse für Sprosse weiter: diese Kamera kann eine Fahrt nicht anhalten.",
     "step_reached": "Schritt {index} von {rungs}",
-    "step_stored": "Schritt gespeichert"
+    "step_stored": "Schritt gespeichert",
+    "invert_horizontal": "Links/rechts spiegeln",
+    "invert_vertical": "Oben/unten spiegeln",
+    "invert_hint": "Kamera kopfüber, seitlich oder hinter einem Spiegel montiert? Spiegle eine Achse, damit ihre Pfeile zum Bild passen - Panel, Entität in Home Assistant und jede Automatisierung folgen dem.",
+    "invert_on": "Die Pfeile dieser Achse sind gespiegelt",
+    "invert_off": "Die Pfeile dieser Achse laufen wieder normal"
   },
   "encoder": {
     "title": "Stream-Codec",
@@ -279,7 +284,8 @@
     "ptz_steps_missing": "Diese Kamera hat noch keine Schritte - speichere zuerst einen",
     "ptz_steps_axis": "Unbekannte Schrittachse",
     "ptz_steps_full": "Die Schritttliste dieser Achse ist voll",
-    "ptz_store_missing": "Dieses Kameraprofil kann keine Position speichern"
+    "ptz_store_missing": "Dieses Kameraprofil kann keine Position speichern",
+    "ptz_axis_required": "Unbekannte Achse - wähle links/rechts oder oben/unten"
   },
   "common": {
     "close": "Schließen",

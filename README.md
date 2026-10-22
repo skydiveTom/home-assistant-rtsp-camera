@@ -72,7 +72,10 @@ exactly one place — the add-on panel.
   `continuous_duration` seconds - rung by rung, never a sweep to the limit - while a
   camera whose stop halts keeps its own move and stop. Home Assistant
   receives `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
-  button per preset.
+  button per preset. A camera that is mounted upside down, on its side or behind a mirror is
+  **mirrored per axis** - one button each in the preview pad (*Mirror left/right*, *Mirror
+  up/down*), stored with the camera, so the pad, the entity of Home Assistant and every
+  automation follow the arrow of the picture.
 - **The codec of a stream, without the vendor app** – a camera whose sub stream sends
   **H.265** stays black in Chrome, Edge and Firefox, because Home Assistant copies the
   stream without transcoding. The camera editor reads the encoders **over ONVIF**, and over

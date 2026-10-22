@@ -4,6 +4,22 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.7] - 2026-10-23
+
+### Added
+
+- **A mirrored axis, for a camera that is mounted the other way round.** A camera on a ceiling
+  bracket, on its side or behind a mirror moves the other way, so an arrow of the panel and a
+  call of the entity sent the camera away from the point of the picture - and nothing could
+  turn that around. The preview pad now has two buttons, *Mirror left/right* and *Mirror
+  up/down*: each one turns the arrows of its axis around, so a `right` runs the command of
+  `left` and the ladder of that axis is walked the other way. The flag is stored with the
+  camera (`invert_horizontal` and `invert_vertical` of its PTZ block), so the pad, the entity
+  of Home Assistant and every automation follow it, a save of the camera editor keeps it, and a
+  stop names the axis that really moved. The two buttons are an endpoint as well -
+  `POST /api/cameras/<id>/ptz/invert` with `{"axis": "horizontal"}` flips an axis and
+  `{"axis": "vertical", "inverted": true}` sets it.
+
 ## [0.7.6] - 2026-10-22
 
 ### Fixed

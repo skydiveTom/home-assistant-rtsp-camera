@@ -217,7 +217,12 @@
     "steps_note": "Pasos: {vertical} arriba/abajo, {horizontal} izquierda/derecha - una pulsación corta avanza uno, mantener pulsado sigue moviendo.",
     "steps_note_walk": "Pasos: {vertical} arriba/abajo, {horizontal} izquierda/derecha - una pulsación corta avanza uno y mantener pulsado avanza peldaño a peldaño: esta cámara no puede detener un movimiento.",
     "step_reached": "Paso {index} de {rungs}",
-    "step_stored": "Paso guardado"
+    "step_stored": "Paso guardado",
+    "invert_horizontal": "Invertir izquierda/derecha",
+    "invert_vertical": "Invertir arriba/abajo",
+    "invert_hint": "¿Cámara montada al revés, de lado o detrás de un espejo? Invierte un eje para que sus flechas coincidan con la imagen: el panel, la entidad de Home Assistant y todas las automatizaciones lo siguen.",
+    "invert_on": "Las flechas de ese eje están invertidas",
+    "invert_off": "Las flechas de ese eje vuelven a la normalidad"
   },
   "encoder": {
     "title": "Códec del flujo",
@@ -279,7 +284,8 @@
     "ptz_steps_missing": "Esta cámara aún no tiene pasos: guarda uno primero",
     "ptz_steps_axis": "Eje de pasos desconocido",
     "ptz_steps_full": "La lista de pasos de este eje está llena",
-    "ptz_store_missing": "Este perfil de cámara no puede guardar una posición"
+    "ptz_store_missing": "Este perfil de cámara no puede guardar una posición",
+    "ptz_axis_required": "Eje desconocido: elige izquierda/derecha o arriba/abajo"
   },
   "common": {
     "close": "Cerrar",

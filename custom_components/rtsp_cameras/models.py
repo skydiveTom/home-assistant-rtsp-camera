@@ -23,6 +23,22 @@ from .const import (
 #: reaches.
 MAX_STEP_SLOTS = 12
 
+#: The arrows a mirror flag of the camera turns around: ``invert_horizontal`` and
+#: ``invert_vertical`` of the PTZ block are set for a camera that is mounted the other way
+#: round (a ceiling bracket, a side mount, a mirror), so the arrow of the picture and the
+#: command of the device are not the same one.
+MIRRORED_ARROWS: dict[str, dict[str, str]] = {
+    "horizontal": {"left": "right", "right": "left"},
+    "vertical": {"up": "down", "down": "up"},
+}
+
+
+def _flag(value: Any) -> bool:
+    """Return the yes/no value of a published PTZ block."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
 
 def _positive_int(value: Any, fallback: int, maximum: int = PTZ_MAX_SPEED) -> int:
     """Return a bounded positive integer."""
@@ -96,6 +112,11 @@ class PtzConfig:
     #: cannot halt a moving axis is moved rung by rung along this ladder instead of by a
     #: direction command (see ``ptz.walks_the_ladder``).
     steps: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
+    #: A camera can be mounted the other way round: the flag of an axis turns its arrows
+    #: around, so ``right`` of the picture sends the command of ``left`` and walks the
+    #: ladder of that axis the other way (see ``mirror``).
+    invert_horizontal: bool = False
+    invert_vertical: bool = False
     host: str = ""
     port: int = DEFAULT_DVRIP_PORT
     channel: int = 1
@@ -124,6 +145,22 @@ class PtzConfig:
     def step_slots(self, axis: str) -> tuple[int, ...]:
         """Return the rungs of one axis, empty when the axis has no ladder."""
         return tuple(self.steps.get(axis) or ())
+
+    def mirror(self, action: str) -> str:
+        """Return the action the camera has to run for an arrow of the picture.
+
+        The arrows of Home Assistant and of the panel name what the *picture* shows, not
+        what the device calls it - the two only differ for a camera that is mounted the other
+        way round (see ``invert_horizontal`` and ``invert_vertical``). A zoom, a preset, the
+        home key and a stop are the same in both worlds.
+        """
+        for axis, inverted in (
+            ("horizontal", self.invert_horizontal),
+            ("vertical", self.invert_vertical),
+        ):
+            if inverted and action in MIRRORED_ARROWS[axis]:
+                return MIRRORED_ARROWS[axis][action]
+        return action
 
     def axis_speed(self, horizontal: bool) -> int:
         """Return the speed of one axis, falling back to the general speed."""
@@ -181,6 +218,8 @@ class PtzConfig:
             stop_codes=stop_codes,
             presets=tuple(presets),
             steps=_step_ladders(data.get("steps")),
+            invert_horizontal=_flag(data.get("invert_horizontal")),
+            invert_vertical=_flag(data.get("invert_vertical")),
             host=str(data.get("host") or _host_from_base(data.get("base_url")) or "").strip(),
             port=_positive_int(data.get("port"), DEFAULT_DVRIP_PORT, 65535),
             channel=_positive_int(data.get("channel"), 1, 16),

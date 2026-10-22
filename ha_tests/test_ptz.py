@@ -25,6 +25,7 @@ from custom_components.rtsp_cameras.const import (
     DVRIP_TIMEOUT_SECONDS,
     PTZ_TIMEOUT_SECONDS,
 )
+from custom_components.rtsp_cameras.models import PtzConfig
 
 CAMERAS_FILE = "rtsp_cameras/cameras.json"
 
@@ -947,3 +948,71 @@ async def test_a_camera_without_a_ladder_keeps_its_move_and_its_capture(hass, en
     assert len(session.requests) == 2, "the move and its capture"
     assert "code=Up" in session.requests[0]["url"]
     assert "code=SetPreset" in session.requests[1]["url"]
+
+
+async def test_a_mirrored_axis_runs_the_command_of_the_other_arrow(hass, entry, monkeypatch):
+    """A camera that is mounted the other way round moves where the arrow of the picture points.
+
+    ``invert_horizontal`` of the PTZ block turns the pan around: a ``pan: RIGHT`` of Home
+    Assistant sends the command of ``left`` - and the stop names the axis that really moved,
+    not the one the service asked for, because a stop of the wrong axis moves a camera
+    instead of halting it.
+    """
+    await setup_camera(hass, entry, block=ptz_block(invert_horizontal=True))
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "RIGHT"},
+        blocking=True,
+    )
+
+    assert len(session.requests) == 2, "the move and its stop"
+    assert "code=Left" in session.requests[0]["url"], "the mirrored right is a left"
+    assert "code=Left" in session.requests[1]["url"], "the stop names the axis that moved"
+
+
+async def test_a_mirrored_axis_walks_its_ladder_the_other_way(hass, entry, monkeypatch):
+    """A mirrored axis walks its rungs backwards, so the arrow matches the picture.
+
+    A rung is a position, so the ladder is stored in the order the camera is walked along it:
+    turning the arrows of an axis around has to turn the walk around as well, or an ``UP`` of
+    the picture would still climb the ladder the wrong way.
+    """
+    await setup_camera(hass, entry, block=ladder_block(invert_vertical=True))
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    assert session.requests, "the walk says something"
+    assert "arg2=211" in session.requests[0]["url"], (
+        "the mirrored up walks one rung below the middle of the tilt ladder, not above it"
+    )
+
+
+def test_the_published_mirror_flags_reach_the_configuration() -> None:
+    """The two flags of the PTZ block are read, and a broken one is not a mirror."""
+    config = PtzConfig.from_dict(ptz_block(invert_horizontal=True, invert_vertical="true"))
+    assert config is not None
+    assert config.invert_horizontal is True
+    assert config.invert_vertical is True
+    assert config.mirror("right") == "left"
+    assert config.mirror("up") == "down"
+
+    plain = PtzConfig.from_dict(ptz_block())
+    assert plain is not None
+    assert plain.invert_horizontal is False
+    assert plain.invert_vertical is False
+    assert plain.mirror("right") == "right"
+    assert plain.mirror("up") == "up"
+    for untouched in ("zoom_in", "zoom_out", "home", "stop", "preset"):
+        assert plain.mirror(untouched) == untouched
+

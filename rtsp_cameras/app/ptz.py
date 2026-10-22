@@ -89,6 +89,20 @@ STEP_AXES: dict[str, tuple[str, str]] = {
     "vertical": ("up", "down"),
     "horizontal": ("right", "left"),
 }
+#: A camera can be mounted the other way round - on a ceiling bracket, on its side, behind a
+#: mirror - so the arrow of the picture and the arrow of the device are not always the same
+#: one. Two flags of a PTZ block turn the arrows of an axis around: ``right`` of the panel then
+#: sends the command of ``left``, and the ladder of that axis is walked the other way.
+MIRRORED_ARROWS: dict[str, dict[str, str]] = {
+    "horizontal": {"left": "right", "right": "left"},
+    "vertical": {"up": "down", "down": "up"},
+}
+#: The key of a PTZ block that carries the mirror flag of an axis.
+MIRROR_KEYS: dict[str, str] = {
+    "horizontal": "invert_horizontal",
+    "vertical": "invert_vertical",
+}
+
 DEFAULT_SPEED = 4
 DEFAULT_CHANNEL = 1
 DEFAULT_DVRIP_PORT = 34567
@@ -982,6 +996,13 @@ def normalize_ptz(
     speed_vertical = _axis_speed(raw.get("speed_vertical"), speed)
     port = _positive_port(raw.get("port"), DEFAULT_DVRIP_PORT)
     token = str(raw.get("token") or "").strip()
+    # A camera that is mounted the other way round keeps that fact on the camera. A block
+    # that does not speak about the flags keeps what the camera carries - the camera editor
+    # of an older version has no field for them, exactly like the ladder of step positions.
+    mirror = {
+        key: read_flag(raw[key] if key in raw else (previous or {}).get(key))
+        for key in MIRROR_KEYS.values()
+    }
 
     profile_commands = PTZ_PROFILES[profile]["commands"]
     supplied = raw.get("commands") if isinstance(raw.get("commands"), Mapping) else {}
@@ -1019,6 +1040,9 @@ def normalize_ptz(
         "speed": speed,
         "speed_horizontal": speed_horizontal,
         "speed_vertical": speed_vertical,
+        # Whether the arrows of an axis are turned around (see ``apply_inversion``).
+        "invert_horizontal": mirror["invert_horizontal"],
+        "invert_vertical": mirror["invert_vertical"],
         "port": port,
         "token": token,
         "username": username,
@@ -1138,6 +1162,40 @@ def step_axis(action: str) -> str | None:
         if action in arrows:
             return axis
     return None
+
+
+def read_flag(value: Any) -> bool:
+    """Read a yes/no value of a PTZ block."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def mirrored(config: Mapping[str, Any] | None, axis: str) -> bool:
+    """Return True when the arrows of an axis are turned around."""
+    if not config or axis not in MIRROR_KEYS:
+        return False
+    return read_flag(config.get(MIRROR_KEYS[axis]))
+
+
+def apply_inversion(config: Mapping[str, Any] | None, action: str) -> str:
+    """Return the action a camera has to run for an arrow of the picture.
+
+    A camera on a ceiling bracket, on its side or behind a mirror moves the other way, and
+    the bracket is a property of the camera, not of the panel that happens to press it: the
+    flags ``invert_horizontal`` and ``invert_vertical`` of the PTZ block turn the arrows of
+    an axis around here, before anything else looks at them. Everything that asks a camera
+    to move - the pad, the panel, the entity of Home Assistant - therefore names what the
+    *picture* shows: a ``right`` sends the command of ``left`` and walks the ladder of the
+    pan backwards, which is the way that looks right. A zoom, a preset, the home key and a
+    stop are the same in both worlds.
+    """
+    if not action:
+        return action
+    for axis, swap in MIRRORED_ARROWS.items():
+        if action in swap and mirrored(config, axis):
+            return swap[action]
+    return action
 
 
 def first_free_step_slot(slots: Sequence[int]) -> int | None:
@@ -1492,6 +1550,10 @@ def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
         "speed": config.get("speed"),
         "speed_horizontal": config.get("speed_horizontal"),
         "speed_vertical": config.get("speed_vertical"),
+        # Whether the arrows of an axis are turned around, so the pad can offer the toggle
+        # the button of that axis shows.
+        "invert_horizontal": mirrored(config, "horizontal"),
+        "invert_vertical": mirrored(config, "vertical"),
         "port": config.get("port"),
         "token": config.get("token"),
         "has_credentials": bool(config.get("username")),

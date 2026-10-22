@@ -1368,6 +1368,23 @@ select:focus {
   min-width: 170px;
 }
 
+/* The mirror of an axis: a pressed button means the arrows of that axis are turned round, so
+   a camera that is mounted the other way round still moves the way the picture suggests. */
+.ptz-mirror {
+  display: grid;
+  gap: 8px;
+}
+
+.ptz-mirror__btn {
+  justify-content: flex-start;
+}
+
+.ptz-mirror__btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--panel-2);
+}
+
 .field--tight {
   gap: 4px;
 }

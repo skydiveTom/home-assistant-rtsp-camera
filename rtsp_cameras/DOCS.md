@@ -318,6 +318,23 @@ afterwards - a ladder is therefore built from the positions the camera really st
 from the timing of a sweep. The panel stores the place of the moment, one rung per press, which
 is why the button is pressed once per step.
 
+**A camera that is mounted the other way round.** A camera on a ceiling bracket, on its side
+or behind a mirror moves the other way, so an arrow pointed away from the picture. The preview
+pad has two buttons for that - *Mirror left/right* and *Mirror up/down* - and each one turns
+the arrows of its axis around: a `right` then sends the command of `left`, and the ladder of
+that axis is walked the other way, so every press still moves the camera where the picture
+says. The flag belongs to the **camera** (`invert_horizontal` and `invert_vertical` of its PTZ
+block), so the pad, the entity of Home Assistant and every automation follow it, it survives a
+restart, and a save of the camera editor keeps it. The axis a stop names afterwards is the one
+of the device as well - a stop of the wrong axis does not halt a camera, it moves it. Both
+buttons are an endpoint for a script too:
+
+```
+POST /api/cameras/<id>/ptz/invert   {"axis": "horizontal"}                  # flip the axis
+POST /api/cameras/<id>/ptz/invert   {"axis": "vertical", "inverted": true}  # set the flag
+```
+
+
 For **ONVIF** press *Discover the ONVIF token* next to the commands: the add-on sends
 `GetProfiles` to the media service, takes the first profile token and fills the
 commands with it. For **DVRIP** the port field (default 34567) is used; the add-on logs

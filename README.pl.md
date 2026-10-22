@@ -74,7 +74,10 @@ w panelu dodatku.
   `continuous_duration` sekund — szczebel po szczeblu, nigdy jazdą do krańca — a kamera,
   której stop zatrzymuje oś, zachowuje własny ruch i stop. Home Assistant dostaje usługę
   `rtsp_cameras.ptz` (te same pola co `onvif.ptz`), `rtsp_cameras.ptz_home` oraz
-  przycisk dla każdego presetu.
+  przycisk dla każdego presetu. Kamerę zamontowaną do góry nogami, bokiem albo za lustrem
+  **odwraca się osobno na każdej osi** — po jednym przycisku w padzie podglądu (*Odwróć
+  lewo/prawo*, *Odwróć góra/dół*), zapisanym przy kamerze, więc pad, encja w Home Assistant
+  i wszystkie automatyzacje idą za strzałką zgodną z obrazem.
 - **Kodek strumienia bez aplikacji producenta** – kamera, której podstrumień nadaje
   **H.265**, zostaje czarna w Chrome, Edge i Firefox, bo Home Assistant kopiuje strumień
   bez transkodowania. Edytor kamery odczytuje kodery **przez ONVIF**, a gdy firmware nie ma
