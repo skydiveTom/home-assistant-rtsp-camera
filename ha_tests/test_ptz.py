@@ -121,7 +121,7 @@ def ladder_block(**overrides: Any) -> dict[str, Any]:
             "preset": "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=GotoPreset&arg2={preset}",
         },
         stop_codes={"up": "Up", "down": "Down", "left": "Left", "right": "Right"},
-        steps={"vertical": [210, 211], "horizontal": [210]},
+        steps={"vertical": [210, 211, 212, 213, 214], "horizontal": [217, 218, 219, 220, 221]},
     )
     block.update(overrides)
     return block
@@ -773,8 +773,8 @@ async def test_a_move_walks_the_ladder_when_a_stop_cannot_halt_an_axis(hass, ent
     urls = [request["url"] for request in session.requests]
     assert urls, "a move of this camera says something"
     assert all("code=GotoPreset" in url for url in urls), "no direction command"
-    assert "arg2=210" in urls[0], "the first up lands on the lowest rung"
-    assert "arg2=211" in urls[-1], "the walk climbs the ladder"
+    assert "arg2=213" in urls[0], "the first up starts one rung above the middle of the ladder"
+    assert "arg2=214" in urls[-1], "the walk climbs the ladder"
     assert not any("code=Up" in url for url in urls), "the axis is never swept"
     assert not any("code=SetPreset" in url for url in urls), "and never captured"
 
@@ -793,12 +793,13 @@ async def test_the_walk_ends_at_the_last_rung_and_never_repeats_it(hass, entry, 
     )
 
     urls = [request["url"] for request in session.requests]
-    assert ["arg2=210" in url for url in urls] == [True, False], "the bottom rung"
-    assert len(urls) == 2, "the ladder has two rungs - the walk stops at the top"
+    assert ["arg2=213" in url for url in urls] == [True, False], "one rung above the middle"
+    assert ["arg2=214" in url for url in urls] == [False, True], "the top rung"
+    assert len(urls) == 2, "the walk leaves the middle and stops at the last rung of the ladder"
 
 
 async def test_the_walk_turns_around_and_walks_down(hass, entry, monkeypatch):
-    """A move down walks the ladder the other way, from the top."""
+    """A move down walks the ladder the other way, from the middle."""
     await setup_camera(hass, entry, block=ladder_block())
     session = FakeSession()
     use_session(monkeypatch, session)
@@ -812,7 +813,7 @@ async def test_the_walk_turns_around_and_walks_down(hass, entry, monkeypatch):
 
     urls = [request["url"] for request in session.requests]
     assert urls, "a move of this camera says something"
-    assert "arg2=211" in urls[0], "the first down lands on the highest rung"
+    assert "arg2=211" in urls[0], "the first down starts one rung below the middle"
     assert all("code=Down" not in url for url in urls), "the axis is never swept"
 
 
@@ -824,7 +825,7 @@ async def test_the_horizontal_walk_follows_the_arrow_it_was_given(hass, entry, m
     flipped pair walked the camera into the arrow it was not given, which the add-on, whose
     ``STEP_AXES`` is the other way round, does not do.
     """
-    await setup_camera(hass, entry, block=ladder_block(steps={"horizontal": [217, 218]}))
+    await setup_camera(hass, entry, block=ladder_block())
     session = FakeSession()
     use_session(monkeypatch, session)
 
@@ -837,8 +838,8 @@ async def test_the_horizontal_walk_follows_the_arrow_it_was_given(hass, entry, m
 
     urls = [request["url"] for request in session.requests]
     assert urls, "a pan of this camera says something"
-    assert "arg2=217" in urls[0], "the first right lands on the left end"
-    assert "arg2=218" in urls[-1], "and the walk goes to the right"
+    assert ["arg2=220" in url for url in urls] == [True, False], "one rung right of the middle"
+    assert ["arg2=221" in url for url in urls] == [False, True], "and the walk goes to the right"
     assert not any("code=Right" in url for url in urls), "the axis is never swept"
 
     session.requests.clear()
@@ -849,7 +850,7 @@ async def test_the_horizontal_walk_follows_the_arrow_it_was_given(hass, entry, m
         blocking=True,
     )
 
-    assert "arg2=217" in session.requests[0]["url"], "left walks the ladder back"
+    assert "arg2=220" in session.requests[0]["url"], "left walks the ladder back"
 
 
 async def test_a_preset_that_is_a_rung_keeps_the_walk_where_it_is(hass, entry, monkeypatch):
@@ -879,6 +880,51 @@ async def test_a_preset_that_is_a_rung_keeps_the_walk_where_it_is(hass, entry, m
 
     assert session.requests, "the walk says something"
     assert "arg2=211" in session.requests[0]["url"], "the rung above the preset"
+
+
+async def test_a_step_of_one_axis_forgets_the_rung_of_the_other(hass, entry, monkeypatch):
+    """A walk of one axis leaves the other one at the crossing, not on its old rung.
+
+    The rungs of a camera are whole positions - the tilt rungs are stored at one pan and the
+    pan rungs at one tilt - so a step of an axis puts the camera at the crossing of the two
+    ladders. The rung the other axis remembered is not where the camera stands any more, and
+    a press that started from it would jump over the way the two are apart (measured on the
+    test set: the first tilt press after a pan walk drove the camera over half of its tilt).
+    Forgotten, that press starts in the middle of its own ladder instead.
+    """
+    await setup_camera(hass, entry, block=ladder_block())
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 30},
+        blocking=True,
+    )
+    assert "arg2=214" in session.requests[-1]["url"], "the tilt walks up to its top rung"
+    session.requests.clear()
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 30},
+        blocking=True,
+    )
+    assert "arg2=220" in session.requests[0]["url"], "the pan starts in the middle of its ladder"
+    session.requests.clear()
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "DOWN", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    assert "arg2=211" in session.requests[0]["url"], (
+        "the tilt starts one rung below the middle of its ladder, not below the top rung it "
+        "stood on before the pan"
+    )
 
 
 async def test_a_camera_without_a_ladder_keeps_its_move_and_its_capture(hass, entry, monkeypatch):

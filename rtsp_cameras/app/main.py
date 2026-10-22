@@ -456,6 +456,24 @@ def _step_index(config: Mapping[str, Any] | None, preset: Any) -> tuple[str, int
     return None
 
 
+def _remember_rung(context: AppContext, camera_id: str, axis: str, index: int) -> None:
+    """Remember the rung a camera stands on, and forget the rung of the other axis.
+
+    A preset is a whole position: every tilt rung is stored at one pan and every pan rung at
+    one tilt, so a camera that stands on a rung of one ladder stands at the *crossing* of
+    the two. The rung the other axis remembered is not where the camera is any more, and a
+    walk that started from it would jump over the whole way the two rungs are apart
+    (measured on the test set: the first tilt step after a pan walk drove the camera over
+    half of its tilt). Forgetting it makes that walk start in the middle of its ladder
+    instead, which is a bounded move (see ``ptz.step_target``).
+    """
+    rungs = context.ptz_steps.setdefault(camera_id, {})
+    for other in STEP_AXES:
+        if other != axis:
+            rungs.pop(other, None)
+    rungs[axis] = index
+
+
 async def camera_ptz(request: Request) -> JSONResponse:
     """Move a PTZ capable camera.
 
@@ -498,7 +516,7 @@ async def camera_ptz(request: Request) -> JSONResponse:
         if rung is None:
             context.ptz_steps.pop(camera.id, None)
         else:
-            context.ptz_steps.setdefault(camera.id, {})[rung[0]] = rung[1]
+            _remember_rung(context, camera.id, rung[0], rung[1])
 
     result = await ptz_run(
         camera.ptz,
@@ -557,7 +575,7 @@ async def _camera_step(
             },
             status_code=502,
         )
-    context.ptz_steps.setdefault(camera.id, {})[axis] = reached
+    _remember_rung(context, camera.id, axis, reached)
     return _ok(
         ptz=result.to_dict(),
         step={"axis": axis, "slot": slot, "index": reached, "rungs": len(ladder), "arrow": arrow},
@@ -629,8 +647,9 @@ async def camera_ptz_steps(request: Request) -> JSONResponse:
             )
         slots.append(slot)
         ladder[axis] = slots
-        # The camera stands on the rung that was just written.
-        context.ptz_steps.setdefault(camera.id, {})[axis] = len(slots) - 1
+        # The camera stands on the rung that was just written - a hand positioned place, so
+        # the rung of the other axis (if it had one) is no longer where the camera is.
+        _remember_rung(context, camera.id, axis, len(slots) - 1)
         added = slot
 
     updated = context.store.update(camera.id, ptz={**camera.ptz, "steps": ladder})

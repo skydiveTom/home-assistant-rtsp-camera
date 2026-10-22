@@ -1970,7 +1970,57 @@ def test_a_continuous_move_forgets_the_rung(client: TestClient, dvrip_cam: int) 
     )
 
     assert step.status_code == 200, step.text
-    assert step.json()["step"]["index"] == 0, "a first step lands on the first rung again"
+    assert step.json()["step"]["index"] == 2, (
+        "a step without a known rung starts in the middle of the ladder and not at its "
+        "first rung - a walk from the end would sweep the whole axis on the first press"
+    )
+
+
+def test_a_step_of_one_axis_forgets_the_rung_of_the_other(
+    client: TestClient, dvrip_cam: int
+) -> None:
+    """A rung is a whole position, so a step of one axis leaves the other one at the cross.
+
+    The tilt rungs of a camera are stored at one pan and its pan rungs at one tilt, so a
+    step of an axis puts the camera at the crossing of the two ladders. The rung the other
+    axis remembered is not where the camera stands any more, and a press that started from
+    it would jump over the way the two are apart (measured on the test set: the first tilt
+    press after a pan walk drove the camera over half of its tilt). Forgotten, the press
+    starts in the middle of its ladder instead.
+    """
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 3)
+    for _ in range(3):
+        response = client.post(
+            f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "horizontal", "mode": "add"}
+        )
+        assert response.status_code == 200, response.text
+    assert response.json()["steps"] == {
+        "vertical": [FIRST_STEP_SLOT, FIRST_STEP_SLOT + 1, FIRST_STEP_SLOT + 2],
+        "horizontal": [FIRST_STEP_SLOT + 3, FIRST_STEP_SLOT + 4, FIRST_STEP_SLOT + 5],
+    }
+
+    # Walk the tilt to the top rung of its ladder: that is the rung the pan would start
+    # from if the memory of the other axis survived.
+    up = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up", "steps": 9}
+    )
+    assert up.json()["step"]["axis"] == "vertical"
+    assert up.json()["step"]["index"] == 2, "the count stops on the last rung of the tilt"
+
+    right = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "right", "steps": 9}
+    )
+    assert right.json()["step"]["axis"] == "horizontal"
+    assert right.json()["step"]["index"] == 2
+
+    down = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "down"})
+
+    assert down.json()["step"]["index"] == 0, (
+        "the tilt does not continue from the rung it stood on - it starts one rung below the "
+        "middle of its ladder"
+    )
+    assert down.json()["step"]["slot"] == FIRST_STEP_SLOT
 
 
 def test_a_step_without_a_ladder_is_refused(client: TestClient, dvrip_cam: int) -> None:
@@ -2164,10 +2214,26 @@ def test_a_step_walks_the_ladder_of_its_axis() -> None:
     assert step_target(slots, 0, "down", 1) == (210, 0), "a step never leaves the ladder"
     assert step_target(slots, 2, "up", 1) == (212, 2), "... also at the upper end"
     assert step_target(slots, 0, "up", 99) == (212, 2), "the count is cut at the end of it"
-    assert step_target(slots, None, "up", 1) == (210, 0), "a first step lands on the first rung"
-    assert step_target(slots, None, "down", 1) == (212, 2), "... a first down on the last one"
     assert step_target(slots, 0, "zoom_in", 1) is None, "only the four arrows walk a ladder"
     assert step_target([], 0, "up", 1) is None, "a camera without rungs has nothing to walk"
+
+
+def test_a_step_without_a_known_rung_starts_in_the_middle_of_the_ladder() -> None:
+    """An unknown rung starts in the middle and not at the end the arrow points away from.
+
+    A walk that starts at that end sweeps half of the axis on its very first press: the
+    camera dives to the limit of the ladder and climbs back from there, which is the
+    uncontrolled travel the ladder of stored positions exists to avoid. The middle is the
+    rung nearest the crossing of the two ladders, so a press of the axis that was not walked
+    last stays where the camera is.
+    """
+    slots = [210, 211, 212, 213, 214]
+
+    assert step_target(slots, None, "up", 1) == (213, 3), "one rung above the middle"
+    assert step_target(slots, None, "down", 1) == (211, 1), "... one rung below it"
+    assert step_target(slots, None, "right", 1) == (213, 3), "the pan ladder the same way"
+    assert step_target(slots, None, "left", 2) == (210, 0), "and it stays on the ladder"
+    assert step_target(slots, None, "up", 99) == (214, 4)
 
 
 

@@ -164,13 +164,21 @@ def remember_preset(camera_id: str, config: PtzConfig | None, preset: Any) -> No
     *is* a rung keeps the walk where it is. Every other preset - and the home key, and a
     stop, which leaves the camera where it was released - leaves it between two rungs, and
     a walk may not start from there.
+
+    A preset is a whole position, so a rung of one ladder leaves the camera at the crossing
+    of the two: the rung of the *other* axis is forgotten, exactly like after a step of this
+    one (see ``next_step``).
     """
     rung = rung_of(config, preset)
     if rung is None:
         forget_step(camera_id)
         return
     axis, index = rung
-    _STEP_INDEX.setdefault(camera_id, {})[axis] = index
+    rungs = _STEP_INDEX.setdefault(camera_id, {})
+    for other in PTZ_STEP_AXES:
+        if other != axis:
+            rungs.pop(other, None)
+    rungs[axis] = index
 
 
 def walks_the_ladder(config: PtzConfig | None, action: str) -> bool:
@@ -194,23 +202,33 @@ def next_step(
     """Return the rung a step of ``action`` lands on, together with its index.
 
     ``None`` means the axis has no ladder. When the camera's rung is unknown (the first
-    step of a session, or a move outside the ladder) the walk starts at the end the
-    direction comes from: the first ``up`` lands on the lowest rung, the first ``down`` on
-    the highest. A step that would leave the ladder stops on its first or its last rung, so
-    a press always moves the camera somewhere it knows.
+    step of a session, or a move outside the ladder) the walk starts in the **middle** of
+    the ladder and not at the end the direction comes from: starting at that end sweeps
+    half of the axis on the very first press - the camera dives to the limit of the rung
+    and climbs back from there, which is exactly the uncontrolled travel the ladder exists
+    to avoid (measured on the test set: the first ``up`` of a camera standing at the middle
+    of its tilt drove it down to the balustrade). A step that would leave the ladder stops
+    on its first or its last rung, so a press always moves the camera somewhere it knows.
     """
     slots = step_slots(config, action)
     axis = step_axis(action)
     if axis is None or not slots:
         return None
     forward = action == PTZ_STEP_AXES[axis][0]
-    index = _STEP_INDEX.setdefault(camera_id, {}).get(axis)
-    start = index if isinstance(index, int) and index >= 0 else None
-    if start is None:
-        start = -1 if forward else len(slots)
+    rungs = _STEP_INDEX.setdefault(camera_id, {})
+    index = rungs.get(axis)
+    start = index if isinstance(index, int) and index >= 0 else len(slots) // 2
     count = max(1, abs(int(count)))
     target = max(0, min(len(slots) - 1, start + (count if forward else -count)))
-    _STEP_INDEX[camera_id][axis] = target
+    # A rung is a whole position: every tilt rung is stored at one pan and every pan rung
+    # at one tilt, so a step of this axis leaves the camera at the *crossing* of the two
+    # ladders. The rung the other axis remembered is not where the camera stands any more -
+    # kept, it would send the next press of that axis over the whole way it is off
+    # (measured: the first pan after a tilt walk jumped over half of the pan).
+    for other in PTZ_STEP_AXES:
+        if other != axis:
+            rungs.pop(other, None)
+    rungs[axis] = target
     return slots[target], target
 
 

@@ -299,6 +299,16 @@ it always was, and *Clear the steps* forgets the ladder. The rungs are ordinary 
 the camera, so they survive a restart of the add-on, and Home Assistant can visit one through
 `rtsp_cameras.ptz` with `move_mode: GotoPreset` and the slot as `preset`.
 
+The two ladders of a camera share one namespace of the device and every rung is a whole
+position, so they cross: the tilt rungs are stored at one pan and the pan rungs at one tilt.
+A walk of one axis therefore ends on that crossing, and the first press of the *other* axis
+starts over in the middle of its own ladder - the rung it stood on before is not where the
+camera is any more, and a walk that started from it would jump over the whole way apart. An
+arrow whose rung the add-on cannot place (the first press of a session, a rung stored by
+hand, a move outside the ladder) starts in the middle as well, never at the end of the
+ladder: a walk that started at the end would sweep half of the axis on its very first press -
+the camera dives to the limit of that rung and climbs back from there.
+
 The ladder needs a camera whose PTZ block carries a **store** command: the DVRIP profile of the
 bundled set has one (`SetPreset`, shown in the camera editor as *Store position*) and a camera
 of another vendor whose interface has a store command of its own can grow a ladder as well.

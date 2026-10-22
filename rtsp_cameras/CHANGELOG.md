@@ -4,6 +4,27 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.6] - 2026-10-22
+
+### Fixed
+
+- **The first press of a rung arrow swept half of its axis, in the panel and in the entity.**
+  A walk whose rung the add-on did not know started at the end of the ladder the arrow points
+  away from - the first `up` landed on the lowest rung, the first `down` on the highest - so
+  the camera did not step one rung, it travelled the whole ladder from its end. Measured on
+  the test set: the first `up` of a camera standing in the middle of its tilt drove it down to
+  the balustrade and climbed back from there, which is the uncontrolled ride the ladder of
+  stored positions exists to avoid. An unknown rung now starts in the **middle** of the
+  ladder: one press moves one rung from the crossing of the two ladders, never from an end.
+
+- **A walk of one axis made the other axis jump.** A preset is a whole position, so the tilt
+  rungs sit at one pan and the pan rungs at one tilt: a step of an axis leaves the camera at
+  the *crossing* of the two ladders, not on the rung the other axis remembered. Both sides
+  kept that stale rung, and the next press of the other axis drove the camera over the whole
+  way the two rungs are apart (measured: the first pan press after a tilt walk jumped over
+  half of the pan). A step, a recall of a rung and a stored rung now forget the rung of the
+  other axis, and that axis starts over from the middle of its own ladder.
+
 ## [0.7.5] - 2026-10-21
 
 ### Fixed

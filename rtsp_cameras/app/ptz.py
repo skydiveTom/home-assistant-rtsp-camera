@@ -1160,9 +1160,12 @@ def step_target(
     a step therefore walk a list of slots instead of starting a move.
 
     ``index`` is the rung the camera stands on; ``None`` means the panel does not know it
-    (the camera was moved outside the ladder, or the first step of a session is pressed),
-    and the walk starts at the end the direction comes from: the first ``up`` lands on the
-    lowest rung, the first ``down`` on the highest. A step that would leave the ladder stops
+    (the camera was moved outside the ladder, or the other axis was walked - a rung is a
+    whole position, so a step of one ladder leaves the camera at the crossing of the two),
+    and the walk starts in the **middle** of the ladder. It does not start at the end the
+    direction comes from: that end sweeps half of the axis on the very first press - the
+    camera dives to the limit of the rung and climbs back from there, which is exactly the
+    uncontrolled travel the ladder exists to avoid. A step that would leave the ladder stops
     on its first or its last rung, so a press always moves the camera somewhere it knows.
     """
     pair = next((arrows for arrows in STEP_AXES.values() if action in arrows), None)
@@ -1174,9 +1177,7 @@ def step_target(
         steps = 1
     steps = max(1, min(MAX_STEPS_PER_PRESS, steps))
     forward = action == pair[0]
-    start = index if isinstance(index, int) and index >= 0 else None
-    if start is None:
-        start = -1 if forward else len(slots)
+    start = index if isinstance(index, int) and index >= 0 else len(slots) // 2
     target = max(0, min(len(slots) - 1, start + (steps if forward else -steps)))
     return slots[target], target
 
