@@ -287,6 +287,7 @@
     "ptz_steps_axis": "Unknown step axis",
     "ptz_steps_full": "The step list of this axis is full",
     "ptz_store_missing": "This camera profile cannot store a position",
+    "ptz_step_other_axis": "The {axis} steps are stored at another {other} position, so this step would drag the {other} with it. Walk the {other} back to the middle rung - the crossing of the two ladders - and press again",
     "ptz_axis_required": "Unknown axis - choose left/right or up/down"
   },
   "common": {

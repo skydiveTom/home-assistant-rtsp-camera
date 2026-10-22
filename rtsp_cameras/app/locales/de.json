@@ -287,6 +287,7 @@
     "ptz_steps_axis": "Unbekannte Schrittachse",
     "ptz_steps_full": "Die Schritttliste dieser Achse ist voll",
     "ptz_store_missing": "Dieses Kameraprofil kann keine Position speichern",
+    "ptz_step_other_axis": "Die Schritte „{axis}“ sind bei einer anderen Stellung von „{other}“ gespeichert, dieser Schritt würde sie also mitziehen. Fahre mit „{other}“ zurück zur mittleren Sprosse - dort kreuzen sich die Leitern - und drücke erneut",
     "ptz_axis_required": "Unbekannte Achse - wähle links/rechts oder oben/unten"
   },
   "common": {

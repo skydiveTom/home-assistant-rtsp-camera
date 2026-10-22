@@ -88,6 +88,7 @@ from .ptz import (
     async_probe_ptz,
     base_url_for,
     credentials_from_url,
+    crossing_rung,
     first_free_step_slot,
     mirrored,
     needs_direction,
@@ -96,6 +97,7 @@ from .ptz import (
     profile_list,
     read_flag,
     step_axis,
+    step_blocked_by,
     step_target,
     steps_of,
 )
@@ -461,22 +463,41 @@ def _step_index(config: Mapping[str, Any] | None, preset: Any) -> tuple[str, int
     return None
 
 
-def _remember_rung(context: AppContext, camera_id: str, axis: str, index: int) -> None:
-    """Remember the rung a camera stands on, and forget the rung of the other axis.
+def _remember_rung(
+    context: AppContext,
+    camera_id: str,
+    axis: str,
+    index: int,
+    ladders: Mapping[str, Any],
+) -> None:
+    """Remember the rung a camera stands on, and whether it stands at the crossing.
 
     A preset is a whole position: every tilt rung is stored at one pan and every pan rung at
     one tilt, so a camera that stands on a rung of one ladder stands at the *crossing* of
-    the two. The rung the other axis remembered is not where the camera is any more, and a
-    walk that started from it would jump over the whole way the two rungs are apart
-    (measured on the test set: the first tilt step after a pan walk drove the camera over
-    half of its tilt). Forgetting it makes that walk start in the middle of its ladder
-    instead, which is a bounded move (see ``ptz.step_target``).
+    the two - and the rung the other axis remembered is not where the camera is any more (a
+    walk that started from it would jump over the whole way the two rungs are apart;
+    measured on the test set: the first tilt step after a pan walk drove the camera over
+    half of its tilt).
+
+    The ladders of a camera are stored around **one** crossing, the middle rung of each, so
+    a rung in the middle of its ladder leaves the camera on the crossing of both: the other
+    axis then stands on its own middle rung and may be walked. Every other rung leaves the
+    camera between two rungs of the other axis, which forgets where that axis is - a step of
+    it would drag the camera sideways (see ``ptz.step_blocked_by``).
     """
     rungs = context.ptz_steps.setdefault(camera_id, {})
     for other in STEP_AXES:
         if other != axis:
             rungs.pop(other, None)
     rungs[axis] = index
+    if crossing_rung(ladders.get(axis) or []) != index:
+        return
+    for other in STEP_AXES:
+        if other == axis:
+            continue
+        sibling = crossing_rung(ladders.get(other) or [])
+        if sibling is not None:
+            rungs[other] = sibling
 
 
 async def camera_ptz(request: Request) -> JSONResponse:
@@ -527,7 +548,7 @@ async def camera_ptz(request: Request) -> JSONResponse:
         if rung is None:
             context.ptz_steps.pop(camera.id, None)
         else:
-            _remember_rung(context, camera.id, rung[0], rung[1])
+            _remember_rung(context, camera.id, rung[0], rung[1], steps_of(camera.ptz))
 
     result = await ptz_run(
         camera.ptz,
@@ -562,6 +583,11 @@ async def _camera_step(
     of the ladder the panel stores with :func:`camera_ptz_steps`. The answer carries the
     rung the camera stands on now, and the add-on remembers it for the next step.
 
+    A rung is a *whole* position, so a step of one axis only holds the other axis still
+    while the camera stands on that ladder - or on its crossing with the other one. A step
+    that would drag the other axis is refused here, before anything is sent, and the answer
+    names the axis the user has to walk back (see ``ptz.step_blocked_by``).
+
     The arrow is turned around for an axis the camera is mounted the other way round (see
     ``ptz.apply_inversion``): the step walks the ladder the way the *picture* asks for, so
     the ``arrow`` of the answer and the direction of the walk are those of the device.
@@ -571,7 +597,12 @@ async def _camera_step(
     if axis is None:
         return await _error(request, "ptz_steps_axis", 400)
 
-    ladder = steps_of(camera.ptz).get(axis) or []
+    ladders = steps_of(camera.ptz)
+    ladder = ladders.get(axis) or []
+    blocked = step_blocked_by(context.ptz_steps.get(camera.id) or {}, ladders, arrow)
+    if blocked is not None:
+        return await _step_blocked(request, context, axis, blocked)
+
     index = (context.ptz_steps.get(camera.id) or {}).get(axis)
     target = step_target(ladder, index, arrow, body.get("steps") or 1)
     if target is None:
@@ -590,11 +621,40 @@ async def _camera_step(
             },
             status_code=502,
         )
-    _remember_rung(context, camera.id, axis, reached)
+    _remember_rung(context, camera.id, axis, reached, ladders)
     return _ok(
         ptz=result.to_dict(),
         step={"axis": axis, "slot": slot, "index": reached, "rungs": len(ladder), "arrow": arrow},
         camera=camera.to_api_dict(),
+    )
+
+
+async def _step_blocked(
+    request: Request, context: AppContext, axis: str, other: str
+) -> JSONResponse:
+    """Refuse a step that would move the other axis of the camera as well.
+
+    The answer carries the two axes as words of the interface, so a panel can name them in
+    its own language, together with the translated sentence for every other client. ``409``
+    says that this is not a broken request but a request that cannot be served from where
+    the camera stands now: the user has to walk the other axis back to the middle rung of
+    its ladder - the crossing the two ladders meet at - and press again.
+    """
+    language = await _language(request)
+    translations = context.translations
+    words = {
+        "axis": translations.translate(f"ptz.axis_{axis}", language),
+        "other": translations.translate(f"ptz.axis_{other}", language),
+    }
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": "ptz_step_other_axis",
+            "axis": axis,
+            "other": other,
+            "message": translations.error("ptz_step_other_axis", language, **words),
+        },
+        status_code=409,
     )
 
 
@@ -664,7 +724,7 @@ async def camera_ptz_steps(request: Request) -> JSONResponse:
         ladder[axis] = slots
         # The camera stands on the rung that was just written - a hand positioned place, so
         # the rung of the other axis (if it had one) is no longer where the camera is.
-        _remember_rung(context, camera.id, axis, len(slots) - 1)
+        _remember_rung(context, camera.id, axis, len(slots) - 1, ladder)
         added = slot
 
     updated = context.store.update(camera.id, ptz={**camera.ptz, "steps": ladder})

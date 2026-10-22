@@ -55,12 +55,15 @@ from app.ptz import (
     async_send,
     build_command,
     configured_actions,
+    crossing_rung,
     needs_direction,
     normalize_ptz,
+    other_axis,
     preferred_profiles,
     probe_base_url,
     public_config,
     split_userinfo,
+    step_blocked_by,
     step_target,
     stops_in_place,
 )
@@ -1888,6 +1891,24 @@ def store_rungs(test_client: TestClient, camera_id: str, count: int) -> dict:
     return answer
 
 
+def store_pan_rungs(test_client: TestClient, camera_id: str, count: int) -> dict:
+    """Store ``count`` rungs of the pan ladder and return the answer of the last one."""
+    answer: dict = {}
+    for _ in range(count):
+        response = test_client.post(
+            f"/api/cameras/{camera_id}/ptz/steps", json={"axis": "horizontal", "mode": "add"}
+        )
+        assert response.status_code == 200, response.text
+        answer = response.json()
+    return answer
+
+
+def forget_rung(test_client: TestClient, camera_id: str) -> None:
+    """Move the camera outside its ladders, so the add-on forgets where it stands."""
+    response = test_client.post(f"/api/cameras/{camera_id}/ptz", json={"action": "down"})
+    assert response.status_code == 200, response.text
+
+
 def test_the_panel_stores_a_step_position(client: TestClient, dvrip_cam: int) -> None:
     """The store button writes the position of the moment into the next free slot."""
     camera = add_dvrip_camera(client, dvrip_cam)
@@ -1977,51 +1998,83 @@ def test_a_continuous_move_forgets_the_rung(client: TestClient, dvrip_cam: int) 
     )
 
 
-def test_a_step_of_one_axis_forgets_the_rung_of_the_other(
+def test_a_step_that_would_drag_the_other_axis_is_refused(
     client: TestClient, dvrip_cam: int
 ) -> None:
-    """A rung is a whole position, so a step of one axis leaves the other one at the cross.
+    """A step of one axis is refused while it would move the other axis with it.
 
-    The tilt rungs of a camera are stored at one pan and its pan rungs at one tilt, so a
-    step of an axis puts the camera at the crossing of the two ladders. The rung the other
-    axis remembered is not where the camera stands any more, and a press that started from
-    it would jump over the way the two are apart (measured on the test set: the first tilt
-    press after a pan walk drove the camera over half of its tilt). Forgotten, the press
-    starts in the middle of its ladder instead.
+    A rung is a whole position: the tilt rungs of a camera are stored at one pan and its pan
+    rungs at one tilt, so a step keeps the *other* axis where it stands only while the camera
+    is on that ladder - or on the crossing the two ladders share. Measured on the test set, a
+    ``right`` of three rungs followed by an ``up`` sent the pan back to the column the tilt
+    rungs were stored at, so the view the user had just panned to was gone. The step is not
+    sent at all now, and the answer names the axis to walk back first.
     """
     camera = add_dvrip_camera(client, dvrip_cam)
     store_rungs(client, camera["id"], 3)
-    for _ in range(3):
-        response = client.post(
-            f"/api/cameras/{camera['id']}/ptz/steps", json={"axis": "horizontal", "mode": "add"}
-        )
-        assert response.status_code == 200, response.text
-    assert response.json()["steps"] == {
-        "vertical": [FIRST_STEP_SLOT, FIRST_STEP_SLOT + 1, FIRST_STEP_SLOT + 2],
-        "horizontal": [FIRST_STEP_SLOT + 3, FIRST_STEP_SLOT + 4, FIRST_STEP_SLOT + 5],
-    }
+    store_pan_rungs(client, camera["id"], 3)
+    # Storing a rung says where the camera stands; pointing it somewhere else forgets that,
+    # and the next step starts on the crossing of the two ladders.
+    forget_rung(client, camera["id"])
 
-    # Walk the tilt to the top rung of its ladder: that is the rung the pan would start
-    # from if the memory of the other axis survived.
     up = client.post(
         f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up", "steps": 9}
     )
-    assert up.json()["step"]["axis"] == "vertical"
-    assert up.json()["step"]["index"] == 2, "the count stops on the last rung of the tilt"
+    assert up.status_code == 200, up.text
+    assert up.json()["step"]["index"] == 2, "the top rung of the tilt, off the crossing"
+
+    sent = len(DvripCamera.received)
+    refused = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "right"}
+    )
+
+    assert refused.status_code == 409, refused.text
+    body = refused.json()
+    assert body["error"] == "ptz_step_other_axis"
+    assert body["axis"] == "horizontal", "the axis the press asked for"
+    assert body["other"] == "vertical", "the axis the step would drag along"
+    assert "middle rung" in body["message"], "the answer names the way out"
+    assert "up/down" in body["message"] and "left/right" in body["message"], (
+        "both axes are named the way the interface names them"
+    )
+    assert len(DvripCamera.received) == sent, "nothing was sent to the camera"
+
+
+def test_a_step_from_the_crossing_keeps_the_other_axis(client: TestClient, dvrip_cam: int) -> None:
+    """Walking the other axis back to its middle rung lets the step through again.
+
+    The two ladders of a camera cross at their middle rung - each one is stored on the middle
+    rung of the other - so a camera that stands there holds the crossing value of both: a
+    step of either axis leaves the other one where it stands.
+    """
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 3)
+    store_pan_rungs(client, camera["id"], 3)
+    forget_rung(client, camera["id"])
 
     right = client.post(
-        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "right", "steps": 9}
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "right"}
     )
-    assert right.json()["step"]["axis"] == "horizontal"
-    assert right.json()["step"]["index"] == 2
+    assert right.json()["step"]["index"] == 2, "one rung right of the middle"
 
-    down = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "down"})
-
-    assert down.json()["step"]["index"] == 0, (
-        "the tilt does not continue from the rung it stood on - it starts one rung below the "
-        "middle of its ladder"
+    blocked = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"}
     )
-    assert down.json()["step"]["slot"] == FIRST_STEP_SLOT
+    assert blocked.status_code == 409, "the tilt is refused while the pan is off the crossing"
+
+    back = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "left"}
+    )
+    assert back.status_code == 200, back.text
+    assert back.json()["step"]["index"] == 1, "the middle rung of the pan is the crossing"
+
+    up = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"}
+    )
+
+    assert up.status_code == 200, up.text
+    assert up.json()["step"]["axis"] == "vertical"
+    assert up.json()["step"]["slot"] == FIRST_STEP_SLOT + 2, "one rung above the crossing"
 
 
 def test_a_mirrored_axis_sends_the_other_command(client: TestClient, ptz_cam: str) -> None:
@@ -2386,5 +2439,39 @@ def test_a_step_without_a_known_rung_starts_in_the_middle_of_the_ladder() -> Non
     assert step_target(slots, None, "up", 99) == (214, 4)
 
 
+def test_the_two_ladders_of_a_camera_cross_at_their_middle_rung() -> None:
+    """The crossing is what a walk of an unknown rung starts on, so it is the middle one."""
+    assert crossing_rung([210, 211, 212]) == 1
+    assert crossing_rung([210, 211, 212, 213]) == 2
+    assert crossing_rung([210, 211]) == 1, "two rungs cross at the second one"
+    assert crossing_rung([]) is None, "a ladder without rungs has no crossing"
+    assert other_axis("vertical") == "horizontal"
+    assert other_axis("horizontal") == "vertical"
+    assert other_axis("zoom_in") is None
 
 
+def test_a_step_is_refused_only_while_it_would_drag_the_other_axis() -> None:
+    """A step is safe on its own ladder and on the crossing, and nowhere else.
+
+    A rung carries the whole position, so the rungs of one ladder all stand at the same value
+    of the other axis. Walking that ladder keeps the other axis where it is - while the camera
+    really is on it. A camera on the other ladder holds *its* value instead, and a step would
+    carry the camera back to the column the rungs were stored at.
+    """
+    ladders = {"vertical": [210, 211, 212], "horizontal": [213, 214, 215]}
+
+    assert step_blocked_by({}, ladders, "up") is None, (
+        "an unknown rung starts on the crossing (see step_target), so it is never refused"
+    )
+    assert step_blocked_by({"vertical": 2}, ladders, "up") is None, "the ladder it stands on"
+    assert step_blocked_by({"vertical": 2}, ladders, "right") == "vertical", (
+        "the pan would drag the tilt back to the column of its rungs"
+    )
+    assert step_blocked_by({"vertical": 1}, ladders, "right") is None, "the crossing is shared"
+    assert step_blocked_by({"horizontal": 0}, ladders, "up") == "horizontal"
+    assert step_blocked_by({"horizontal": 1}, ladders, "up") is None, "the crossing again"
+    assert step_blocked_by({"vertical": 1}, {"vertical": [210]}, "right") is None, (
+        "an axis without a ladder of its own is not walked at all"
+    )
+    assert step_blocked_by({"vertical": 1}, {}, "up") is None
+    assert step_blocked_by({"vertical": 1}, ladders, "zoom_in") is None, "a zoom is no step"

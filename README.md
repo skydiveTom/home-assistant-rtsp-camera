@@ -70,7 +70,10 @@ exactly one place — the add-on panel.
   halts an axis keeps the continuous move and its capture). The **camera entity in Home
   Assistant follows the same rule**: a move of such a camera walks the ladder for
   `continuous_duration` seconds - rung by rung, never a sweep to the limit - while a
-  camera whose stop halts keeps its own move and stop. Home Assistant
+  camera whose stop halts keeps its own move and stop. A rung is a **whole position**, so a
+  step carries the other axis with it: the two ladders of a camera cross at their middle
+  rung, and a step that would drag the other axis is refused instead of sent, with a hint
+  that names the axis to walk back to that crossing first. Home Assistant
   receives `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset. A camera that is mounted upside down, on its side or behind a mirror is
   **mirrored per axis** - one button each in the preview pad (*Mirror left/right*, *Mirror

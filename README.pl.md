@@ -72,7 +72,10 @@ w panelu dodatku.
   naprawdę zatrzymuje oś, zachowuje ruch ciągły i przechwycenie). **Encja kamery w Home
   Assistant trzyma się tej samej reguły**: ruch takiej kamery idzie po drabince przez
   `continuous_duration` sekund — szczebel po szczeblu, nigdy jazdą do krańca — a kamera,
-  której stop zatrzymuje oś, zachowuje własny ruch i stop. Home Assistant dostaje usługę
+  której stop zatrzymuje oś, zachowuje własny ruch i stop. Szczebel to **cała pozycja**, więc
+  krok zabiera ze sobą drugą oś: drabinki kamery krzyżują się na szczeblu środkowym, a krok,
+  który przestawiłby drugą oś, jest odrzucany zamiast wysyłany — z podpowiedzią, którą osią
+  wrócić najpierw do tego skrzyżowania. Home Assistant dostaje usługę
   `rtsp_cameras.ptz` (te same pola co `onvif.ptz`), `rtsp_cameras.ptz_home` oraz
   przycisk dla każdego presetu. Kamerę zamontowaną do góry nogami, bokiem albo za lustrem
   **odwraca się osobno na każdej osi** — po jednym przycisku w padzie podglądu (*Odwróć

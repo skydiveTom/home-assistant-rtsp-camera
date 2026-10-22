@@ -287,6 +287,7 @@
     "ptz_steps_axis": "Eje de pasos desconocido",
     "ptz_steps_full": "La lista de pasos de este eje está llena",
     "ptz_store_missing": "Este perfil de cámara no puede guardar una posición",
+    "ptz_step_other_axis": "Los pasos de «{axis}» están guardados con otra posición de «{other}», así que este paso la arrastraría también. Vuelve con «{other}» a la barra central —donde se cruzan las escalas— y repite el paso",
     "ptz_axis_required": "Eje desconocido: elige izquierda/derecha o arriba/abajo"
   },
   "common": {

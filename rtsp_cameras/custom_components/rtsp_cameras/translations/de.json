@@ -37,6 +37,9 @@
     "ptz_no_target": {"message": "Wähle mindestens eine Kamera."},
     "ptz_direction_required": {
       "message": "Die Kamera muss wissen, welche Achse zu stoppen ist - den Pfeil der Bewegung senden oder einen Stopp-Befehl ohne Richtung verwenden."
+    },
+    "ptz_step_other_axis": {
+      "message": "Die Schritte dieser Achse sind bei einer anderen Stellung der anderen Achse gespeichert, dieser Zug würde sie also mitziehen. Fahre mit der anderen Achse zurück zur mittleren Sprosse - dort kreuzen sich die Leitern - und versuche es erneut."
     }
   },
   "config": {

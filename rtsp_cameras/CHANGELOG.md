@@ -4,6 +4,21 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.8] - 2026-10-23
+
+### Fixed
+
+- **A step of one axis dragged the other axis with it.** A preset is a whole position, so the
+  tilt rungs of a camera stand at one pan and its pan rungs at one tilt - walking the tilt
+  ladder carries the pan back to the column the rungs were stored at. Measured on the test set:
+  a `right` of three rungs followed by an `up` sent the pan back to the view the user had just
+  panned away from, which reads as "the camera goes up and runs off to the left". A step that
+  would move the other axis is now **refused before a single command is sent**, in the pad and
+  in the entity of Home Assistant: the answer names the axis to walk back first, and the two
+  ladders of a camera cross at their middle rung, where a step of either axis stays where it
+  stands. A camera whose rung is unknown - the first press of a session, or the press after a
+  move outside the ladders - starts on that crossing, so a plain `up` or `right` still moves.
+
 ## [0.7.7] - 2026-10-23
 
 ### Added

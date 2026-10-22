@@ -37,6 +37,9 @@
     "ptz_no_target": {"message": "Selecciona al menos una cámara."},
     "ptz_direction_required": {
       "message": "La cámara necesita saber qué eje parar: envía la flecha del movimiento o usa un comando de parada sin dirección."
+    },
+    "ptz_step_other_axis": {
+      "message": "Los pasos de este eje están guardados con otra posición del otro eje, así que este movimiento lo arrastraría también. Vuelve con el otro eje a la barra central —donde se cruzan las escalas— y repite el movimiento."
     }
   },
   "config": {

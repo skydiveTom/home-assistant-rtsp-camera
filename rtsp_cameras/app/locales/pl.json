@@ -287,6 +287,7 @@
     "ptz_steps_axis": "Nieznana oś kroków",
     "ptz_steps_full": "Lista kroków tej osi jest pełna",
     "ptz_store_missing": "Ten profil kamery nie potrafi zapisać pozycji",
+    "ptz_step_other_axis": "Kroki „{axis}” są zapisane przy innym ustawieniu osi „{other}”, więc ten krok przestawiłby też ją. Wróć osią „{other}” do środkowego szczebla — tam drabinki się krzyżują — i naciśnij ponownie",
     "ptz_axis_required": "Nieznana oś - wybierz lewo/prawo albo góra/dół"
   },
   "common": {

@@ -883,15 +883,17 @@ async def test_a_preset_that_is_a_rung_keeps_the_walk_where_it_is(hass, entry, m
     assert "arg2=211" in session.requests[0]["url"], "the rung above the preset"
 
 
-async def test_a_step_of_one_axis_forgets_the_rung_of_the_other(hass, entry, monkeypatch):
-    """A walk of one axis leaves the other one at the crossing, not on its old rung.
+async def test_a_move_of_one_axis_is_refused_while_it_would_drag_the_other(
+    hass, entry, monkeypatch
+):
+    """A walk of one axis is not started while it would move the other axis as well.
 
     The rungs of a camera are whole positions - the tilt rungs are stored at one pan and the
-    pan rungs at one tilt - so a step of an axis puts the camera at the crossing of the two
-    ladders. The rung the other axis remembered is not where the camera stands any more, and
-    a press that started from it would jump over the way the two are apart (measured on the
-    test set: the first tilt press after a pan walk drove the camera over half of its tilt).
-    Forgotten, that press starts in the middle of its own ladder instead.
+    pan rungs at one tilt - so a walk keeps the other axis where it stands only while the
+    camera is on that ladder or on the crossing the two ladders share. Somewhere else the
+    rung carries the other axis back to the column it was stored at: measured on the test
+    set, a ``right`` of three rungs followed by an ``up`` sent the pan back to the view the
+    user had just panned away from. The move is refused instead, and nothing is sent.
     """
     await setup_camera(hass, entry, block=ladder_block())
     session = FakeSession()
@@ -906,26 +908,53 @@ async def test_a_step_of_one_axis_forgets_the_rung_of_the_other(hass, entry, mon
     assert "arg2=214" in session.requests[-1]["url"], "the tilt walks up to its top rung"
     session.requests.clear()
 
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            DOMAIN,
+            "ptz",
+            {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 0.3},
+            blocking=True,
+        )
+
+    assert session.requests == [], "the pan is not sent at all - it would drag the tilt"
+
+
+async def test_a_walk_from_the_crossing_of_the_two_ladders_keeps_the_axis(hass, entry, monkeypatch):
+    """Walking the other axis back to its middle rung lets the walk through again.
+
+    The two ladders of a camera cross at their middle rung, so a camera that stands there
+    holds the crossing value of both - a move of either axis stays where it is.
+    """
+    await setup_camera(hass, entry, block=ladder_block())
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
     await hass.services.async_call(
         DOMAIN,
         "ptz",
-        {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 30},
+        {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 0},
         blocking=True,
     )
-    assert "arg2=220" in session.requests[0]["url"], "the pan starts in the middle of its ladder"
+    assert "arg2=220" in session.requests[-1]["url"], "one rung right of the middle"
     session.requests.clear()
 
     await hass.services.async_call(
         DOMAIN,
         "ptz",
-        {"entity_id": "camera.front_door", "tilt": "DOWN", "continuous_duration": 0},
+        {"entity_id": "camera.front_door", "pan": "LEFT", "continuous_duration": 0},
+        blocking=True,
+    )
+    assert "arg2=219" in session.requests[-1]["url"], "the middle rung of the pan is the crossing"
+    session.requests.clear()
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
         blocking=True,
     )
 
-    assert "arg2=211" in session.requests[0]["url"], (
-        "the tilt starts one rung below the middle of its ladder, not below the top rung it "
-        "stood on before the pan"
-    )
+    assert "arg2=213" in session.requests[0]["url"], "the tilt steps from the crossing"
 
 
 async def test_a_camera_without_a_ladder_keeps_its_move_and_its_capture(hass, entry, monkeypatch):

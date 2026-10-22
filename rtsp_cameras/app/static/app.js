@@ -1557,7 +1557,15 @@
     const box = document.getElementById('ptz-error');
     box.hidden = false;
     const code = err instanceof ApiError ? err.code : 'ptz_failed';
-    box.textContent = errorText(code) + errorDetail(err);
+    const data = err instanceof ApiError ? err.data || {} : {};
+    /* A step the add-on refuses names the two axes as codenames ("vertical"/"horizontal"),
+       so the sentence is built here in the language of the panel; the message of the answer
+       is the same sentence in the language of the request, for every other client. */
+    const vars =
+      data.axis && data.other
+        ? { axis: t('ptz.axis_' + data.axis), other: t('ptz.axis_' + data.other) }
+        : undefined;
+    box.textContent = errorText(code, vars) + errorDetail(err);
   }
 
   async function sendStep(direction, options) {

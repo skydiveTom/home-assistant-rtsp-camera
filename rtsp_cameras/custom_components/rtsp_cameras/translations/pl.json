@@ -47,6 +47,9 @@
     },
     "ptz_direction_required": {
       "message": "Kamera musi wiedzieć, którą oś zatrzymać — wyślij strzałkę ruchu albo użyj komendy stopu bez kierunku."
+    },
+    "ptz_step_other_axis": {
+      "message": "Kroki tej osi są zapisane przy innym ustawieniu drugiej osi, więc ten ruch przestawiłby ją też. Wróć drugą osią do środkowego szczebla — tam drabinki się krzyżują — i spróbuj ponownie."
     }
   },
   "config": {
