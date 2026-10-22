@@ -221,8 +221,10 @@
     "invert_horizontal": "Odwróć lewo/prawo",
     "invert_vertical": "Odwróć góra/dół",
     "invert_hint": "Kamera zamontowana do góry nogami, bokiem albo za lustrem? Odwróć oś, żeby jej strzałki zgadzały się z obrazem - panel, encja w Home Assistant i wszystkie automatyzacje idą za tym ustawieniem.",
-    "invert_on": "Strzałki tej osi są odwrócone",
-    "invert_off": "Strzałki tej osi wróciły do normalnego kierunku"
+    "invert_on": "{axis}: strzałki są odwrócone",
+    "invert_off": "{axis}: strzałki wróciły do normalnego kierunku",
+    "axis_horizontal": "lewo/prawo",
+    "axis_vertical": "góra/dół"
   },
   "encoder": {
     "title": "Kodek strumienia",

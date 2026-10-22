@@ -221,8 +221,10 @@
     "invert_horizontal": "Links/rechts spiegeln",
     "invert_vertical": "Oben/unten spiegeln",
     "invert_hint": "Kamera kopfüber, seitlich oder hinter einem Spiegel montiert? Spiegle eine Achse, damit ihre Pfeile zum Bild passen - Panel, Entität in Home Assistant und jede Automatisierung folgen dem.",
-    "invert_on": "Die Pfeile dieser Achse sind gespiegelt",
-    "invert_off": "Die Pfeile dieser Achse laufen wieder normal"
+    "invert_on": "{axis}: die Pfeile sind gespiegelt",
+    "invert_off": "{axis}: die Pfeile laufen wieder normal",
+    "axis_horizontal": "links/rechts",
+    "axis_vertical": "oben/unten"
   },
   "encoder": {
     "title": "Stream-Codec",

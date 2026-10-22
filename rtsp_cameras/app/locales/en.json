@@ -221,8 +221,10 @@
     "invert_horizontal": "Mirror left/right",
     "invert_vertical": "Mirror up/down",
     "invert_hint": "Camera mounted upside down, on its side or behind a mirror? Mirror an axis so its arrows match the picture - the pad, the entity in Home Assistant and every automation follow it.",
-    "invert_on": "The arrows of that axis are mirrored",
-    "invert_off": "The arrows of that axis are back to normal"
+    "invert_on": "{axis}: the arrows are mirrored",
+    "invert_off": "{axis}: the arrows are back to normal",
+    "axis_horizontal": "left/right",
+    "axis_vertical": "up/down"
   },
   "encoder": {
     "title": "Stream codec",

@@ -1645,7 +1645,12 @@
       const camera = cameraById(cameraId);
       if (camera && data.camera) Object.assign(camera, data.camera);
       renderPtzPad(camera);
-      toast(t(data.inverted ? 'ptz.invert_on' : 'ptz.invert_off'), 'ok');
+      toast(
+        t(data.inverted ? 'ptz.invert_on' : 'ptz.invert_off', {
+          axis: t('ptz.axis_' + axis),
+        }),
+        'ok',
+      );
     } catch (err) {
       showPtzError(err);
     }

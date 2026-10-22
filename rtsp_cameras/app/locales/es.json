@@ -221,8 +221,10 @@
     "invert_horizontal": "Invertir izquierda/derecha",
     "invert_vertical": "Invertir arriba/abajo",
     "invert_hint": "¿Cámara montada al revés, de lado o detrás de un espejo? Invierte un eje para que sus flechas coincidan con la imagen: el panel, la entidad de Home Assistant y todas las automatizaciones lo siguen.",
-    "invert_on": "Las flechas de ese eje están invertidas",
-    "invert_off": "Las flechas de ese eje vuelven a la normalidad"
+    "invert_on": "{axis}: las flechas están invertidas",
+    "invert_off": "{axis}: las flechas vuelven a la normalidad",
+    "axis_horizontal": "izquierda/derecha",
+    "axis_vertical": "arriba/abajo"
   },
   "encoder": {
     "title": "Códec del flujo",
