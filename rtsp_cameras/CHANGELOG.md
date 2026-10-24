@@ -4,6 +4,30 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.9] - 2026-10-24
+
+### Fixed
+
+- **The arrows of one axis went dead as soon as the other axis had moved.** 0.7.8 refused every
+  step that would carry the other axis along, and it *forgot* where that axis stood after each
+  step - so the refusal came from both sides: after one `up` every `right` was refused, and
+  after one `right` every `up`. Measured on the test set with the ladders of `balkon-2`:
+  `preset 222 -> up (200) -> right (409) -> right (409) -> up (200)`, which is a pad whose
+  arrows look broken. A rung of one ladder carries the crossing value of the other axis, so
+  landing on it leaves that axis *on* the crossing - which `main._remember_rung` now records
+  instead of throwing away.
+- **A step always walks the camera, and the panel says what it drags.** A step that switches
+  axes still carries the other axis back to the crossing of the two ladders, because this
+  family has no bounded relative move: a rung can only be written where the camera already
+  stands, so a tilt in place would need a rung that does not exist. The step is therefore sent,
+  the answer reports the drag as `step.drag` (`axis` and signed `rungs`), and the pad shows it
+  as a warning instead of an error box. The entity of Home Assistant logs the same thing.
+
+### Changed
+
+- The error `ptz_step_other_axis` is gone (panel and integration): a step is no longer refused
+  for dragging the other axis. `ptz.step_dragged` replaces it in the four panel locales.
+
 ## [0.7.8] - 2026-10-23
 
 ### Fixed

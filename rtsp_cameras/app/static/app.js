@@ -1557,15 +1557,7 @@
     const box = document.getElementById('ptz-error');
     box.hidden = false;
     const code = err instanceof ApiError ? err.code : 'ptz_failed';
-    const data = err instanceof ApiError ? err.data || {} : {};
-    /* A step the add-on refuses names the two axes as codenames ("vertical"/"horizontal"),
-       so the sentence is built here in the language of the panel; the message of the answer
-       is the same sentence in the language of the request, for every other client. */
-    const vars =
-      data.axis && data.other
-        ? { axis: t('ptz.axis_' + data.axis), other: t('ptz.axis_' + data.other) }
-        : undefined;
-    box.textContent = errorText(code, vars) + errorDetail(err);
+    box.textContent = errorText(code) + errorDetail(err);
   }
 
   async function sendStep(direction, options) {
@@ -1582,6 +1574,21 @@
       });
       const step = data.step || {};
       document.getElementById('ptz-error').hidden = true;
+      /* A rung is a whole position, and this camera has no bounded *relative* move: a step
+         that switches axes therefore carries the other axis back to the crossing of the two
+         ladders. The add-on reports that drag instead of refusing the step (see
+         ``ptz.step_drag``), so the notice is shown even during a walk - the first rung of a
+         walk is the only one that can drag. */
+      const drag = step.drag || null;
+      if (drag) {
+        toast(
+          t('ptz.step_dragged', {
+            other: t('ptz.axis_' + drag.axis),
+            rungs: Math.abs(drag.rungs || 0),
+          }),
+          'warn',
+        );
+      }
       if (!quiet) {
         toast(
           t('ptz.step_reached', { index: (step.index || 0) + 1, rungs: step.rungs || 0 }),

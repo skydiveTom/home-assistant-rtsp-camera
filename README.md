@@ -71,9 +71,11 @@ exactly one place — the add-on panel.
   Assistant follows the same rule**: a move of such a camera walks the ladder for
   `continuous_duration` seconds - rung by rung, never a sweep to the limit - while a
   camera whose stop halts keeps its own move and stop. A rung is a **whole position**, so a
-  step carries the other axis with it: the two ladders of a camera cross at their middle
-  rung, and a step that would drag the other axis is refused instead of sent, with a hint
-  that names the axis to walk back to that crossing first. Home Assistant
+  step that switches axes carries the other axis back to the crossing of the two ladders: this
+  family has no bounded *relative* move, so a rung can only be written where the camera already
+  stands and a tilt "in place" would need one. The step is sent anyway and the panel names the
+  axis it dragged and how far - refusing it instead left both pairs of arrows dead as soon as
+  the user alternated them. Home Assistant
   receives `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset. A camera that is mounted upside down, on its side or behind a mirror is
   **mirrored per axis** - one button each in the preview pad (*Mirror left/right*, *Mirror

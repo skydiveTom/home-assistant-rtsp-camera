@@ -883,17 +883,20 @@ async def test_a_preset_that_is_a_rung_keeps_the_walk_where_it_is(hass, entry, m
     assert "arg2=211" in session.requests[0]["url"], "the rung above the preset"
 
 
-async def test_a_move_of_one_axis_is_refused_while_it_would_drag_the_other(
-    hass, entry, monkeypatch
-):
-    """A walk of one axis is not started while it would move the other axis as well.
+async def test_a_move_that_drags_the_other_axis_is_walked_anyway(hass, entry, monkeypatch):
+    """A walk off the crossing is sent, and the drag it causes is only logged.
 
     The rungs of a camera are whole positions - the tilt rungs are stored at one pan and the
     pan rungs at one tilt - so a walk keeps the other axis where it stands only while the
-    camera is on that ladder or on the crossing the two ladders share. Somewhere else the
-    rung carries the other axis back to the column it was stored at: measured on the test
-    set, a ``right`` of three rungs followed by an ``up`` sent the pan back to the view the
-    user had just panned away from. The move is refused instead, and nothing is sent.
+    camera is on the crossing the two ladders share. Somewhere else the rung carries the other
+    axis back to the column it was stored at: measured on the test set, a ``right`` of three
+    rungs followed by an ``up`` sent the pan back to the view the user had just panned away
+    from.
+
+    A camera without a bounded relative move has no rung at the pan of the moment, so the drag
+    is the price of the rung. The walk is therefore sent - refusing it instead left both pairs
+    of arrows dead as soon as the user alternated them (0.7.8, and the panel of the add-on is
+    driven by the same state) - and the log names the axis it drags.
     """
     await setup_camera(hass, entry, block=ladder_block())
     session = FakeSession()
@@ -908,15 +911,16 @@ async def test_a_move_of_one_axis_is_refused_while_it_would_drag_the_other(
     assert "arg2=214" in session.requests[-1]["url"], "the tilt walks up to its top rung"
     session.requests.clear()
 
-    with pytest.raises(HomeAssistantError):
-        await hass.services.async_call(
-            DOMAIN,
-            "ptz",
-            {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 0.3},
-            blocking=True,
-        )
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 0},
+        blocking=True,
+    )
 
-    assert session.requests == [], "the pan is not sent at all - it would drag the tilt"
+    assert "arg2=220" in session.requests[-1]["url"], (
+        "the pan is sent although it carries the tilt back to the crossing"
+    )
 
 
 async def test_a_walk_from_the_crossing_of_the_two_ladders_keeps_the_axis(hass, entry, monkeypatch):

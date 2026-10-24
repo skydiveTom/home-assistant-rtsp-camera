@@ -47,9 +47,6 @@
     },
     "ptz_direction_required": {
       "message": "The camera needs to know which axis to stop - send the arrow of the movement, or use a stop command without a direction."
-    },
-    "ptz_step_other_axis": {
-      "message": "The steps of this axis are stored at another position of the other axis, so this move would drag it along. Walk the other axis back to the middle rung - the crossing of the two ladders - and try again."
     }
   },
   "config": {

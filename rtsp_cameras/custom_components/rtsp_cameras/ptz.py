@@ -176,20 +176,24 @@ def crossing_index(config: PtzConfig | None, axis: str) -> int | None:
 def _mark_crossing(
     rungs: dict[str, int], config: PtzConfig | None, axis: str, index: int
 ) -> None:
-    """Keep the rung of the other axis when the camera landed on the crossing.
+    """Record where the other axis stands after a rung of ``axis`` was reached.
 
-    A preset is a whole position: a rung in the middle of its ladder leaves the camera on the
-    crossing of both, where the other axis stands on its own middle rung and may be walked.
-    Every other rung leaves the camera between two rungs of the other axis, which forgets
-    where that axis is - a walk of it would drag the camera along (``step_blocked_by``).
+    A preset is a whole position and the two ladders of a camera are stored around one
+    *crossing*: every rung of one ladder carries the middle value of the other axis. Landing
+    on a rung of either ladder therefore leaves the other axis exactly on its own middle rung
+    - on the crossing, where it may be walked.
+
+    Recording that (instead of forgetting the other axis, which this did until 0.7.9) is what
+    keeps both pairs of arrows alive: a forgotten axis was refused on its next press, and that
+    press recorded the axis it walked, so the two pairs locked each other out.
     """
-    if index != crossing_index(config, axis):
-        return
     for other in PTZ_STEP_AXES:
         if other == axis:
             continue
         sibling = crossing_index(config, other)
-        if sibling is not None:
+        if sibling is None:
+            rungs.pop(other, None)
+        else:
             rungs[other] = sibling
 
 
@@ -201,9 +205,8 @@ def remember_preset(camera_id: str, config: PtzConfig | None, preset: Any) -> No
     stop, which leaves the camera where it was released - leaves it between two rungs, and
     a walk may not start from there.
 
-    A preset is a whole position, so a rung of one ladder leaves the camera at the crossing
-    of the two: the rung of the *other* axis is kept only when the preset is its middle rung,
-    which is the crossing itself (see ``_mark_crossing``).
+    A rung is a whole position, so reaching one leaves the other axis on its crossing rung
+    (see ``_mark_crossing``): the walk of that axis continues from there.
     """
     rung = rung_of(config, preset)
     if rung is None:
@@ -211,29 +214,31 @@ def remember_preset(camera_id: str, config: PtzConfig | None, preset: Any) -> No
         return
     axis, index = rung
     rungs = _STEP_INDEX.setdefault(camera_id, {})
-    for other in PTZ_STEP_AXES:
-        if other != axis:
-            rungs.pop(other, None)
     rungs[axis] = index
     _mark_crossing(rungs, config, axis, index)
 
 
-def step_blocked_by(camera_id: str, config: PtzConfig | None, action: str) -> str | None:
-    """Return the axis a walk of ``action`` would move as well, or None when it is safe.
+def step_drag(
+    camera_id: str, config: PtzConfig | None, action: str
+) -> tuple[str, int] | None:
+    """Return the axis a walk of ``action`` drags along, and how many rungs of it.
 
-    The rungs of one ladder all carry the same value of the other axis, so walking them keeps
-    the other axis where it stands - as long as the camera really is on a rung of *this*
-    ladder. Standing on a rung of the other ladder instead, the camera holds the crossing
-    value of that one while a rung of this axis carries its own, so the walk would drag the
-    other axis over the whole way the two are apart. Measured on the test set: a ``right`` of
-    three rungs followed by an ``up`` sent the pan back to the column the tilt rungs were
-    stored at.
+    The rungs of one ladder all carry the *crossing* value of the other axis, which is what
+    keeps the other axis where it stands while a ladder is walked. Standing off that crossing
+    along the other axis - the last walk was on the other ladder and it left its middle rung
+    - the rung carries the other axis back to the crossing. Measured on the test set: a
+    ``right`` of three rungs followed by an ``up`` sent the pan back to the column the tilt
+    rungs were stored at.
 
-    Walking the other axis back to its middle rung puts the camera on the crossing, where a
-    walk of this axis stays where it stands. A camera whose rung is unknown starts there as
-    well - that is the only bounded start after a restart (see ``next_step``) - so the first
-    move of a session is never refused. The answer is the axis the camera has to walk back
-    first.
+    That drag cannot be avoided on a camera without a bounded relative move (see
+    ``walks_the_ladder``): a tilt in place would need a rung stored at the pan of the moment,
+    and a rung can only be written where the camera already stands. The walk is therefore
+    sent, and this answer is what a caller reports - refusing it instead made both pairs of
+    arrows dead as soon as a user alternated them (after one ``up`` every ``right`` was
+    refused and after one ``right`` every ``up``).
+
+    The answer is the axis the walk drags, and how many rungs of it: negative towards the
+    first rung of that ladder, positive towards its last one.
     """
     axis = step_axis(action)
     if axis is None or config is None:
@@ -243,12 +248,13 @@ def step_blocked_by(camera_id: str, config: PtzConfig | None, action: str) -> st
         # An axis without rungs is never walked, so there is nothing a walk could drag.
         return None
     rungs = _STEP_INDEX.get(camera_id) or {}
-    if axis in rungs:
-        return None
     index = rungs.get(other)
-    if index is None or index == crossing_index(config, other):
+    crossing = crossing_index(config, other)
+    if index is None or crossing is None or index == crossing:
+        # Unknown: the walk starts on the crossing (see ``next_step``). On the crossing
+        # itself the rung of this axis carries the value the camera holds - no drag.
         return None
-    return other
+    return other, crossing - index
 
 
 def walks_the_ladder(config: PtzConfig | None, action: str) -> bool:
@@ -290,14 +296,10 @@ def next_step(
     start = index if isinstance(index, int) and index >= 0 else len(slots) // 2
     count = max(1, abs(int(count)))
     target = max(0, min(len(slots) - 1, start + (count if forward else -count)))
-    # A rung is a whole position: every tilt rung is stored at one pan and every pan rung
-    # at one tilt, so a step of this axis leaves the camera between the rungs of the other
-    # one - unless it lands on the crossing, where the other axis still knows where the
-    # camera stands (see ``_mark_crossing``). Forgotten, that axis may not be walked until
-    # the camera is back on the crossing (see ``step_blocked_by``).
-    for other in PTZ_STEP_AXES:
-        if other != axis:
-            rungs.pop(other, None)
+    # A rung is a whole position, so reaching it leaves the other axis on its crossing rung -
+    # where the walk of that axis continues from (see ``_mark_crossing``). What the rung does
+    # to the other axis when the camera stands off the crossing is reported by
+    # ``step_drag``, not refused: this camera has no rung at the other axis's position.
     rungs[axis] = target
     _mark_crossing(rungs, config, axis, target)
     return slots[target], target
@@ -586,14 +588,14 @@ async def async_walk_steps(
     ends the walk, so a long duration can never ask for the same rung again and again.
 
     A ladder only holds its axis while the camera stands on it or on the crossing it shares
-    with the other one: a move of the other axis would drag that axis along, so it is refused
-    before a single command is sent (see ``step_blocked_by``).
+    with the other one: a walk off that crossing drags the other axis back to it, which is
+    the price of a camera that only has whole positions (see ``step_drag``). That drag is
+    logged and the walk is sent - refusing it left the user with arrows that did nothing.
     """
-    blocked = step_blocked_by(camera_id, config, direction)
-    if blocked is not None:
-        raise HomeAssistantError(
-            translation_domain="rtsp_cameras",
-            translation_key="ptz_step_other_axis",
+    drag = step_drag(camera_id, config, direction)
+    if drag is not None:
+        _LOGGER.info(
+            "the %s walk of %s drags the %s by %s rungs", direction, camera_id, drag[0], -drag[1]
         )
     pause = PTZ_DEFAULT_DURATION if duration is None else max(0.0, float(duration))
     loop = asyncio.get_running_loop()

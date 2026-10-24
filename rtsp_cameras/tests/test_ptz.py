@@ -63,7 +63,7 @@ from app.ptz import (
     probe_base_url,
     public_config,
     split_userinfo,
-    step_blocked_by,
+    step_drag,
     step_target,
     stops_in_place,
 )
@@ -1998,17 +1998,21 @@ def test_a_continuous_move_forgets_the_rung(client: TestClient, dvrip_cam: int) 
     )
 
 
-def test_a_step_that_would_drag_the_other_axis_is_refused(
+def test_a_step_that_drags_the_other_axis_is_sent_and_reported(
     client: TestClient, dvrip_cam: int
 ) -> None:
-    """A step of one axis is refused while it would move the other axis with it.
+    """A step that carries the other axis along is sent, and the answer says what it drags.
 
     A rung is a whole position: the tilt rungs of a camera are stored at one pan and its pan
-    rungs at one tilt, so a step keeps the *other* axis where it stands only while the camera
-    is on that ladder - or on the crossing the two ladders share. Measured on the test set, a
-    ``right`` of three rungs followed by an ``up`` sent the pan back to the column the tilt
-    rungs were stored at, so the view the user had just panned to was gone. The step is not
-    sent at all now, and the answer names the axis to walk back first.
+    rungs at one tilt, so a step that switches axes carries the other axis back to the
+    crossing of the two ladders. Measured on the test set, a ``right`` of three rungs followed
+    by an ``up`` sent the pan back to the column the tilt rungs were stored at - the view the
+    user had just panned to was gone.
+
+    This family has no bounded *relative* move, so there is no tilt in place to offer: a rung
+    can only be written where the camera already stands (see ``ptz.step_target``). The step is
+    therefore sent, and the answer reports the drag instead of refusing the step - a refusal
+    is what made both pairs of arrows dead in 0.7.8 (see the test below).
     """
     camera = add_dvrip_camera(client, dvrip_cam)
     store_rungs(client, camera["id"], 3)
@@ -2022,59 +2026,63 @@ def test_a_step_that_would_drag_the_other_axis_is_refused(
     )
     assert up.status_code == 200, up.text
     assert up.json()["step"]["index"] == 2, "the top rung of the tilt, off the crossing"
+    assert "drag" not in up.json()["step"], "the tilt leaves the pan on its crossing"
 
     sent = len(DvripCamera.received)
-    refused = client.post(
-        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "right"}
-    )
-
-    assert refused.status_code == 409, refused.text
-    body = refused.json()
-    assert body["error"] == "ptz_step_other_axis"
-    assert body["axis"] == "horizontal", "the axis the press asked for"
-    assert body["other"] == "vertical", "the axis the step would drag along"
-    assert "middle rung" in body["message"], "the answer names the way out"
-    assert "up/down" in body["message"] and "left/right" in body["message"], (
-        "both axes are named the way the interface names them"
-    )
-    assert len(DvripCamera.received) == sent, "nothing was sent to the camera"
-
-
-def test_a_step_from_the_crossing_keeps_the_other_axis(client: TestClient, dvrip_cam: int) -> None:
-    """Walking the other axis back to its middle rung lets the step through again.
-
-    The two ladders of a camera cross at their middle rung - each one is stored on the middle
-    rung of the other - so a camera that stands there holds the crossing value of both: a
-    step of either axis leaves the other one where it stands.
-    """
-    camera = add_dvrip_camera(client, dvrip_cam)
-    store_rungs(client, camera["id"], 3)
-    store_pan_rungs(client, camera["id"], 3)
-    forget_rung(client, camera["id"])
-
     right = client.post(
         f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "right"}
     )
-    assert right.json()["step"]["index"] == 2, "one rung right of the middle"
 
-    blocked = client.post(
-        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"}
+    assert right.status_code == 200, right.text
+    assert right.json()["step"]["drag"] == {"axis": "vertical", "rungs": -1}, (
+        "the pan rung carries the tilt back to the middle rung of its ladder - one rung down "
+        "- and the answer says so instead of leaving the user with a silent jump"
     )
-    assert blocked.status_code == 409, "the tilt is refused while the pan is off the crossing"
+    assert len(DvripCamera.received) == sent + 1, "the step is sent, not refused"
 
-    back = client.post(
-        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "left"}
+    again = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "right"}
     )
-    assert back.status_code == 200, back.text
-    assert back.json()["step"]["index"] == 1, "the middle rung of the pan is the crossing"
-
-    up = client.post(
-        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"}
+    assert "drag" not in again.json()["step"], (
+        "the camera stands on the crossing of the tilt again, so the next pan rung drags nothing"
     )
 
-    assert up.status_code == 200, up.text
-    assert up.json()["step"]["axis"] == "vertical"
-    assert up.json()["step"]["slot"] == FIRST_STEP_SLOT + 2, "one rung above the crossing"
+
+def test_a_step_of_one_axis_never_locks_the_other_out(client: TestClient, dvrip_cam: int) -> None:
+    """Both pairs of arrows stay usable, whichever pair was pressed last.
+
+    A rung of one ladder carries the middle value of the other axis, so landing on it leaves
+    that axis on the crossing - known, and walkable. 0.7.8 forgot the other axis instead and
+    refused its next step as if the camera stood between its rungs; since every step recorded
+    the axis it walked, the two pairs locked each other out. Measured on the test set with the
+    ladders of ``balkon-2``: ``preset 222 -> up (200) -> right (409) -> right (409) -> up
+    (200)`` - neither pair could be pressed twice in a row, and the arrows of an axis looked
+    dead as soon as the other one had moved.
+    """
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 5)
+    store_pan_rungs(client, camera["id"], 5)
+    forget_rung(client, camera["id"])
+
+    def step(direction: str) -> dict:
+        answer = client.post(
+            f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": direction}
+        )
+        assert answer.status_code == 200, f"{direction}: {answer.text}"
+        return answer.json()["step"]
+
+    assert step("up")["index"] == 3, "one rung above the crossing of both ladders"
+    right = step("right")
+    assert right["index"] == 3, "the pan steps although the tilt was stepped first"
+    assert right["drag"] == {"axis": "vertical", "rungs": -1}, "the tilt is reported as dragged"
+    assert step("right")["index"] == 4, "... and the next pan rung drags nothing"
+
+    up = step("up")
+    assert up["index"] == 3, "the tilt steps although the pan was stepped first"
+    assert up["drag"] == {"axis": "horizontal", "rungs": -2}, (
+        "the tilt rung brings the pan back to the column the tilt ladder is stored at"
+    )
+    assert step("down")["index"] == 2, "... and the tilt keeps walking from there"
 
 
 def test_a_mirrored_axis_sends_the_other_command(client: TestClient, ptz_cam: str) -> None:
@@ -2450,28 +2458,32 @@ def test_the_two_ladders_of_a_camera_cross_at_their_middle_rung() -> None:
     assert other_axis("zoom_in") is None
 
 
-def test_a_step_is_refused_only_while_it_would_drag_the_other_axis() -> None:
-    """A step is safe on its own ladder and on the crossing, and nowhere else.
+def test_a_step_drags_the_other_axis_only_off_its_crossing() -> None:
+    """A step drags the other axis exactly while the camera stands off its crossing rung.
 
-    A rung carries the whole position, so the rungs of one ladder all stand at the same value
-    of the other axis. Walking that ladder keeps the other axis where it is - while the camera
-    really is on it. A camera on the other ladder holds *its* value instead, and a step would
-    carry the camera back to the column the rungs were stored at.
+    Every rung of a ladder carries the *crossing* value of the other axis, so a walk of it
+    keeps that axis where it stands while the camera is on the crossing - or on a rung of this
+    ladder, which leaves the other axis there (see ``main._remember_rung``). Off the crossing
+    the rung carries the other axis back, and the answer says how far.
     """
     ladders = {"vertical": [210, 211, 212], "horizontal": [213, 214, 215]}
 
-    assert step_blocked_by({}, ladders, "up") is None, (
-        "an unknown rung starts on the crossing (see step_target), so it is never refused"
+    assert step_drag({}, ladders, "up") is None, (
+        "an unknown rung starts on the crossing (see step_target), so it drags nothing"
     )
-    assert step_blocked_by({"vertical": 2}, ladders, "up") is None, "the ladder it stands on"
-    assert step_blocked_by({"vertical": 2}, ladders, "right") == "vertical", (
-        "the pan would drag the tilt back to the column of its rungs"
+    assert step_drag({"vertical": 2, "horizontal": 1}, ladders, "up") is None, (
+        "the pan stands on its crossing rung, which is the pan the tilt rungs were stored at"
     )
-    assert step_blocked_by({"vertical": 1}, ladders, "right") is None, "the crossing is shared"
-    assert step_blocked_by({"horizontal": 0}, ladders, "up") == "horizontal"
-    assert step_blocked_by({"horizontal": 1}, ladders, "up") is None, "the crossing again"
-    assert step_blocked_by({"vertical": 1}, {"vertical": [210]}, "right") is None, (
+    assert step_drag({"vertical": 1, "horizontal": 1}, ladders, "right") is None, (
+        "the crossing is shared by both ladders"
+    )
+    assert step_drag({"vertical": 2, "horizontal": 1}, ladders, "right") == ("vertical", -1), (
+        "a pan rung carries the tilt back to the middle rung of its ladder"
+    )
+    assert step_drag({"vertical": 0, "horizontal": 2}, ladders, "up") == ("horizontal", -1)
+    assert step_drag({"horizontal": 1}, ladders, "up") is None, "an unknown rung is the crossing"
+    assert step_drag({"vertical": 1}, {"vertical": [210]}, "right") is None, (
         "an axis without a ladder of its own is not walked at all"
     )
-    assert step_blocked_by({"vertical": 1}, {}, "up") is None
-    assert step_blocked_by({"vertical": 1}, ladders, "zoom_in") is None, "a zoom is no step"
+    assert step_drag({"vertical": 1}, {}, "up") is None
+    assert step_drag({"vertical": 1}, ladders, "zoom_in") is None, "a zoom is no step"

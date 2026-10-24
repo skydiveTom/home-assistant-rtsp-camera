@@ -1230,31 +1230,33 @@ def crossing_rung(slots: Sequence[int]) -> int | None:
     return len(slots) // 2 if slots else None
 
 
-def step_blocked_by(
+def step_drag(
     rungs: Mapping[str, int],
     ladders: Mapping[str, Sequence[int]],
     action: str,
-) -> str | None:
-    """Return the axis a step of ``action`` would move as well, or None when it is safe.
+) -> tuple[str, int] | None:
+    """Return the axis a step of ``action`` drags along, and how many rungs of it.
 
-    A step is a ``GotoPreset`` of a rung, and a preset is a whole position: every rung of a
-    ladder carries the same value of the other axis, so walking that ladder keeps the other
-    axis where it stands - as long as the camera really is on a rung of *this* ladder.
-    Standing on a rung of the other ladder instead (``rungs`` holds that axis and not this
-    one), the camera holds the *other* ladder's crossing value while a rung of this axis
-    carries its own, so the step would drag the other axis over the whole way the two are
-    apart. Measured on the test set: a ``right`` of three rungs followed by an ``up`` sent
-    the pan back to the column the tilt rungs were stored at - the whole view the user had
-    just panned to was gone.
+    A step is a ``GotoPreset`` of a rung, and a rung is a whole position: every rung of a
+    ladder carries the *crossing* value of the other axis, which is exactly what keeps the
+    other axis where it stands while a ladder is walked. Standing off that crossing along the
+    other axis - the last step was on the other ladder and it left its middle rung - the step
+    carries the other axis back to the crossing. Measured on the test set: a ``right`` of
+    three rungs followed by an ``up`` sent the pan back to the column the tilt rungs were
+    stored at, so the view the user had just panned to was gone.
 
-    Walking the other axis back to its middle rung (see :func:`crossing_rung`) puts the
-    camera on the crossing, where a step of this axis stays where it stands. A camera whose
-    rung is unknown starts on the crossing as well - that is the only bounded start after a
-    restart (see :func:`step_target`) - so the first press of a session is never refused.
+    That drag cannot be avoided on this family: it has no bounded *relative* move (see
+    :func:`step_target`), so a tilt in place would need a rung stored at the pan of the
+    moment, and a rung can only be written where the camera already stands. The step is
+    therefore sent, and this answer is what the caller *reports* - refusing it instead made
+    both pairs of arrows dead as soon as a user alternated them (measured: after one ``up``
+    every ``right`` was refused and after one ``right`` every ``up``, because the refused
+    axis had forgotten where the camera stood).
 
     ``rungs`` is what the add-on remembers about the camera (see ``main._remember_rung``) and
-    ``ladders`` the step lists of its PTZ block. The answer is the axis the step would move,
-    which is the one the user has to walk back first.
+    ``ladders`` the step lists of its PTZ block. The answer is the axis the step drags, and
+    how many rungs of it: negative towards the first rung of that ladder, positive towards
+    its last one.
     """
     axis = step_axis(action)
     if axis is None:
@@ -1268,18 +1270,14 @@ def step_blocked_by(
         # An axis without rungs is never walked, so there is nothing a step could drag the
         # other axis away from - and the pad sends a continuous move for it instead.
         return None
-    if axis in rungs:
-        # The camera stands on a rung of this ladder: every rung of it carries the same
-        # value of the other axis, so the step keeps that axis where it is.
-        return None
     index = rungs.get(other)
-    if index is None:
-        # Unknown: the walk starts on the crossing of the two ladders (see step_target).
+    crossing = crossing_rung(sibling)
+    if index is None or crossing is None or index == crossing:
+        # Unknown: the walk starts on the crossing of the two ladders (see step_target). On
+        # the crossing itself the rung of this ladder carries the value the camera holds, so
+        # there is nothing to drag.
         return None
-    if index == crossing_rung(sibling):
-        # The camera stands on the crossing, which is a rung of this ladder as well.
-        return None
-    return other
+    return other, crossing - index
 
 
 def step_target(

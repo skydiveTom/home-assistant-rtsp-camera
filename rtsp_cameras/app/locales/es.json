@@ -218,6 +218,7 @@
     "steps_note_walk": "Pasos: {vertical} arriba/abajo, {horizontal} izquierda/derecha - una pulsación corta avanza uno y mantener pulsado avanza peldaño a peldaño: esta cámara no puede detener un movimiento.",
     "step_reached": "Paso {index} de {rungs}",
     "step_stored": "Paso guardado",
+    "step_dragged": "El eje «{other}» también volvió al cruce de las escalas (por {rungs})",
     "invert_horizontal": "Invertir izquierda/derecha",
     "invert_vertical": "Invertir arriba/abajo",
     "invert_hint": "¿Cámara montada al revés, de lado o detrás de un espejo? Invierte un eje para que sus flechas coincidan con la imagen: el panel, la entidad de Home Assistant y todas las automatizaciones lo siguen.",
@@ -287,7 +288,6 @@
     "ptz_steps_axis": "Eje de pasos desconocido",
     "ptz_steps_full": "La lista de pasos de este eje está llena",
     "ptz_store_missing": "Este perfil de cámara no puede guardar una posición",
-    "ptz_step_other_axis": "Los pasos de «{axis}» están guardados con otra posición de «{other}», así que este paso la arrastraría también. Vuelve con «{other}» a la barra central —donde se cruzan las escalas— y repite el paso",
     "ptz_axis_required": "Eje desconocido: elige izquierda/derecha o arriba/abajo"
   },
   "common": {

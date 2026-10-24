@@ -218,6 +218,7 @@
     "steps_note_walk": "Kroki: {vertical} góra/dół, {horizontal} lewo/prawo - krótkie naciśnięcie to jeden krok, a przytrzymanie idzie dalej szczebel po szczeblu: ta kamera nie umie zatrzymać ruchu w połowie.",
     "step_reached": "Krok {index} z {rungs}",
     "step_stored": "Krok zapisany",
+    "step_dragged": "Oś „{other}” też wróciła na skrzyżowanie drabinek (o {rungs})",
     "invert_horizontal": "Odwróć lewo/prawo",
     "invert_vertical": "Odwróć góra/dół",
     "invert_hint": "Kamera zamontowana do góry nogami, bokiem albo za lustrem? Odwróć oś, żeby jej strzałki zgadzały się z obrazem - panel, encja w Home Assistant i wszystkie automatyzacje idą za tym ustawieniem.",
@@ -287,7 +288,6 @@
     "ptz_steps_axis": "Nieznana oś kroków",
     "ptz_steps_full": "Lista kroków tej osi jest pełna",
     "ptz_store_missing": "Ten profil kamery nie potrafi zapisać pozycji",
-    "ptz_step_other_axis": "Kroki „{axis}” są zapisane przy innym ustawieniu osi „{other}”, więc ten krok przestawiłby też ją. Wróć osią „{other}” do środkowego szczebla — tam drabinki się krzyżują — i naciśnij ponownie",
     "ptz_axis_required": "Nieznana oś - wybierz lewo/prawo albo góra/dół"
   },
   "common": {

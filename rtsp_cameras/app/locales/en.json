@@ -218,6 +218,7 @@
     "steps_note_walk": "Steps: {vertical} up/down, {horizontal} left/right - a short press walks one, and a hold walks on rung by rung: this camera cannot stop a move on the way.",
     "step_reached": "Step {index} of {rungs}",
     "step_stored": "Step stored",
+    "step_dragged": "The {other} went back to the crossing of the two ladders as well (by {rungs})",
     "invert_horizontal": "Mirror left/right",
     "invert_vertical": "Mirror up/down",
     "invert_hint": "Camera mounted upside down, on its side or behind a mirror? Mirror an axis so its arrows match the picture - the pad, the entity in Home Assistant and every automation follow it.",
@@ -287,7 +288,6 @@
     "ptz_steps_axis": "Unknown step axis",
     "ptz_steps_full": "The step list of this axis is full",
     "ptz_store_missing": "This camera profile cannot store a position",
-    "ptz_step_other_axis": "The {axis} steps are stored at another {other} position, so this step would drag the {other} with it. Walk the {other} back to the middle rung - the crossing of the two ladders - and press again",
     "ptz_axis_required": "Unknown axis - choose left/right or up/down"
   },
   "common": {
