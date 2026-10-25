@@ -81,7 +81,10 @@ exactly one place — the add-on panel.
   Assistant carries the same pair as `ptz_step`. The rung at which a ladder stands on the other
   one is data of the camera (`step_crossings` of the PTZ block) and not the middle of a list: a
   rung stored later is appended to a ladder and moves its middle, so the add-on walked two
-  rungs at once with a ladder that grew that way. Home Assistant
+  rungs at once with a ladder that grew that way. Both sides share **one** pair: a move of the
+  entity goes through the add-on (`POST /api/cameras/<id>/ptz`), so a step taken in Home
+  Assistant starts where the panel left the camera and the other way round - and a camera whose
+  add-on is not running is still moved by the integration itself. Home Assistant
   receives `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset. A camera that is mounted upside down, on its side or behind a mirror is
   **mirrored per axis** - one button each in the preview pad (*Mirror left/right*, *Mirror

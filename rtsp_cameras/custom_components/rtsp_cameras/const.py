@@ -105,6 +105,15 @@ ADDON_SNAPSHOT_TIMEOUT_SECONDS = 15
 SNAPSHOT_CACHE_SECONDS = 5
 #: Path of the still inside the API of the add-on (JPEG, ``?height=`` optional).
 ADDON_SNAPSHOT_PATH = "/api/cameras/{camera_id}/snapshot.jpg"
+#: Path of the PTZ endpoint of the add-on. Every move Home Assistant makes goes through it,
+#: so the coordinates of the ladders of step positions have one owner: a step taken here
+#: starts where the panel of the add-on left the camera, and the panel starts where this
+#: left it (see ``addon.async_ptz``).
+ADDON_PTZ_PATH = "/api/cameras/{camera_id}/ptz"
+#: Deadline of one delegated PTZ call. The add-on answers when the camera has arrived, and
+#: the DVRIP family needs up to ``DVRIP_TIMEOUT_SECONDS`` for the ``GotoPreset`` of a stop:
+#: a shorter deadline reports a move that works as a failure.
+ADDON_PTZ_TIMEOUT_SECONDS = 40
 #: Port the add-on's web server listens on when the Supervisor does not say it.
 ADDON_API_PORT = 8099
 #: How long the address of the add-on is reused, and how long a failed lookup waits.

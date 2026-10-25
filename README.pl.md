@@ -83,7 +83,10 @@ w panelu dodatku.
   samą parę jako `ptz_step`. Szczebel, na którym jedna drabinka stoi na drugiej, jest daną
   kamery (`step_crossings` w bloku PTZ), a nie środkiem listy: szczebel dopisany później
   przesuwa środek, więc dodatek chodził o dwa szczeble naraz na drabince, która tak urosła.
-  Home Assistant dostaje usługę
+  Obie strony dzielą **jedną** parę: ruch encji idzie przez dodatek
+  (`POST /api/cameras/<id>/ptz`), więc krok z Home Assistant startuje stamtąd, gdzie panel
+  zostawił kamerę, i odwrotnie — a kamerę, której dodatek nie działa, integracja nadal rusza
+  sama. Home Assistant dostaje usługę
   `rtsp_cameras.ptz` (te same pola co `onvif.ptz`), `rtsp_cameras.ptz_home` oraz
   przycisk dla każdego presetu. Kamerę zamontowaną do góry nogami, bokiem albo za lustrem
   **odwraca się osobno na każdej osi** — po jednym przycisku w padzie podglądu (*Odwróć

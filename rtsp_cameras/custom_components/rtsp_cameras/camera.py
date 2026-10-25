@@ -21,6 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .addon import async_addon_urls, snapshot_url
+from .addon import async_ptz as addon_ptz
 from .const import (
     ADD_CAMERA_URL,
     ADDON_SNAPSHOT_TIMEOUT_SECONDS,
@@ -37,15 +38,23 @@ from .const import (
     KEYFRAME_WAIT_SECONDS,
     MANUFACTURER,
     PTZ_DIRECTIONS,
+    PTZ_STEP_PAUSE_SECONDS,
     SNAPSHOT_CACHE_SECONDS,
     SNAPSHOT_TIMEOUT_SECONDS,
 )
 from .coordinator import RtspCamerasCoordinator
 from .models import PtzConfig, RtspCameraDefinition, redact_url
+from .ptz import (
+    adopt_position,
+    forget_step,
+    last_direction,
+    remember_direction,
+    remember_preset,
+    walks_the_ladder,
+)
 from .ptz import async_execute as ptz_async_execute
 from .ptz import async_move as ptz_async_move
 from .ptz import async_walk_steps as ptz_async_walk_steps
-from .ptz import forget_step, last_direction, remember_direction, remember_preset, walks_the_ladder
 from .ptz import step_position as ptz_step_position
 from .services import default_duration, resolve_action, resolve_duration, resolve_speed
 
@@ -411,6 +420,18 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         action = resolve_action(kwargs)
         speed = resolve_speed(kwargs)
         duration = resolve_duration(kwargs)
+        preset = str(kwargs.get("preset") or "").strip()
+
+        # Every move is asked of the add-on first: it is the one owner of the coordinates of
+        # the ladders of step positions, so a step taken here starts where the panel left the
+        # camera and the panel starts where this left it (see ``addon.async_ptz``). Without an
+        # answer - the container is not running - the command of the camera is sent directly,
+        # exactly as before.
+        if await self._async_addon_ptz(
+            config, action, preset=preset, speed=speed, duration=duration
+        ):
+            return
+
         if config is not None:
             # A camera can be mounted the other way round: the arrows of the picture are
             # turned around here, before anything else looks at them, so the command that is
@@ -474,16 +495,182 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         forget_step(self._definition.id)
         await ptz_async_execute(self.hass, config, action, speed=speed)
 
+    async def _async_addon_ptz(
+        self,
+        config: PtzConfig | None,
+        action: str,
+        *,
+        preset: str,
+        speed: int | None,
+        duration: float | None,
+    ) -> bool:
+        """Move the camera through the add-on, returning False when it cannot be asked.
+
+        The add-on owns the coordinates of the camera on its ladders of step positions, so it
+        is the side that walks them (see ``addon.async_ptz``). Three shapes of a move exist:
+        a single bounded call (a preset, a stop, the home key, a zoom), a direction that has to
+        be stopped after the duration, and the walk of a ladder - one rung at a time, for as
+        long as the call lasts, which is what the panel of the add-on does while an arrow is
+        held.
+        """
+        if config is None or not config.enabled:
+            return False
+        if action == "preset" and not preset:
+            # A call without a preset is a mistake, and the local path names it in a way the
+            # user can read (``ptz_preset_missing``).
+            return False
+        if action == "home" and not config.uses("home"):
+            return False
+        if action in PTZ_DIRECTIONS:
+            # The memory of the axis a stop has to name stays on this side as well: a stop
+            # that arrives after the add-on went away still finds it (see ``last_direction``).
+            remember_direction(self._definition.id, config.mirror(action))
+            if walks_the_ladder(config, action):
+                return await self._async_addon_walk(config, action, speed, duration)
+            if config.uses("stop"):
+                return await self._async_addon_move(config, action, speed, duration)
+
+        body: dict[str, Any] = {"action": action}
+        if speed is not None:
+            body["speed"] = speed
+        if action == "preset":
+            body["preset"] = preset
+        elif action == "stop":
+            direction = last_direction(self._definition.id)
+            if direction:
+                # ``last_direction`` holds the action of the device; the add-on turns the
+                # arrows of the picture around itself (see ``PtzConfig.mirror``).
+                body["direction"] = config.mirror(direction)
+
+        payload = await self._async_addon_call(body)
+        if payload is None:
+            return False
+        adopt_position(self._definition.id, config, payload.get("position"))
+        return True
+
+    async def _async_addon_move(
+        self,
+        config: PtzConfig,
+        action: str,
+        speed: int | None,
+        duration: float | None,
+    ) -> bool:
+        """Start a direction in the add-on, stop it after the duration, take its coordinates."""
+        body: dict[str, Any] = {"action": action}
+        if speed is not None:
+            body["speed"] = speed
+        payload = await self._async_addon_call(body)
+        if payload is None:
+            return False
+
+        # The add-on sends one command per call, so the timing of a continuous move stays
+        # here - and the stop names the axis, so it cannot be guessed (see ``PTZ_DIRECTIONS``).
+        pause = duration if duration is not None else default_duration()
+        if pause:
+            await asyncio.sleep(pause)
+        stop: dict[str, Any] = {"action": "stop", "direction": action}
+        if speed is not None:
+            stop["speed"] = speed
+        answer = await self._async_addon_call(stop)
+        # Both calls leave the camera between two rungs, so the answer of the stop (or of the
+        # direction, when the stop could not be sent) is the place a step starts from now.
+        adopt_position(self._definition.id, config, (answer or payload).get("position"))
+        return True
+    async def _async_addon_walk(
+        self,
+        config: PtzConfig,
+        action: str,
+        speed: int | None,
+        duration: float | None,
+    ) -> bool:
+        """Walk the ladder of an axis through the add-on, one bounded rung at a time.
+
+        The pacing is that of ``ptz.async_walk_steps`` - the answer of the camera usually comes
+        when it has arrived, so the rungs never queue - while the rung each step lands on is
+        decided by the add-on, which is the side that knows where the camera stands.
+        """
+        pause = default_duration() if duration is None else duration
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + pause
+        previous: int | None = None
+        moved = False
+        while True:
+            started = loop.time()
+            body: dict[str, Any] = {"action": "step", "direction": action, "steps": 1}
+            if speed is not None:
+                body["speed"] = speed
+            payload = await self._async_addon_call(body)
+            if payload is None:
+                # No address answered (or the add-on has no ladder for this camera): a walk
+                # that already moved rungs stops where it is, the first rung falls back to the
+                # command of the camera.
+                return moved
+            moved = True
+            step = payload.get("step") or {}
+            adopt_position(self._definition.id, config, step.get("position"))
+            index = step.get("index")
+            if index == previous:
+                # The rung does not move any more: the ladder ends here.
+                break
+            previous = index
+            if loop.time() >= deadline:
+                break
+            rest = PTZ_STEP_PAUSE_SECONDS - (loop.time() - started)
+            if rest > 0:
+                await asyncio.sleep(rest)
+        return True
+
+    async def _async_addon_call(self, body: dict[str, Any]) -> dict[str, Any] | None:
+        """Send one PTZ action to the add-on, returning its answer or None when it is no help."""
+        answer = await addon_ptz(self.hass, self._definition.id, body)
+        if answer is None:
+            return None
+        if answer.body.get("ok"):
+            return answer.body
+        if answer.status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+            # The add-on knows the camera and the camera refused the move: asking the same
+            # camera here again would only repeat a refusal, so the failure is reported.
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="ptz_failed",
+                translation_placeholders={
+                    "action": str(body.get("action") or ""),
+                    "error": str(answer.body.get("detail") or answer.body.get("error") or ""),
+                },
+            )
+        _LOGGER.debug(
+            "The add-on refused the %s of %s: %s",
+            body.get("action"),
+            self._definition.id,
+            answer.body.get("error"),
+        )
+        return None
+
     async def async_ptz_home(self, **kwargs: Any) -> None:
         """Handle the ``rtsp_cameras.ptz_home`` service."""
         # The home key is a position the add-on does not know, so the camera leaves the ladder
         # of step positions - the same rule the add-on follows (see ``forget_step``).
         forget_step(self._definition.id)
+        config = self._definition.ptz
+        speed = resolve_speed(kwargs)
         try:
-            await ptz_async_execute(
-                self.hass, self._definition.ptz, "home", speed=resolve_speed(kwargs)
+            body: dict[str, Any] = {"action": "home"}
+            if speed is not None:
+                body["speed"] = speed
+            payload = (
+                await self._async_addon_call(body)
+                if config is not None and config.enabled and config.uses("home")
+                else None
             )
+            if payload is not None:
+                # The add-on leaves the camera between two rungs here as well; taking its
+                # answer keeps both sides on the same coordinates (see ``adopt_position``).
+                adopt_position(self._definition.id, config, payload.get("position"))
+            else:
+                await ptz_async_execute(self.hass, config, "home", speed=speed)
         finally:
             # The home key leaves the camera between two rungs, so the coordinates of the
             # entity are gone with it - and the entity says so (see ``async_ptz``).
             self.async_write_ha_state()
+
+

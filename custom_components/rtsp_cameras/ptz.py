@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -245,6 +246,33 @@ def remember_preset(camera_id: str, config: PtzConfig | None, preset: Any) -> No
     rungs = _STEP_INDEX.setdefault(camera_id, {})
     rungs[axis] = index
     _mark_crossing(rungs, config, axis, index)
+
+
+def adopt_position(camera_id: str, config: PtzConfig | None, position: Any) -> None:
+    """Adopt the coordinates the add-on reports for a camera after a move.
+
+    The add-on is the one owner of the ladders of step positions (see
+    ``addon.async_ptz``): it keeps the rung the panel walked to, and its answer - not a guess
+    of this module - decides where the next step of either axis starts. ``index`` is that
+    rung; ``None`` means the camera stands between two rungs (a continuous move, a stop, the
+    home key or a preset that is no rung) and the coordinate is forgotten, exactly as a local
+    move would leave it.
+    """
+    if config is None or not isinstance(position, Mapping):
+        forget_step(camera_id)
+        return
+    rungs: dict[str, int] = {}
+    for axis, values in position.items():
+        if axis not in PTZ_STEP_AXES or not isinstance(values, Mapping):
+            continue
+        index = values.get("index")
+        if isinstance(index, int) and not isinstance(index, bool):
+            if 0 <= index < len(config.step_slots(axis)):
+                rungs[axis] = index
+    if rungs:
+        _STEP_INDEX[camera_id] = rungs
+    else:
+        forget_step(camera_id)
 
 
 def step_drag(

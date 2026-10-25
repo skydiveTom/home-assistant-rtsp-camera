@@ -7,21 +7,31 @@ keeps the answer for a while - a dashboard asks for a still of every camera on
 every view, and a Supervisor call in front of each one would cost more than the
 image.
 
-The integration only *reads* from that API (a JPEG of a camera). Everything that
+Two things go through that API: a still of a camera, and every PTZ move. The
+move is delegated on purpose - the add-on is the one owner of the coordinates of
+the ladders of step positions (it writes the camera file, it keeps the panel, and
+``step_crossings`` of a ladder is its data), so a step taken here starts where the
+panel left the camera and the panel starts where this left it. Everything that
 changes the configuration still goes through the camera file the add-on writes,
 which keeps one owner per piece of state.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from typing import Any, NamedTuple
 from urllib.parse import quote, urlsplit
 
+import aiohttp
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     ADDON_API_PORT,
+    ADDON_PTZ_PATH,
+    ADDON_PTZ_TIMEOUT_SECONDS,
     ADDON_SLUG,
     ADDON_SNAPSHOT_PATH,
     ADDON_URL_RESOLVE_SECONDS,
@@ -30,6 +40,13 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class AddonAnswer(NamedTuple):
+    """One answer of the add-on: the status code and the JSON body behind it."""
+
+    status: int
+    body: dict[str, Any]
 
 
 async def async_addon_urls(hass: HomeAssistant, *, refresh: bool = False) -> list[str]:
@@ -56,6 +73,66 @@ def snapshot_url(base_url: str, camera_id: str) -> str:
     """Return the URL of one still of a camera inside the add-on's API."""
     path = ADDON_SNAPSHOT_PATH.format(camera_id=quote(str(camera_id), safe=""))
     return f"{base_url.rstrip('/')}{path}"
+
+
+def ptz_url(base_url: str, camera_id: str) -> str:
+    """Return the URL of the PTZ endpoint of one camera inside the add-on's API."""
+    path = ADDON_PTZ_PATH.format(camera_id=quote(str(camera_id), safe=""))
+    return f"{base_url.rstrip('/')}{path}"
+
+
+async def async_ptz(
+    hass: HomeAssistant, camera_id: str, body: dict[str, Any]
+) -> AddonAnswer | None:
+    """Ask the add-on to move a camera, or return None when it cannot be reached.
+
+    The add-on is the one owner of the coordinates of a camera on its ladders of step
+    positions: it writes the camera file, it keeps the panel and it knows which rung a
+    ladder was stored at (``step_crossings``). A move that went around it would leave the
+    other side on a stale rung - a step after a panel step started one rung off, and the
+    panel started one rung off after a step taken here.
+
+    ``None`` means *no address answered* - a stopped container, an unreachable network, a
+    body that is not JSON (an ingress that asks for a login first). The caller sends the
+    command of the camera itself then: the integration still moves a camera on a system
+    where the add-on is not running.
+    """
+    bases = await async_addon_urls(hass)
+    answer = await _async_post_ptz(hass, bases, camera_id, body)
+    if answer is not None or not bases:
+        return answer
+    # The address may be stale (a container that was rebuilt gets a new one).
+    return await _async_post_ptz(hass, await async_addon_urls(hass, refresh=True), camera_id, body)
+
+
+async def _async_post_ptz(
+    hass: HomeAssistant, bases: list[str], camera_id: str, body: dict[str, Any]
+) -> AddonAnswer | None:
+    """POST one PTZ action to every known address of the add-on, the first answer wins."""
+    session = async_get_clientsession(hass)
+    for base in bases:
+        url = ptz_url(base, camera_id)
+        try:
+            async with asyncio.timeout(ADDON_PTZ_TIMEOUT_SECONDS):
+                async with session.post(url, json=body) as response:
+                    payload = await _async_json(response)
+                    if payload is not None:
+                        return AddonAnswer(int(response.status), payload)
+                    _LOGGER.debug(
+                        "The add-on answered %s on %s without a PTZ body", response.status, url
+                    )
+        except (TimeoutError, aiohttp.ClientError) as err:
+            _LOGGER.debug("The add-on did not answer the PTZ call on %s: %s", url, err)
+    return None
+
+
+async def _async_json(response: aiohttp.ClientResponse) -> dict[str, Any] | None:
+    """Return the JSON object of a response, or None when the body is something else."""
+    try:
+        payload = await response.json(content_type=None)
+    except (ValueError, aiohttp.ContentTypeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 async def _async_resolve_urls(hass: HomeAssistant) -> list[str]:

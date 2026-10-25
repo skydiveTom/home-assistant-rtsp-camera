@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.rtsp_cameras import addon as addon_module
 from custom_components.rtsp_cameras import ptz as ptz_module
 from custom_components.rtsp_cameras.const import (
     CONF_CAMERAS_FILE,
@@ -79,6 +80,66 @@ class FakeSession:
 def use_session(monkeypatch: pytest.MonkeyPatch, session: FakeSession) -> None:
     """Make the integration use the fake session."""
     monkeypatch.setattr(ptz_module, "async_get_clientsession", lambda hass: session)
+
+
+class FakeAddonResponse:
+    """Stand-in for one answer of the add-on."""
+
+    def __init__(self, status: int, body: Any) -> None:
+        self.status = status
+        self.body = body
+
+    async def json(self, *args: Any, **kwargs: Any) -> Any:
+        """Return the decoded body of the answer."""
+        return self.body
+
+    async def __aenter__(self) -> FakeAddonResponse:
+        """Enter the response context."""
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        """Leave the response context."""
+        return False
+
+
+class FakeAddon:
+    """Answer the PTZ calls of the integration the way the add-on does.
+
+    The add-on is the one owner of the coordinates of a camera on its ladders of step
+    positions (see ``addon.async_ptz``), so the tests hand out the answers it would give:
+    ``{"ok": true, "step": {...}, "position": {...}}``. The last answer is repeated, which
+    keeps a walk readable - a walk asks once per rung.
+    """
+
+    def __init__(self, *answers: tuple[int, dict[str, Any]]) -> None:
+        self.answers = list(answers)
+        self.requests: list[dict[str, Any]] = []
+
+    def post(self, url: str, json: dict[str, Any] | None = None) -> FakeAddonResponse:
+        """Record one call and answer with the next canned answer."""
+        self.requests.append({"url": url, "body": dict(json or {})})
+        status, body = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+        return FakeAddonResponse(status, body)
+
+    @property
+    def bodies(self) -> list[dict[str, Any]]:
+        """Return the bodies of the calls the integration made, in order."""
+        return [request["body"] for request in self.requests]
+
+
+def addon_bases(*bases: str):
+    """Return a stand-in for ``addon.async_addon_urls`` with the given addresses."""
+
+    async def _bases(hass: HomeAssistant, *, refresh: bool = False) -> list[str]:
+        return list(bases)
+
+    return _bases
+
+
+def use_addon(monkeypatch: pytest.MonkeyPatch, addon: FakeAddon, *bases: str) -> None:
+    """Make the integration ask a fake add-on instead of a real container."""
+    monkeypatch.setattr(addon_module, "async_addon_urls", addon_bases(*bases))
+    monkeypatch.setattr(addon_module, "async_get_clientsession", lambda hass: addon)
 
 
 def ptz_block(**overrides: Any) -> dict[str, Any]:
@@ -1172,4 +1233,181 @@ def test_the_published_mirror_flags_reach_the_configuration() -> None:
     assert plain.mirror("up") == "up"
     for untouched in ("zoom_in", "zoom_out", "home", "stop", "preset"):
         assert plain.mirror(untouched) == untouched
+
+
+async def test_a_step_is_walked_by_the_addon_and_its_coordinates_are_taken_over(
+    hass, entry, monkeypatch
+):
+    """The add-on walks the ladder, and the entity shows the rung the add-on reports.
+
+    The add-on is the one owner of the coordinates of a camera on its ladders of step
+    positions: it writes the camera file, it keeps the panel and it knows the crossing of the
+    ladders. A step taken here therefore asks it for the rung and takes the pair it answers
+    with - instead of computing a second pair that drifts from the panel's as soon as either
+    side moves the camera.
+    """
+    await setup_camera(
+        hass, entry, block=ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+    addon = FakeAddon(
+        (
+            200,
+            {
+                "ok": True,
+                "step": {
+                    "axis": "vertical",
+                    "slot": 213,
+                    "index": 3,
+                    "rungs": 5,
+                    "arrow": "up",
+                    "position": {
+                        "vertical": {"index": 3, "slot": 213, "rungs": 5, "crossing": 1},
+                        "horizontal": {"index": 3, "slot": 220, "rungs": 5, "crossing": 3},
+                    },
+                },
+            },
+        )
+    )
+    use_addon(monkeypatch, addon, "http://addon.local:8099")
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    assert addon.bodies == [{"action": "step", "direction": "up", "steps": 1}], (
+        "one rung, asked of the side that owns the ladder"
+    )
+    assert addon.requests[0]["url"] == "http://addon.local:8099/api/cameras/front_door/ptz"
+    assert session.requests == [], "the camera itself is not commanded from here any more"
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == {
+        "vertical": {"index": 3, "slot": 213, "rungs": 5, "crossing": 1},
+        "horizontal": {"index": 3, "slot": 220, "rungs": 5, "crossing": 3},
+    }, "the pair of the add-on, not a second one computed by this side"
+
+
+async def test_a_preset_of_the_addon_clears_the_ladders(hass, entry, monkeypatch):
+    """A preset that is no rung leaves the camera between two rungs - on both sides."""
+    await setup_camera(
+        hass, entry, block=ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+    addon = FakeAddon(
+        (
+            200,
+            {
+                "ok": True,
+                "position": {
+                    "vertical": {"index": None, "slot": None, "rungs": 5, "crossing": 1},
+                    "horizontal": {"index": None, "slot": None, "rungs": 5, "crossing": 3},
+                },
+            },
+        )
+    )
+    use_addon(monkeypatch, addon, "http://addon.local:8099")
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "move_mode": "GotoPreset", "preset": "1"},
+        blocking=True,
+    )
+
+    assert addon.bodies == [{"action": "preset", "preset": "1"}]
+    assert session.requests == []
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == {
+        "vertical": {"index": None, "slot": None, "rungs": 5, "crossing": 1},
+        "horizontal": {"index": None, "slot": None, "rungs": 5, "crossing": 3},
+    }, "the add-on says the camera stands between two rungs, and this side follows it"
+
+
+async def test_a_move_the_addon_refuses_is_sent_to_the_camera(hass, entry, monkeypatch):
+    """A camera the add-on does not know (404) is moved with the command of the camera.
+
+    The integration has to keep working on a system where the add-on is not running, so a call
+    the add-on cannot answer falls back to the walk this side used before.
+    """
+    await setup_camera(
+        hass, entry, block=ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+    addon = FakeAddon((404, {"ok": False, "error": "not_found"}))
+    use_addon(monkeypatch, addon, "http://addon.local:8099")
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    assert addon.bodies == [{"action": "step", "direction": "up", "steps": 1}]
+    assert session.requests, "the ladder is walked with the command of the camera"
+    assert "arg2=212" in session.requests[0]["url"], "one rung above the crossing (211)"
+
+
+async def test_a_continuous_move_of_the_addon_names_the_axis_of_its_stop(
+    hass, entry, monkeypatch
+):
+    """A camera that can halt an axis is started and stopped through the add-on."""
+    await setup_camera(hass, entry)
+    session = FakeSession()
+    use_session(monkeypatch, session)
+    addon = FakeAddon(
+        (200, {"ok": True, "position": None}),
+        (200, {"ok": True, "position": None}),
+    )
+    use_addon(monkeypatch, addon, "http://addon.local:8099")
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "LEFT", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    assert addon.bodies == [
+        {"action": "left"},
+        {"action": "stop", "direction": "left"},
+    ], "the move and its stop, both through the add-on"
+    assert session.requests == [], "no command of the camera is sent from here"
+
+
+async def test_the_home_key_of_the_addon_clears_the_coordinates(hass, entry, monkeypatch):
+    """The home key leaves the camera somewhere the add-on does not know either."""
+    block = ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    block["commands"]["home"] = "GET http://10.0.0.5/cgi-bin/ptz.cgi?action=start&code=Home"
+    await setup_camera(hass, entry, block=block)
+    session = FakeSession()
+    use_session(monkeypatch, session)
+    addon = FakeAddon(
+        (
+            200,
+            {
+                "ok": True,
+                "position": {
+                    "vertical": {"index": None, "slot": None, "rungs": 5, "crossing": 1},
+                    "horizontal": {"index": None, "slot": None, "rungs": 5, "crossing": 3},
+                },
+            },
+        )
+    )
+    use_addon(monkeypatch, addon, "http://addon.local:8099")
+
+    await hass.services.async_call(
+        DOMAIN, "ptz_home", {"entity_id": "camera.front_door"}, blocking=True
+    )
+
+    assert addon.bodies == [{"action": "home"}]
+    assert session.requests == []
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == {
+        "vertical": {"index": None, "slot": None, "rungs": 5, "crossing": 1},
+        "horizontal": {"index": None, "slot": None, "rungs": 5, "crossing": 3},
+    }
 

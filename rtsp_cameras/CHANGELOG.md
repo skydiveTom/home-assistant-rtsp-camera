@@ -4,6 +4,31 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.12] - 2026-10-25
+
+### Fixed
+
+- **A step in the panel and a step in Home Assistant started from two different places.** The
+  integration sent its PTZ commands to the camera itself and kept its own memory of the rung
+  each axis stands on, while the add-on kept a second one for the panel: after a step of the
+  panel a service call started from the crossing instead of the rung the camera stood on (it
+  jumped back and climbed again), and after a service call the panel did the same. Every move
+  now goes through `POST /api/cameras/<id>/ptz`: the add-on walks the ladder, answers with the
+  coordinates, and the integration takes that answer as the place the next step starts from
+  (`ptz_step` of the entity).
+
+### Changed
+
+- **A camera is no longer commanded from two sides.** `rtsp_cameras.ptz` and
+  `rtsp_cameras.ptz_home` ask the add-on first: a step walks one rung per bounded
+  `GotoPreset`, a continuous move is started and stopped there, and a preset, a stop, a zoom or
+  the home key is a single call. The timing of a continuous move (the pause between two rungs)
+  stays in the integration, so the duration of a service call still means what it did.
+- **The integration still moves a camera without the add-on.** When no address answers (a
+  stopped container, no Supervisor, a camera the add-on does not know) the command goes to the
+  camera directly, exactly as before - the ladder is walked by the integration then, with the
+  coordinates it keeps itself.
+
 ## [0.7.11] - 2026-10-25
 
 ### Fixed
