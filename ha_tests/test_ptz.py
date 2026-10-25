@@ -1001,19 +1001,20 @@ async def test_a_walk_starts_from_the_crossing_the_camera_file_names(hass, entry
 async def test_the_entity_shows_where_the_camera_stands_on_the_ladders(
     hass, entry, monkeypatch
 ):
-    """Both coordinates are visible, and every move rewrites them.
+    """Both coordinates are visible in the state of the entity, and every move rewrites them.
 
     A rung is a whole position, so a step of one axis changes the other coordinate as well:
     the tilt walks up a rung and the pan is left on the crossing rung of its own ladder. The
-    entity shows the pair, which is what makes a drag visible instead of surprising.
+    entity announces the pair after each move (nothing else writes the state of a camera whose
+    picture keeps running), which is what makes a drag visible instead of surprising.
     """
-    camera = await setup_camera(
+    await setup_camera(
         hass, entry, block=ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
     )
     session = FakeSession()
     use_session(monkeypatch, session)
 
-    assert camera.extra_state_attributes["ptz_step"] == {
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == {
         "vertical": {"index": None, "slot": None, "rungs": 5, "crossing": 1},
         "horizontal": {"index": None, "slot": None, "rungs": 5, "crossing": 3},
     }, "a camera that was never walked stands somewhere the integration cannot name"
@@ -1025,8 +1026,7 @@ async def test_the_entity_shows_where_the_camera_stands_on_the_ladders(
         blocking=True,
     )
 
-    entity = hass.data["camera"].get_entity("camera.front_door")
-    assert entity.extra_state_attributes["ptz_step"] == {
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == {
         "vertical": {"index": 2, "slot": 212, "rungs": 5, "crossing": 1},
         "horizontal": {"index": 3, "slot": 220, "rungs": 5, "crossing": 3},
     }, "the rung the tilt reached, and the crossing rung the pan is carried to"
@@ -1039,11 +1039,23 @@ async def test_the_entity_shows_where_the_camera_stands_on_the_ladders(
         blocking=True,
     )
 
-    entity = hass.data["camera"].get_entity("camera.front_door")
-    assert entity.extra_state_attributes["ptz_step"] == {
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == {
         "vertical": {"index": 1, "slot": 211, "rungs": 5, "crossing": 1},
         "horizontal": {"index": 4, "slot": 221, "rungs": 5, "crossing": 3},
     }, "the pan moved one rung and the tilt went back to its crossing"
+
+    session.requests.clear()
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "move_mode": "GotoPreset", "preset": "1"},
+        blocking=True,
+    )
+
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == {
+        "vertical": {"index": None, "slot": None, "rungs": 5, "crossing": 1},
+        "horizontal": {"index": None, "slot": None, "rungs": 5, "crossing": 3},
+    }, "a preset that is no rung leaves the camera between two rungs: the pair is gone"
 
 
 async def test_a_camera_without_a_ladder_keeps_its_move_and_its_capture(hass, entry, monkeypatch):

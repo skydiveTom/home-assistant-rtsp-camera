@@ -393,7 +393,20 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
         Home Assistant sends ``pan``/``tilt``/``zoom``/``speed`` (0..1),
         ``continuous_duration`` (seconds), ``preset`` and ``move_mode``; the plain
         ``action`` of the add-on is accepted as a shortcut.
+
+        The coordinates of the camera on its two ladders are attributes of this entity and
+        they change with **every** move - a step of one axis rewrites the other coordinate as
+        well (see ``ptz.step_position``). Nothing else writes the state of a camera whose
+        picture keeps running, so the entity announces the new pair itself; without that the
+        attributes would be those of the last state the coordinator wrote.
         """
+        try:
+            await self._async_ptz_move(**kwargs)
+        finally:
+            self.async_write_ha_state()
+
+    async def _async_ptz_move(self, **kwargs: Any) -> None:
+        """Move the camera the way the fields of the service call ask."""
         config = self._definition.ptz
         action = resolve_action(kwargs)
         speed = resolve_speed(kwargs)
@@ -463,6 +476,14 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
 
     async def async_ptz_home(self, **kwargs: Any) -> None:
         """Handle the ``rtsp_cameras.ptz_home`` service."""
-        await ptz_async_execute(
-            self.hass, self._definition.ptz, "home", speed=resolve_speed(kwargs)
-        )
+        # The home key is a position the add-on does not know, so the camera leaves the ladder
+        # of step positions - the same rule the add-on follows (see ``forget_step``).
+        forget_step(self._definition.id)
+        try:
+            await ptz_async_execute(
+                self.hass, self._definition.ptz, "home", speed=resolve_speed(kwargs)
+            )
+        finally:
+            # The home key leaves the camera between two rungs, so the coordinates of the
+            # entity are gone with it - and the entity says so (see ``async_ptz``).
+            self.async_write_ha_state()

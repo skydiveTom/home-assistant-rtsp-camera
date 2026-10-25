@@ -4,6 +4,18 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.11] - 2026-10-25
+
+### Fixed
+
+- **The coordinates of the entity of Home Assistant were stale.** `ptz_step` is computed from
+  a memory the service call writes, and the entity only publishes its attributes when its
+  state is written - which never happens for a camera whose picture keeps running. The entity
+  now announces the new pair after every move (`async_ptz` and `async_ptz_home`), so a step
+  that also moves the other axis is visible in Home Assistant and not only in the pad.
+- **The home key kept the coordinates.** The add-on forgets where the camera stands when the
+  home key moves it; the integration kept the old pair. `async_ptz_home` forgets it as well.
+
 ## [0.7.10] - 2026-10-25
 
 ### Fixed
