@@ -110,6 +110,13 @@ ADDON_SNAPSHOT_PATH = "/api/cameras/{camera_id}/snapshot.jpg"
 #: starts where the panel of the add-on left the camera, and the panel starts where this
 #: left it (see ``addon.async_ptz``).
 ADDON_PTZ_PATH = "/api/cameras/{camera_id}/ptz"
+#: Path of the camera list of the add-on. It carries ``ptz_position`` per camera, which is how
+#: a move taken in the panel of the add-on reaches the entity of Home Assistant (see
+#: ``coordinator.RtspCamerasCoordinator``): the coordinates are kept by the add-on and the
+#: camera file does not carry them.
+ADDON_CAMERAS_PATH = "/api/cameras"
+#: Deadline of the camera list. It is one small JSON document, unlike a still.
+ADDON_LIST_TIMEOUT_SECONDS = 10
 #: Deadline of one delegated PTZ call. The add-on answers when the camera has arrived, and
 #: the DVRIP family needs up to ``DVRIP_TIMEOUT_SECONDS`` for the ``GotoPreset`` of a stop:
 #: a shorter deadline reports a move that works as a failure.

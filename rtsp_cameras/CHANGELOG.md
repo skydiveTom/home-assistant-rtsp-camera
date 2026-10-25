@@ -4,6 +4,19 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.13] - 2026-10-25
+
+### Fixed
+
+- **`ptz_step` kept the pair of the last move made *from Home Assistant*.** The add-on owns
+  the coordinates of a camera on its ladders, so a step taken in the panel moved the rungs
+  without the entity ever hearing about it - it then showed a pair that was one step old. Every
+  refresh of the integration now asks the add-on where the cameras stand (`GET /api/cameras`,
+  the `ptz_position` of each record) and takes that answer as the place the next step starts
+  from, so the pair of the entity follows a move of the panel as well. An add-on that cannot be
+  reached says nothing about a camera, so the known coordinates stay then instead of being
+  dropped.
+
 ## [0.7.12] - 2026-10-25
 
 ### Fixed

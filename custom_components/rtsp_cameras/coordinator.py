@@ -18,6 +18,7 @@ from .actions import (
     async_publish_addon_update,
     status_file_for,
 )
+from .addon import async_cameras
 from .const import (
     CONF_CAMERAS_FILE,
     CONF_SCAN_INTERVAL,
@@ -28,6 +29,7 @@ from .const import (
     resolve_cameras_path,
 )
 from .models import RtspCameraDefinition, parse_cameras
+from .ptz import adopt_position
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,7 +95,35 @@ class RtspCamerasCoordinator(DataUpdateCoordinator[dict[str, RtspCameraDefinitio
                 )
             else:
                 _LOGGER.info("No cameras in %s yet", self.cameras_file)
+        await self._async_adopt_positions(cameras)
         return cameras
+
+    async def _async_adopt_positions(
+        self, cameras: dict[str, RtspCameraDefinition]
+    ) -> None:
+        """Take the coordinates of the add-on for every camera that walks a ladder.
+
+        The panel of the add-on moves a camera as well, and a move of the panel is not in the
+        camera file: the coordinates live in the memory of the add-on, which owns the ladders
+        (see ``ptz.adopt_position``). Every refresh therefore asks the add-on where the cameras
+        stand, so ``ptz_step`` of an entity does not keep the pair of the last move made *from
+        Home Assistant* while the user stepped in the panel. An add-on that cannot be reached
+        says nothing about the camera, so the coordinates of this side stay untouched then.
+        """
+        if not any(
+            definition.ptz is not None and definition.ptz.steps
+            for definition in cameras.values()
+        ):
+            return
+        records = await async_cameras(self.hass)
+        if records is None:
+            return
+        for record in records:
+            camera_id = str(record.get("id") or "")
+            definition = cameras.get(camera_id)
+            if definition is None:
+                continue
+            adopt_position(camera_id, definition.ptz, record.get("ptz_position"))
 
     def _ensure_directory(self) -> None:
         """Create the folder of the camera file so the add-on can write into it."""

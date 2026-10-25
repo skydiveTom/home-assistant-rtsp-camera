@@ -30,6 +30,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     ADDON_API_PORT,
+    ADDON_CAMERAS_PATH,
+    ADDON_LIST_TIMEOUT_SECONDS,
     ADDON_PTZ_PATH,
     ADDON_PTZ_TIMEOUT_SECONDS,
     ADDON_SLUG,
@@ -79,6 +81,47 @@ def ptz_url(base_url: str, camera_id: str) -> str:
     """Return the URL of the PTZ endpoint of one camera inside the add-on's API."""
     path = ADDON_PTZ_PATH.format(camera_id=quote(str(camera_id), safe=""))
     return f"{base_url.rstrip('/')}{path}"
+
+
+def cameras_url(base_url: str) -> str:
+    """Return the URL of the camera list of the add-on."""
+    return f"{base_url.rstrip('/')}{ADDON_CAMERAS_PATH}"
+
+
+async def async_cameras(hass: HomeAssistant) -> list[dict[str, Any]] | None:
+    """Return the cameras of the add-on, or None when no address answered.
+
+    The list carries ``ptz_position`` per camera - the coordinates the add-on keeps and the
+    camera file does not - so a refresh of Home Assistant can show where a move *of the panel*
+    left a camera (see ``coordinator.RtspCamerasCoordinator``). ``None`` keeps the coordinates
+    of this side untouched: an add-on that is not running says nothing about the camera.
+    """
+    bases = await async_addon_urls(hass)
+    records = await _async_get_cameras(hass, bases)
+    if records is not None or not bases:
+        return records
+    # The address may be stale (a container that was rebuilt gets a new one).
+    return await _async_get_cameras(hass, await async_addon_urls(hass, refresh=True))
+
+
+async def _async_get_cameras(
+    hass: HomeAssistant, bases: list[str]
+) -> list[dict[str, Any]] | None:
+    """GET the camera list from every known address of the add-on, the first answer wins."""
+    session = async_get_clientsession(hass)
+    for base in bases:
+        url = cameras_url(base)
+        try:
+            async with asyncio.timeout(ADDON_LIST_TIMEOUT_SECONDS):
+                async with session.get(url) as response:
+                    payload = await _async_json(response)
+                    cameras = payload.get("cameras") if payload is not None else None
+                    if isinstance(cameras, list):
+                        return [record for record in cameras if isinstance(record, dict)]
+                    _LOGGER.debug("The add-on answered %s on %s without a camera list", response.status, url)
+        except (TimeoutError, aiohttp.ClientError) as err:
+            _LOGGER.debug("The add-on did not answer the camera list on %s: %s", url, err)
+    return None
 
 
 async def async_ptz(

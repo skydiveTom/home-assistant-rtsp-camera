@@ -114,12 +114,21 @@ class FakeAddon:
     def __init__(self, *answers: tuple[int, dict[str, Any]]) -> None:
         self.answers = list(answers)
         self.requests: list[dict[str, Any]] = []
+        #: The records a GET of the camera list answers with.
+        self.cameras: list[dict[str, Any]] = []
+        #: The URLs of the camera list the coordinator asked for.
+        self.lists: list[str] = []
 
     def post(self, url: str, json: dict[str, Any] | None = None) -> FakeAddonResponse:
         """Record one call and answer with the next canned answer."""
         self.requests.append({"url": url, "body": dict(json or {})})
         status, body = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         return FakeAddonResponse(status, body)
+
+    def get(self, url: str) -> FakeAddonResponse:
+        """Answer the camera list the coordinator asks for."""
+        self.lists.append(url)
+        return FakeAddonResponse(200, {"cameras": list(self.cameras)})
 
     @property
     def bodies(self) -> list[dict[str, Any]]:
@@ -1410,4 +1419,66 @@ async def test_the_home_key_of_the_addon_clears_the_coordinates(hass, entry, mon
         "vertical": {"index": None, "slot": None, "rungs": 5, "crossing": 1},
         "horizontal": {"index": None, "slot": None, "rungs": 5, "crossing": 3},
     }
+
+
+async def test_the_coordinates_of_a_panel_move_reach_the_entity(hass, entry, monkeypatch):
+    """A move taken in the panel of the add-on shows up in the state of the entity.
+
+    The coordinates live in the add-on and the camera file does not carry them, so a refresh
+    asks the add-on where the cameras stand (``ptz_position`` of its camera list). Without that
+    a step of the panel would be invisible in Home Assistant until the entity moved the camera
+    itself.
+    """
+    camera = await setup_camera(
+        hass, entry, block=ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+    addon = FakeAddon((200, {"ok": True, "position": None}))
+    addon.cameras = [
+        {
+            "id": "front_door",
+            "ptz_position": {
+                "vertical": {"index": 3, "slot": 213, "rungs": 5, "crossing": 1},
+                "horizontal": {"index": 3, "slot": 220, "rungs": 5, "crossing": 3},
+            },
+        }
+    ]
+    use_addon(monkeypatch, addon, "http://addon.local:8099")
+
+    await camera.coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert addon.lists == ["http://addon.local:8099/api/cameras"]
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == {
+        "vertical": {"index": 3, "slot": 213, "rungs": 5, "crossing": 1},
+        "horizontal": {"index": 3, "slot": 220, "rungs": 5, "crossing": 3},
+    }, "the pair the panel walked to, not the one of the last move of this side"
+
+
+async def test_an_unreachable_addon_keeps_the_coordinates(hass, entry, monkeypatch):
+    """Without an add-on a refresh says nothing, so the known coordinates stay."""
+    camera = await setup_camera(
+        hass, entry, block=ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+    addon = FakeAddon((404, {"ok": False, "error": "not_found"}))
+    use_addon(monkeypatch, addon)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+    walked = hass.states.get("camera.front_door").attributes["ptz_step"]
+    assert walked["vertical"]["index"] == 2, "the walk of this side reached a rung"
+
+    await camera.coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get("camera.front_door").attributes["ptz_step"] == walked, (
+        "no answer from the add-on does not mean the camera left the ladder"
+    )
 
