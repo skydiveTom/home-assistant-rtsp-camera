@@ -219,6 +219,8 @@
     "step_reached": "Step {index} of {rungs}",
     "step_stored": "Step stored",
     "step_dragged": "The {other} went back to the crossing of the two ladders as well (by {rungs})",
+    "position": "Position on the steps: ↕ {vertical} · ↔ {horizontal}",
+    "position_unknown": "Position on the steps: the camera stands between two steps",
     "invert_horizontal": "Mirror left/right",
     "invert_vertical": "Mirror up/down",
     "invert_hint": "Camera mounted upside down, on its side or behind a mirror? Mirror an axis so its arrows match the picture - the pad, the entity in Home Assistant and every automation follow it.",

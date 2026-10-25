@@ -137,6 +137,36 @@ def forget_step(camera_id: str) -> None:
         _STEP_INDEX.pop(camera_id, None)
 
 
+def step_position(
+    camera_id: str, config: PtzConfig | None
+) -> dict[str, dict[str, int | None]] | None:
+    """Return where a camera stands on its ladders, per axis, or None without ladders.
+
+    This is the coordinate model of the walk: every move of the camera rewrites it (see
+    ``next_step`` and ``remember_preset``), and a rung is a whole position, so a step of one
+    axis changes the other coordinate as well - the other axis is carried back to its crossing
+    rung (see ``step_drag``). The entity shows it, so a user can see *where* the camera stands
+    and not only that a rung was reached.
+    """
+    if config is None:
+        return None
+    position: dict[str, dict[str, int | None]] = {}
+    rungs = _STEP_INDEX.get(camera_id) or {}
+    for axis in PTZ_STEP_AXES:
+        slots = config.step_slots(axis)
+        if not slots:
+            continue
+        index = rungs.get(axis)
+        known = isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(slots)
+        position[axis] = {
+            "index": index if known else None,
+            "slot": slots[index] if known else None,
+            "rungs": len(slots),
+            "crossing": config.crossing(axis),
+        }
+    return position or None
+
+
 def step_slots(config: PtzConfig | None, action: str) -> tuple[int, ...]:
     """Return the ladder a direction walks, empty when the axis has none."""
     axis = step_axis(action)
@@ -162,15 +192,13 @@ def crossing_index(config: PtzConfig | None, axis: str) -> int | None:
 
     A ladder is stored along one axis at a fixed value of the other one, so the two ladders
     of a camera meet in a single *crossing*, and every rung of a ladder carries the crossing
-    value of the other axis. The ladders of the test set are stored around that point
-    (``.smoke/build_ladder.py``): each one on the middle rung of the other, which is why the
-    middle rung is where a camera stands on the crossing with - and why a walk of an unknown
-    rung starts there (see ``next_step``).
+    value of the other axis. The add-on names that rung in ``step_crossings`` of the PTZ
+    block (``PtzConfig.step_crossings``) - it is the place the ladder was built at, and a
+    rung stored later moves the middle of the list but not that place.
     """
     if config is None:
         return None
-    slots = config.step_slots(axis)
-    return len(slots) // 2 if slots else None
+    return config.crossing(axis)
 
 
 def _mark_crossing(
@@ -179,9 +207,10 @@ def _mark_crossing(
     """Record where the other axis stands after a rung of ``axis`` was reached.
 
     A preset is a whole position and the two ladders of a camera are stored around one
-    *crossing*: every rung of one ladder carries the middle value of the other axis. Landing
-    on a rung of either ladder therefore leaves the other axis exactly on its own middle rung
-    - on the crossing, where it may be walked.
+    *crossing*: every rung of one ladder carries the crossing value of the other axis, which
+    the camera file names in ``step_crossings``. Landing on a rung of either ladder therefore
+    leaves the other axis exactly on *its* crossing rung - where it may be walked, and where
+    the walk of that axis starts from (see ``next_step``).
 
     Recording that (instead of forgetting the other axis, which this did until 0.7.9) is what
     keeps both pairs of arrows alive: a forgotten axis was refused on its next press, and that
@@ -278,13 +307,15 @@ def next_step(
     """Return the rung a step of ``action`` lands on, together with its index.
 
     ``None`` means the axis has no ladder. When the camera's rung is unknown (the first
-    step of a session, or a move outside the ladder) the walk starts in the **middle** of
-    the ladder and not at the end the direction comes from: starting at that end sweeps
-    half of the axis on the very first press - the camera dives to the limit of the rung
-    and climbs back from there, which is exactly the uncontrolled travel the ladder exists
-    to avoid (measured on the test set: the first ``up`` of a camera standing at the middle
-    of its tilt drove it down to the balustrade). A step that would leave the ladder stops
-    on its first or its last rung, so a press always moves the camera somewhere it knows.
+    step of a session, or a move outside the ladder) the walk starts on the **crossing** rung
+    of the ladder - the rung that shares its place with the other ladder (see
+    ``crossing_index``) - and not at the end the direction comes from: starting at that end
+    sweeps half of the axis on the very first press - the camera dives to the limit of the
+    rung and climbs back from there, which is exactly the uncontrolled travel the ladder
+    exists to avoid (measured on the test set: the first ``up`` of a camera standing at the
+    middle of its tilt drove it down to the balustrade). A step that would leave the ladder
+    stops on its first or its last rung, so a press always moves the camera somewhere it
+    knows.
     """
     slots = step_slots(config, action)
     axis = step_axis(action)
@@ -293,7 +324,13 @@ def next_step(
     forward = action == PTZ_STEP_AXES[axis][0]
     rungs = _STEP_INDEX.setdefault(camera_id, {})
     index = rungs.get(axis)
-    start = index if isinstance(index, int) and index >= 0 else len(slots) // 2
+    crossing = crossing_index(config, axis)
+    if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(slots):
+        start = index
+    elif isinstance(crossing, int) and 0 <= crossing < len(slots):
+        start = crossing
+    else:
+        start = len(slots) // 2
     count = max(1, abs(int(count)))
     target = max(0, min(len(slots) - 1, start + (count if forward else -count)))
     # A rung is a whole position, so reaching it leaves the other axis on its crossing rung -

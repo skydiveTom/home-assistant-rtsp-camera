@@ -85,6 +85,32 @@ def _step_ladders(value: Any) -> dict[str, tuple[int, ...]]:
     return ladders
 
 
+def _step_crossings(value: Any, ladders: Mapping[str, tuple[int, ...]]) -> dict[str, int]:
+    """Return the rung of each ladder that stands on the other ladder.
+
+    The add-on publishes ``step_crossings`` inside the PTZ block: per axis the index of the
+    rung whose own ladder was built at the value the other axis holds, which is the place a
+    step of the other axis has to start from. It is data and not a guess - rungs stored later
+    are appended to a ladder and move its middle - but a ladder without the key falls back to
+    the middle when it is used (see ``PtzConfig.crossing``), so an older camera file is still
+    walked.
+    """
+    crossings: dict[str, int] = {}
+    if not isinstance(value, Mapping):
+        return crossings
+    for axis in PTZ_STEP_AXES:
+        slots = ladders.get(axis) or ()
+        if not slots:
+            continue
+        try:
+            index = int(str(value.get(axis)).strip())
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < len(slots):
+            crossings[axis] = index
+    return crossings
+
+
 def redact_url(url: str) -> str:
     """Replace the credentials of a stream URL with asterisks."""
     match = re.match(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<userinfo>[^/\s@]+)@", url or "")
@@ -112,6 +138,11 @@ class PtzConfig:
     #: cannot halt a moving axis is moved rung by rung along this ladder instead of by a
     #: direction command (see ``ptz.walks_the_ladder``).
     steps: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
+    #: The rung of each ladder that stands on the other one (``step_crossings`` of the
+    #: add-on): every rung of a ladder carries the crossing value of the other axis, so this
+    #: is where a step of that axis starts from - and where it is dragged back to when the
+    #: camera stood off it (see ``ptz.step_drag``).
+    step_crossings: Mapping[str, int] = field(default_factory=dict)
     #: A camera can be mounted the other way round: the flag of an axis turns its arrows
     #: around, so ``right`` of the picture sends the command of ``left`` and walks the
     #: ladder of that axis the other way (see ``mirror``).
@@ -145,6 +176,23 @@ class PtzConfig:
     def step_slots(self, axis: str) -> tuple[int, ...]:
         """Return the rungs of one axis, empty when the axis has no ladder."""
         return tuple(self.steps.get(axis) or ())
+
+    def crossing(self, axis: str) -> int | None:
+        """Return the rung of one ladder that stands on the other ladder, or None.
+
+        Every rung of a ladder carries the crossing value of the other axis - that is what
+        keeps a walk of one axis from moving the other one - so a step of the other axis
+        starts from here, and a step of this one is dragged back to it when the camera stood
+        off it (see ``ptz.step_drag``). The camera file names the rung; the middle of the
+        ladder is the fallback for a file that does not.
+        """
+        slots = self.step_slots(axis)
+        if not slots:
+            return None
+        index = self.step_crossings.get(axis)
+        if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(slots):
+            return index
+        return len(slots) // 2
 
     def mirror(self, action: str) -> str:
         """Return the action the camera has to run for an arrow of the picture.
@@ -209,6 +257,8 @@ class PtzConfig:
                 if preset_id:
                     presets.append((preset_id, str(item.get("name") or preset_id).strip()))
 
+        ladders = _step_ladders(data.get("steps"))
+
         return cls(
             profile=str(data.get("profile") or "custom").strip() or "custom",
             speed=_positive_int(data.get("speed"), PTZ_DEFAULT_SPEED),
@@ -217,7 +267,8 @@ class PtzConfig:
             commands=commands,
             stop_codes=stop_codes,
             presets=tuple(presets),
-            steps=_step_ladders(data.get("steps")),
+            steps=ladders,
+            step_crossings=_step_crossings(data.get("step_crossings"), ladders),
             invert_horizontal=_flag(data.get("invert_horizontal")),
             invert_vertical=_flag(data.get("invert_vertical")),
             host=str(data.get("host") or _host_from_base(data.get("base_url")) or "").strip(),

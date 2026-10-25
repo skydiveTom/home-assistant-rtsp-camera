@@ -219,6 +219,8 @@
     "step_reached": "Paso {index} de {rungs}",
     "step_stored": "Paso guardado",
     "step_dragged": "El eje «{other}» también volvió al cruce de las escalas (por {rungs})",
+    "position": "Posición en los pasos: ↕ {vertical} · ↔ {horizontal}",
+    "position_unknown": "Posición en los pasos: la cámara está entre dos pasos",
     "invert_horizontal": "Invertir izquierda/derecha",
     "invert_vertical": "Invertir arriba/abajo",
     "invert_hint": "¿Cámara montada al revés, de lado o detrás de un espejo? Invierte un eje para que sus flechas coincidan con la imagen: el panel, la entidad de Home Assistant y todas las automatizaciones lo siguen.",

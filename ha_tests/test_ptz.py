@@ -961,6 +961,91 @@ async def test_a_walk_from_the_crossing_of_the_two_ladders_keeps_the_axis(hass, 
     assert "arg2=213" in session.requests[0]["url"], "the tilt steps from the crossing"
 
 
+async def test_a_walk_starts_from_the_crossing_the_camera_file_names(hass, entry, monkeypatch):
+    """The rung a walk starts from is what the add-on names, not the middle of a ladder.
+
+    A ladder is stored along one axis at a fixed value of the other one, so a rung written
+    later moves the *middle* of the list but not that place (the tilt ladder of the test set
+    grew by a rung at the ground). ``step_crossings`` of the PTZ block names it, and the walk
+    of an unknown rung starts there - one rung above the crossing below, not above the middle.
+    """
+    await setup_camera(
+        hass, entry, block=ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    assert session.requests, "the walk says something"
+    assert "arg2=212" in session.requests[0]["url"], (
+        "one rung above the crossing named by the file (211), not above the middle (212)"
+    )
+
+    # The pan is on the crossing of its own ladder now, so a pan starts there as well.
+    session.requests.clear()
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 0},
+        blocking=True,
+    )
+    assert "arg2=221" in session.requests[-1]["url"], "one rung right of the pan crossing (220)"
+
+
+async def test_the_entity_shows_where_the_camera_stands_on_the_ladders(
+    hass, entry, monkeypatch
+):
+    """Both coordinates are visible, and every move rewrites them.
+
+    A rung is a whole position, so a step of one axis changes the other coordinate as well:
+    the tilt walks up a rung and the pan is left on the crossing rung of its own ladder. The
+    entity shows the pair, which is what makes a drag visible instead of surprising.
+    """
+    camera = await setup_camera(
+        hass, entry, block=ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    )
+    session = FakeSession()
+    use_session(monkeypatch, session)
+
+    assert camera.extra_state_attributes["ptz_step"] == {
+        "vertical": {"index": None, "slot": None, "rungs": 5, "crossing": 1},
+        "horizontal": {"index": None, "slot": None, "rungs": 5, "crossing": 3},
+    }, "a camera that was never walked stands somewhere the integration cannot name"
+
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "tilt": "UP", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    entity = hass.data["camera"].get_entity("camera.front_door")
+    assert entity.extra_state_attributes["ptz_step"] == {
+        "vertical": {"index": 2, "slot": 212, "rungs": 5, "crossing": 1},
+        "horizontal": {"index": 3, "slot": 220, "rungs": 5, "crossing": 3},
+    }, "the rung the tilt reached, and the crossing rung the pan is carried to"
+
+    session.requests.clear()
+    await hass.services.async_call(
+        DOMAIN,
+        "ptz",
+        {"entity_id": "camera.front_door", "pan": "RIGHT", "continuous_duration": 0},
+        blocking=True,
+    )
+
+    entity = hass.data["camera"].get_entity("camera.front_door")
+    assert entity.extra_state_attributes["ptz_step"] == {
+        "vertical": {"index": 1, "slot": 211, "rungs": 5, "crossing": 1},
+        "horizontal": {"index": 4, "slot": 221, "rungs": 5, "crossing": 3},
+    }, "the pan moved one rung and the tilt went back to its crossing"
+
+
 async def test_a_camera_without_a_ladder_keeps_its_move_and_its_capture(hass, entry, monkeypatch):
     """A capture stop without a rung to walk keeps the continuous move of the camera.
 
@@ -1029,6 +1114,33 @@ async def test_a_mirrored_axis_walks_its_ladder_the_other_way(hass, entry, monke
     assert "arg2=211" in session.requests[0]["url"], (
         "the mirrored up walks one rung below the middle of the tilt ladder, not above it"
     )
+
+
+def test_the_published_crossing_reaches_the_configuration() -> None:
+    """The rung a ladder crosses the other one at is read, and a broken one falls back.
+
+    A rung stored later moves the middle of a ladder but not the place it was built at, so the
+    crossing is data of the camera file (``step_crossings``) and a value that does not exist on
+    the ladder is no crossing at all.
+    """
+    config = PtzConfig.from_dict(
+        ladder_block(step_crossings={"vertical": 1, "horizontal": 3})
+    )
+    assert config is not None
+    assert config.crossing("vertical") == 1
+    assert config.crossing("horizontal") == 3
+    assert config.step_slots("vertical") == (210, 211, 212, 213, 214)
+
+    past = PtzConfig.from_dict(ladder_block(step_crossings={"vertical": 9}))
+    assert past is not None
+    assert past.crossing("vertical") == 2, "a rung past the end of the ladder is dropped"
+    assert past.crossing("horizontal") == 2, "an axis without the key keeps the middle"
+    assert past.crossing("zoom") is None, "an axis without rungs has no crossing"
+
+    empty = PtzConfig.from_dict(ladder_block(steps={}))
+    assert empty is not None
+    assert empty.crossing("vertical") is None
+    assert ptz_module.step_position("nobody", empty) is None
 
 
 def test_the_published_mirror_flags_reach_the_configuration() -> None:

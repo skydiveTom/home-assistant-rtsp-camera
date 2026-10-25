@@ -4,6 +4,37 @@ All notable changes to this add-on are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.10] - 2026-10-25
+
+### Fixed
+
+- **The arrows still jumped two rungs, and the pad reported drags that never happened.** A
+  ladder is stored along one axis at a fixed value of the other one, so every rung of a ladder
+  carries the *crossing* value of the other axis - and the place of that crossing was guessed
+  as the middle of the list. The ladders of `balkon-2` grew after they were built (a rung at
+  the ground was appended to the tilt ladder, one to the pan ladder), which moved the middle
+  and left the guess one rung off: `preset 222` then `up` walked to slot 215 instead of 214 -
+  two rungs of the tilt in one press - and every `right` after it reported a drag of a rung
+  that was already there. The crossing is now **data of the camera**
+  (`step_crossings` of the PTZ block, validated against the ladder), with the middle only as
+  the fallback for a file that does not name it.
+- **A rung that does not belong to its ladder is gone from the test set.** Both ladders of
+  `balkon-2` ended in a rung that pointed at the ground (`227` of the tilt, `228` of the pan),
+  so the last press of `up` or `right` sent the camera down to the grass.
+
+### Changed
+
+- **Every move writes the coordinates of the camera, on both axes.** The add-on keeps one rung
+  per axis (the coordinate a step starts from) and now reports it: the answer of a step carries
+  `step.position` - per axis `index`, `slot`, `rungs` and `crossing` - and every other move
+  carries `position` as well (a preset that is a rung keeps it, a continuous move, a stop and
+  the home key clear it, because the camera stands between two rungs then). The panel shows the
+  pair under the pad (**↕ 4/7 · ↔ 5/10**) and the camera entity of Home Assistant carries it as
+  the `ptz_step` attribute, so a step that also moves the other axis is visible instead of
+  surprising.
+- The step endpoint (`POST /api/cameras/<id>/ptz/steps`) keeps the crossings of the file when a
+  ladder grows or shrinks; a dropped rung drops the name, since the place may be one of them.
+
 ## [0.7.9] - 2026-10-24
 
 ### Fixed

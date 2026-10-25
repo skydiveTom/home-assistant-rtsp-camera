@@ -102,6 +102,15 @@ MIRROR_KEYS: dict[str, str] = {
     "horizontal": "invert_horizontal",
     "vertical": "invert_vertical",
 }
+#: The key of a PTZ block that says which rung of each ladder stands on the *other* ladder.
+#: A ladder is stored along one axis at a fixed value of the other one, so the rungs of one
+#: axis all carry the same value of the other one - the two ladders meet in a single
+#: *crossing* per axis, and only that rung can be walked without dragging the other axis.
+#: It has to be data and not a guess: a rung stored later moves the middle of the list but
+#: not the place the ladder was built at (measured: an appended rung moved the guessed
+#: crossing of the tilt ladder by one, so every step off the pan ladder jumped two rungs
+#: of the tilt and every drag it reported was one rung too far).
+STEP_CROSSINGS_KEY = "step_crossings"
 
 DEFAULT_SPEED = 4
 DEFAULT_CHANNEL = 1
@@ -1032,6 +1041,17 @@ def normalize_ptz(
     if not commands:
         return None
 
+    # The ladder of step positions and the rung of each ladder that stands on the other one
+    # (see ``STEP_CROSSINGS_KEY``). A block that does not speak about either keeps what the
+    # camera carries: the camera editor of the panel has no field for them.
+    steps = _steps(raw.get("steps") if "steps" in raw else (previous or {}).get("steps"))
+    crossings = _step_crossings(
+        raw.get(STEP_CROSSINGS_KEY)
+        if STEP_CROSSINGS_KEY in raw
+        else (previous or {}).get(STEP_CROSSINGS_KEY),
+        steps,
+    )
+
     return {
         "enabled": True,
         "profile": profile,
@@ -1053,7 +1073,10 @@ def normalize_ptz(
         # The ladder of step positions: a block that does not speak about it keeps the one
         # of the camera (the camera editor has no field for it), a block that brings one
         # replaces it, and an empty one clears it.
-        "steps": _steps(raw.get("steps") if "steps" in raw else (previous or {}).get("steps")),
+        "steps": steps,
+        # The rung of each ladder that stands on the other ladder - the place a step of the
+        # other axis starts from (see ``crossing_rung``).
+        STEP_CROSSINGS_KEY: crossings,
     }
 
 
@@ -1213,27 +1236,121 @@ def other_axis(axis: str) -> str | None:
     return next(name for name in STEP_AXES if name != axis)
 
 
-def crossing_rung(slots: Sequence[int]) -> int | None:
-    """Return the rung at which a ladder of step positions crosses the other one.
+def crossing_rung(slots: Sequence[int], index: int | None = None) -> int | None:
+    """Return the rung of a ladder at which it crosses the other ladder.
 
     A ladder is built along one axis at a fixed value of the other one, so the tilt rungs of
     a camera stand at one pan and its pan rungs at one tilt - the two ladders meet in a
     single *crossing*, and every rung of a ladder is at the crossing value of the other axis.
     The ladders of the test set are stored around that point (``.smoke/build_ladder.py``): the
-    tilt ladder is written on the middle rung of the pan range and the pan ladder on the
-    middle rung of the tilt range, so the middle rung of each ladder is the one a camera
-    stands on the crossing with. The walk of an unknown rung starts there as well (see
-    :func:`step_target`).
+    tilt ladder is written on a pan of the pan ladder and the pan ladder on a tilt rung of the
+    tilt ladder, so the rungs stored first are the ones a camera stands on the crossing with
+    and the walk of an unknown rung starts there as well (see :func:`step_target`).
+
+    ``index`` is what the camera file says about it (``step_crossings`` of the PTZ block,
+    see :func:`crossings_of`). The shape of a ladder says nothing about that place: rungs
+    stored later are appended to the list and move its middle, so a ladder without the key
+    falls back to the middle only as the best guess available.
 
     Returns ``None`` for a ladder without rungs.
     """
-    return len(slots) // 2 if slots else None
+    if not slots:
+        return None
+    if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(slots):
+        return index
+    return len(slots) // 2
+
+
+def named_crossings(config: Mapping[str, Any] | None) -> dict[str, int]:
+    """Return the crossings the camera file names itself - no fallback, no guessing.
+
+    ``crossings_of`` adds the middle of a ladder for an axis the file does not speak about,
+    which is the best guess a walk has. A ladder that is still being built must not turn that
+    guess into data, though: the caller that writes a ladder back (the step endpoint of the
+    panel) keeps this map instead, so a ladder that grows stays without a crossing and the
+    guess keeps following its middle until a file knows the place.
+    """
+    if not config:
+        return {}
+    return _step_crossings(config.get(STEP_CROSSINGS_KEY), steps_of(config))
+
+
+def crossings_of(config: Mapping[str, Any] | None) -> dict[str, int]:
+    """Return the crossing rung of every ladder of a PTZ configuration, axis by axis."""
+    if not config:
+        return {}
+    named = named_crossings(config)
+    crossings: dict[str, int] = {}
+    for axis, slots in steps_of(config).items():
+        crossing = crossing_rung(slots, named.get(axis))
+        if crossing is not None:
+            crossings[axis] = crossing
+    return crossings
+
+
+def crossing_of(config: Mapping[str, Any] | None, axis: str) -> int | None:
+    """Return the rung of one ladder that stands on the other one, or None."""
+    return crossings_of(config).get(axis)
+
+
+def rung_position(
+    rungs: Mapping[str, int],
+    ladders: Mapping[str, Sequence[int]],
+    crossings: Mapping[str, int] | None = None,
+) -> dict[str, dict[str, int | None]]:
+    """Return the coordinates of a camera on the two ladders - where it stands, right now.
+
+    The add-on keeps one rung per axis for a camera (:data:`rtsp_cameras.app.main.AppContext.ptz_steps`),
+    and this is that memory in the shape the panel and the entity show: per axis the rung the
+    camera stands on, the slot behind it, how many rungs the ladder has and which one of them
+    crosses the other ladder. Every move rewrites it - a step writes the rung it reached and
+    the crossing of the other axis, a preset that is a rung does the same, and anything that
+    leaves the camera between two rungs (a continuous move, a stop, the home key) forgets it.
+    ``index`` and ``slot`` are ``None`` for an axis whose rung is not known.
+    """
+    position: dict[str, dict[str, int | None]] = {}
+    for axis, slots in ladders.items():
+        index = rungs.get(axis)
+        known = isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(slots)
+        position[axis] = {
+            "index": index if known else None,
+            "slot": slots[index] if known else None,
+            "rungs": len(slots),
+            "crossing": crossing_rung(slots, (crossings or {}).get(axis)),
+        }
+    return position
+
+
+def _step_crossings(
+    value: Any, ladders: Mapping[str, Sequence[int]]
+) -> dict[str, int]:
+    """Return a clean ``step_crossings`` map: per axis the index of its crossing rung.
+
+    Only an axis with a ladder can have a crossing, and the rung has to exist - a key that
+    points past the end of a ladder is dropped, so a shortened ladder can never make a step
+    jump somewhere a walk would not go.
+    """
+    crossings: dict[str, int] = {}
+    if not isinstance(value, Mapping):
+        return crossings
+    for axis in STEP_AXES:
+        slots = ladders.get(axis) or ()
+        if not slots:
+            continue
+        try:
+            index = int(str(value.get(axis)).strip())
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < len(slots):
+            crossings[axis] = index
+    return crossings
 
 
 def step_drag(
     rungs: Mapping[str, int],
     ladders: Mapping[str, Sequence[int]],
     action: str,
+    crossings: Mapping[str, int] | None = None,
 ) -> tuple[str, int] | None:
     """Return the axis a step of ``action`` drags along, and how many rungs of it.
 
@@ -1271,7 +1388,7 @@ def step_drag(
         # other axis away from - and the pad sends a continuous move for it instead.
         return None
     index = rungs.get(other)
-    crossing = crossing_rung(sibling)
+    crossing = crossing_rung(sibling, (crossings or {}).get(other))
     if index is None or crossing is None or index == crossing:
         # Unknown: the walk starts on the crossing of the two ladders (see step_target). On
         # the crossing itself the rung of this ladder carries the value the camera holds, so
@@ -1281,7 +1398,11 @@ def step_drag(
 
 
 def step_target(
-    slots: Sequence[int], index: int | None, action: str, count: Any = 1
+    slots: Sequence[int],
+    index: int | None,
+    action: str,
+    count: Any = 1,
+    start: int | None = None,
 ) -> tuple[int, int] | None:
     """Return the rung a step of ``action`` lands on, together with its index.
 
@@ -1291,14 +1412,16 @@ def step_target(
     ``GotoPreset`` of a slot that was written before - a rung of the ladder. The arrows of
     a step therefore walk a list of slots instead of starting a move.
 
-    ``index`` is the rung the camera stands on; ``None`` means the panel does not know it
-    (the camera was moved outside the ladder, or the other axis was walked - a rung is a
-    whole position, so a step of one ladder leaves the camera at the crossing of the two),
-    and the walk starts in the **middle** of the ladder. It does not start at the end the
-    direction comes from: that end sweeps half of the axis on the very first press - the
-    camera dives to the limit of the rung and climbs back from there, which is exactly the
-    uncontrolled travel the ladder exists to avoid. A step that would leave the ladder stops
-    on its first or its last rung, so a press always moves the camera somewhere it knows.
+    ``index`` is the rung the camera stands on - the coordinate the add-on keeps for the
+    axis (see :func:`rung_position`), which every move of the camera rewrites. ``None``
+    means it is not known (the camera was moved outside the ladder, or a preset that is no
+    rung was recalled), and the walk starts at ``start`` - the crossing rung of the ladder
+    (see :func:`crossing_rung`), the middle of the list when the camera file does not name
+    it. It does not start at the end the direction comes from: that end sweeps half of the
+    axis on the very first press - the camera dives to the limit of the rung and climbs back
+    from there, which is exactly the uncontrolled travel the ladder exists to avoid. A step
+    that would leave the ladder stops on its first or its last rung, so a press always moves
+    the camera somewhere it knows.
     """
     pair = next((arrows for arrows in STEP_AXES.values() if action in arrows), None)
     if pair is None or not slots:
@@ -1309,8 +1432,11 @@ def step_target(
         steps = 1
     steps = max(1, min(MAX_STEPS_PER_PRESS, steps))
     forward = action == pair[0]
-    start = index if isinstance(index, int) and index >= 0 else len(slots) // 2
-    target = max(0, min(len(slots) - 1, start + (steps if forward else -steps)))
+    if isinstance(index, int) and not isinstance(index, bool) and 0 <= index < len(slots):
+        origin = index
+    else:
+        origin = start if isinstance(start, int) and 0 <= start < len(slots) else len(slots) // 2
+    target = max(0, min(len(slots) - 1, origin + (steps if forward else -steps)))
     return slots[target], target
 
 
@@ -1640,6 +1766,9 @@ def public_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
         # The ladder of step positions, so the panel can offer the step arrows and the
         # "store this position" button of the axes that have one.
         "steps": steps_of(config),
+        # Where each ladder stands on the other one: the rung a step of the other axis is
+        # carried back to, and the coordinate a walk of an unknown rung starts from.
+        STEP_CROSSINGS_KEY: crossings_of(config),
         "actions": configured_actions(config),
         # Whether the stop of this camera halts an axis where it stands, or has to drag it
         # back to a captured position (see :func:`stops_in_place`).

@@ -219,6 +219,8 @@
     "step_reached": "Krok {index} z {rungs}",
     "step_stored": "Krok zapisany",
     "step_dragged": "Oś „{other}” też wróciła na skrzyżowanie drabinek (o {rungs})",
+    "position": "Pozycja na drabinkach: ↕ {vertical} · ↔ {horizontal}",
+    "position_unknown": "Pozycja na drabinkach: kamera stoi między dwoma krokami",
     "invert_horizontal": "Odwróć lewo/prawo",
     "invert_vertical": "Odwróć góra/dół",
     "invert_hint": "Kamera zamontowana do góry nogami, bokiem albo za lustrem? Odwróć oś, żeby jej strzałki zgadzały się z obrazem - panel, encja w Home Assistant i wszystkie automatyzacje idą za tym ustawieniem.",

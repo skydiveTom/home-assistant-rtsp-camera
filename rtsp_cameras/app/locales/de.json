@@ -219,6 +219,8 @@
     "step_reached": "Schritt {index} von {rungs}",
     "step_stored": "Schritt gespeichert",
     "step_dragged": "Die Achse „{other}“ ist mit auf die Kreuzung der Leitern zurückgefahren (um {rungs})",
+    "position": "Position auf den Stufen: ↕ {vertical} · ↔ {horizontal}",
+    "position_unknown": "Position auf den Stufen: die Kamera steht zwischen zwei Stufen",
     "invert_horizontal": "Links/rechts spiegeln",
     "invert_vertical": "Oben/unten spiegeln",
     "invert_hint": "Kamera kopfüber, seitlich oder hinter einem Spiegel montiert? Spiegle eine Achse, damit ihre Pfeile zum Bild passen - Panel, Entität in Home Assistant und jede Automatisierung folgen dem.",

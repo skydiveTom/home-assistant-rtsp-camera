@@ -38,6 +38,11 @@ ATTR_PTZ = "ptz"
 ATTR_PTZ_PRESETS = "ptz_presets"
 #: Which PTZ variant (vendor command set) moves this camera.
 ATTR_PTZ_PROFILE = "ptz_profile"
+#: Where a camera stands on the ladders of step positions of the add-on: per axis the rung
+#: it was walked to (``{"vertical": 3, "horizontal": 5, ...}`` with the rung count), which
+#: every move of the camera rewrites - a rung is a whole position, so a step of one axis
+#: changes the other coordinate as well.
+ATTR_PTZ_STEP = "ptz_step"
 
 SUPPORTED_SCHEMES = ("rtsp://", "rtsps://", "rtmp://", "http://", "https://")
 

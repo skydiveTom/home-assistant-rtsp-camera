@@ -75,7 +75,13 @@ exactly one place — the add-on panel.
   family has no bounded *relative* move, so a rung can only be written where the camera already
   stands and a tilt "in place" would need one. The step is sent anyway and the panel names the
   axis it dragged and how far - refusing it instead left both pairs of arrows dead as soon as
-  the user alternated them. Home Assistant
+  the user alternated them. The pad keeps the **coordinates of the camera** on both ladders
+  and shows them under the arrows: every move rewrites the pair - a step writes the rung it
+  reached *and* the crossing rung the other axis is carried to - and the entity of Home
+  Assistant carries the same pair as `ptz_step`. The rung at which a ladder stands on the other
+  one is data of the camera (`step_crossings` of the PTZ block) and not the middle of a list: a
+  rung stored later is appended to a ladder and moves its middle, so the add-on walked two
+  rungs at once with a ladder that grew that way. Home Assistant
   receives `rtsp_cameras.ptz` (same fields as `onvif.ptz`), `rtsp_cameras.ptz_home` and a
   button per preset. A camera that is mounted upside down, on its side or behind a mirror is
   **mirrored per axis** - one button each in the preview pad (*Mirror left/right*, *Mirror

@@ -1451,6 +1451,7 @@
     select.disabled = presets.length === 0;
     document.getElementById('btn-ptz-preset').disabled = presets.length === 0;
     renderPtzSteps(ptz);
+    renderPtzPosition(camera.ptz_position);
     renderPtzMirror(ptz);
   }
 
@@ -1493,9 +1494,14 @@
     const body = Object.assign({ action }, extra || {});
     if (speed) body['speed_' + axis] = speed;
     try {
-      await api('api/cameras/' + cameraId + '/ptz', { method: 'POST', body });
+      const data = await api('api/cameras/' + cameraId + '/ptz', { method: 'POST', body });
       state.ptzDirection = action === 'stop' ? null : action;
       document.getElementById('ptz-error').hidden = true;
+      // The answer of every move carries the coordinates of the camera afterwards: a preset
+      // that is a rung keeps them, a continuous move, a stop and the home key clear them.
+      if (data && Object.prototype.hasOwnProperty.call(data, 'position')) {
+        renderPtzPosition(data.position || null);
+      }
       return true;
     } catch (err) {
       showPtzError(err);
@@ -1553,6 +1559,35 @@
     return Math.max(1, Math.min(10, Math.round(value) || 1));
   }
 
+  /* The coordinates of the camera on its two ladders - where it stands right now, per axis.
+     The add-on keeps them for every move: a step writes the rung it reached *and* the
+     crossing rung the other axis is carried to (a rung is a whole position, so it always
+     rewrites both), a preset that is a rung does the same, and a continuous move, a stop or
+     the home key leaves the camera between two rungs and clears them (see
+     ``ptz.rung_position``). Showing them is what makes the model visible: a step of one axis
+     that changes the other number as well is exactly the drag the toast reports. */
+  function renderPtzPosition(position) {
+    const box = document.getElementById('ptz-position');
+    const ladders = position || null;
+    const axes = ladders ? Object.keys(ladders) : [];
+    if (!axes.length) {
+      box.hidden = true;
+      box.textContent = '';
+      return;
+    }
+    const rung = (axis) => {
+      const values = ladders[axis] || {};
+      return typeof values.index === 'number'
+        ? values.index + 1 + '/' + (values.rungs || 0)
+        : '–';
+    };
+    const known = axes.some((axis) => typeof (ladders[axis] || {}).index === 'number');
+    box.hidden = false;
+    box.textContent = known
+      ? t('ptz.position', { vertical: rung('vertical'), horizontal: rung('horizontal') })
+      : t('ptz.position_unknown');
+  }
+
   function showPtzError(err) {
     const box = document.getElementById('ptz-error');
     box.hidden = false;
@@ -1574,6 +1609,9 @@
       });
       const step = data.step || {};
       document.getElementById('ptz-error').hidden = true;
+      // Where the camera stands now, on both ladders: a step rewrites the rung it reached and
+      // the other coordinate with it (see ``renderPtzPosition``).
+      renderPtzPosition(step.position || null);
       /* A rung is a whole position, and this camera has no bounded *relative* move: a step
          that switches axes therefore carries the other axis back to the crossing of the two
          ladders. The add-on reports that drag instead of refusing the step (see

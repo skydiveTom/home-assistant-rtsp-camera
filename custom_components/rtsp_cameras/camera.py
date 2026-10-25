@@ -29,6 +29,7 @@ from .const import (
     ATTR_PTZ,
     ATTR_PTZ_PRESETS,
     ATTR_PTZ_PROFILE,
+    ATTR_PTZ_STEP,
     ATTR_RTSP_TRANSPORT,
     ATTR_SOURCE_FILE,
     ATTR_STREAM_URL,
@@ -45,6 +46,7 @@ from .ptz import async_execute as ptz_async_execute
 from .ptz import async_move as ptz_async_move
 from .ptz import async_walk_steps as ptz_async_walk_steps
 from .ptz import forget_step, last_direction, remember_direction, remember_preset, walks_the_ladder
+from .ptz import step_position as ptz_step_position
 from .services import default_duration, resolve_action, resolve_duration, resolve_speed
 
 _LOGGER = logging.getLogger(__name__)
@@ -227,6 +229,11 @@ class RtspCamera(CoordinatorEntity[RtspCamerasCoordinator], Camera):
             # add-on, so the entity shows the handling that is in use.
             attributes[ATTR_PTZ_PROFILE] = ptz.profile
             attributes[ATTR_PTZ_PRESETS] = [name for _, name in ptz.presets]
+            # Where the camera stands on the ladders of step positions: the coordinate the
+            # walk of an axis starts from, rewritten by every move (see ``ptz.step_position``).
+            position = ptz_step_position(self._definition.id, ptz)
+            if position:
+                attributes[ATTR_PTZ_STEP] = position
         return attributes
 
     @property

@@ -55,13 +55,16 @@ from app.ptz import (
     async_send,
     build_command,
     configured_actions,
+    crossing_of,
     crossing_rung,
+    crossings_of,
     needs_direction,
     normalize_ptz,
     other_axis,
     preferred_profiles,
     probe_base_url,
     public_config,
+    rung_position,
     split_userinfo,
     step_drag,
     step_target,
@@ -1967,6 +1970,16 @@ def test_a_step_walks_to_the_next_rung(client: TestClient, dvrip_cam: int) -> No
         "index": 0,
         "rungs": 3,
         "arrow": "down",
+        # The coordinates of the camera after the move: the rung it reached, and the crossing
+        # rung of the other axis - a rung is a whole position, so it always writes both.
+        "position": {
+            "vertical": {
+                "index": 0,
+                "slot": FIRST_STEP_SLOT,
+                "rungs": 3,
+                "crossing": 1,
+            }
+        },
     }
     sent = DvripCamera.received[0]["payload"]["OPPTZControl"]
     assert sent["Command"] == "GotoPreset", "a step does not start a move"
@@ -2083,6 +2096,81 @@ def test_a_step_of_one_axis_never_locks_the_other_out(client: TestClient, dvrip_
         "the tilt rung brings the pan back to the column the tilt ladder is stored at"
     )
     assert step("down")["index"] == 2, "... and the tilt keeps walking from there"
+
+
+def test_a_step_starts_from_the_crossing_the_camera_file_names(
+    client: TestClient, dvrip_cam: int
+) -> None:
+    """The coordinates of a camera come from its file, not from the shape of a ladder.
+
+    A ladder is stored along one axis at a fixed value of the other one, so a rung written
+    later moves the *middle* of the list but not that place (see ``ptz.crossing_rung``). The
+    add-on names the place in ``step_crossings``: with the middle used instead, the ``up``
+    below would start two rungs above the pan rung the camera stands on, and it would report a
+    drag that never happened - which is what the ladder of ``balkon-2`` did (its tilt ladder
+    grew by a rung at the ground, and every step off the pan ladder jumped two rungs).
+    """
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 6)
+    store_pan_rungs(client, camera["id"], 5)
+    block = client.get(f"/api/cameras/{camera['id']}").json()["camera"]["ptz"]
+    block["step_crossings"] = {"vertical": 3, "horizontal": 1}
+    saved = client.put(f"/api/cameras/{camera['id']}", json={"ptz": block})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["camera"]["ptz"]["step_crossings"] == {"vertical": 3, "horizontal": 1}
+    vertical = block["steps"]["vertical"]
+    horizontal = block["steps"]["horizontal"]
+
+    forget_rung(client, camera["id"])
+    # A preset that is a rung of the pan ladder: the camera stands on it, and the tilt on the
+    # crossing rung of its own ladder - the coordinate the next step starts from.
+    preset = client.post(
+        f"/api/cameras/{camera['id']}/ptz",
+        json={"action": "preset", "preset": str(horizontal[1])},
+    )
+    assert preset.status_code == 200, preset.text
+    assert preset.json()["position"] == {
+        "vertical": {"index": 3, "slot": vertical[3], "rungs": 6, "crossing": 3},
+        "horizontal": {"index": 1, "slot": horizontal[1], "rungs": 5, "crossing": 1},
+    }, "a preset writes both coordinates: the rung it is, and the crossing of the other axis"
+
+    up = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "up"})
+    assert up.status_code == 200, up.text
+    assert up.json()["step"]["index"] == 4, "one rung above the crossing, not above the middle"
+    assert "drag" not in up.json()["step"], "the pan stands on its crossing, so nothing drags"
+    assert up.json()["step"]["position"] == {
+        "vertical": {"index": 4, "slot": vertical[4], "rungs": 6, "crossing": 3},
+        "horizontal": {"index": 1, "slot": horizontal[1], "rungs": 5, "crossing": 1},
+    }
+
+    right = client.post(
+        f"/api/cameras/{camera['id']}/ptz", json={"action": "step", "direction": "right"}
+    )
+    assert right.json()["step"]["drag"] == {"axis": "vertical", "rungs": -1}, (
+        "the pan rung carries the tilt back to the crossing named by the file"
+    )
+    assert right.json()["step"]["position"] == {
+        "vertical": {"index": 3, "slot": vertical[3], "rungs": 6, "crossing": 3},
+        "horizontal": {"index": 2, "slot": horizontal[2], "rungs": 5, "crossing": 1},
+    }, "and both coordinates follow the move"
+
+
+def test_a_continuous_move_forgets_both_coordinates(client: TestClient, dvrip_cam: int) -> None:
+    """A move that this add-on cannot place leaves the camera between two rungs of each axis.
+
+    Only a rung the camera is *at* can be walked on, and a direction command drives an axis to
+    its limit: nothing of that move is a coordinate, so the answer of the move says the
+    position is unknown instead of keeping a number that is no longer true.
+    """
+    camera = add_dvrip_camera(client, dvrip_cam)
+    store_rungs(client, camera["id"], 3)
+
+    moved = client.post(f"/api/cameras/{camera['id']}/ptz", json={"action": "up"})
+
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["position"] == {
+        "vertical": {"index": None, "slot": None, "rungs": 3, "crossing": 1}
+    }
 
 
 def test_a_mirrored_axis_sends_the_other_command(client: TestClient, ptz_cam: str) -> None:
@@ -2456,6 +2544,92 @@ def test_the_two_ladders_of_a_camera_cross_at_their_middle_rung() -> None:
     assert other_axis("vertical") == "horizontal"
     assert other_axis("horizontal") == "vertical"
     assert other_axis("zoom_in") is None
+
+
+def test_the_crossing_of_a_ladder_is_what_the_camera_file_says() -> None:
+    """A rung stored later moves the middle of a ladder, not the place it was built at.
+
+    The tilt ladder of the test set was built on one pan and grew by a rung at the ground
+    afterwards: the appended slot moved ``len(slots) // 2`` by one, so the guess pointed at a
+    neighbour of the real crossing - every step off the pan ladder then jumped two rungs of
+    the tilt, and every drag it reported was one rung too far. ``step_crossings`` of the PTZ
+    block names the rung, and it wins over the shape of the list.
+    """
+    slots = [210, 211, 212, 213]
+
+    assert crossing_rung(slots, 1) == 1, "the file wins over the middle of the list"
+    assert crossing_rung(slots, 9) == 2, "a rung that does not exist falls back to the middle"
+    assert crossing_rung(slots, "1") == 2, "only a number is a rung (a hand written file)"
+    assert crossing_rung(slots) == 2, "without the key the middle is the best guess there is"
+
+    config = {
+        "steps": {"vertical": [210, 211, 212, 213], "horizontal": [217, 218, 219]},
+        "step_crossings": {"vertical": 1, "horizontal": 2},
+    }
+    assert crossings_of(config) == {"vertical": 1, "horizontal": 2}
+    assert crossing_of(config, "vertical") == 1
+    assert crossing_of(config, "zoom") is None, "an axis without a ladder has no crossing"
+    assert crossing_of({}, "vertical") is None
+    assert crossings_of({"steps": {"vertical": [210]}, "step_crossings": {"vertical": 3}}) == {
+        "vertical": 0
+    }, "a crossing behind the end of its ladder is never used"
+
+    assert public_config(normalize_ptz({**config, "profile": "xiongmai_dvrip"}, RTSP_URL))[
+        "step_crossings"
+    ] == {"vertical": 1, "horizontal": 2}, "the panel reads where the ladders cross"
+
+
+def test_a_save_of_the_camera_editor_keeps_the_crossing() -> None:
+    """The camera form has no field for the crossing, exactly as it has none for the rungs."""
+    first = normalize_ptz(
+        {
+            "profile": "xiongmai_dvrip",
+            "steps": {"vertical": [210, 211, 212], "horizontal": [217, 218]},
+            "step_crossings": {"vertical": 2, "horizontal": 0},
+        },
+        RTSP_URL,
+    )
+    assert first is not None
+    assert first["step_crossings"] == {"vertical": 2, "horizontal": 0}
+
+    saved = normalize_ptz({"profile": "xiongmai_dvrip", "speed": 6}, RTSP_URL, first)
+    assert saved is not None
+    assert saved["step_crossings"] == first["step_crossings"], (
+        "a form that does not speak of the crossing keeps it"
+    )
+
+    # A ladder that is gone cannot keep a crossing, and a rung that is dropped takes the name
+    # with it - the rungs are gone from the end, so the place may be one of them.
+    cleared = normalize_ptz(
+        {"profile": "xiongmai_dvrip", "steps": {"horizontal": [217]}}, RTSP_URL, first
+    )
+    assert cleared is not None
+    assert cleared["step_crossings"] == {"horizontal": 0}, (
+        "the crossing of the tilt ladder is gone with its rungs, so both axes fall back"
+    )
+    assert crossings_of(cleared) == {"horizontal": 0}
+
+
+def test_the_position_of_a_camera_is_both_coordinates() -> None:
+    """The coordinates of a camera are its rung on *each* ladder, and they may be unknown."""
+    ladders = {"vertical": [210, 211, 212, 213], "horizontal": [217, 218, 219]}
+    crossings = {"vertical": 1, "horizontal": 2}
+
+    assert rung_position({}, ladders, crossings) == {
+        "vertical": {"index": None, "slot": None, "rungs": 4, "crossing": 1},
+        "horizontal": {"index": None, "slot": None, "rungs": 3, "crossing": 2},
+    }, "a camera that was never walked stands somewhere the add-on cannot name"
+
+    known = rung_position({"vertical": 3, "horizontal": 2}, ladders, crossings)
+    assert known["vertical"] == {"index": 3, "slot": 213, "rungs": 4, "crossing": 1}
+    assert known["horizontal"] == {"index": 2, "slot": 219, "rungs": 3, "crossing": 2}
+
+    assert rung_position({"vertical": 9}, ladders, crossings)["vertical"]["index"] is None, (
+        "a rung that a shortened ladder no longer has reads as unknown"
+    )
+    assert rung_position({"vertical": True}, ladders, crossings)["vertical"]["index"] is None, (
+        "a boolean is no coordinate"
+    )
 
 
 def test_a_step_drags_the_other_axis_only_off_its_crossing() -> None:

@@ -77,7 +77,13 @@ w panelu dodatku.
   ruchu *względnego*, więc szczebel można zapisać tylko tam, gdzie kamera już stoi, a ruch
   „w miejscu” wymagałby właśnie takiego szczebla. Krok jest mimo to wysyłany, a panel mówi,
   którą oś pociągnął i o ile — odrzucanie go zostawiało martwe obie pary strzałek, gdy tylko
-  użytkownik przełączał osie. Home Assistant dostaje usługę
+  użytkownik przełączał osie. Pad trzyma **współrzędne kamery** na obu drabinkach i pokazuje
+  je pod strzałkami: każdy ruch przepisuje tę parę — krok zapisuje szczebel, na który doszedł,
+  *oraz* szczebel skrzyżowania, na które wraca druga oś — a encja w Home Assistant pokazuje tę
+  samą parę jako `ptz_step`. Szczebel, na którym jedna drabinka stoi na drugiej, jest daną
+  kamery (`step_crossings` w bloku PTZ), a nie środkiem listy: szczebel dopisany później
+  przesuwa środek, więc dodatek chodził o dwa szczeble naraz na drabince, która tak urosła.
+  Home Assistant dostaje usługę
   `rtsp_cameras.ptz` (te same pola co `onvif.ptz`), `rtsp_cameras.ptz_home` oraz
   przycisk dla każdego presetu. Kamerę zamontowaną do góry nogami, bokiem albo za lustrem
   **odwraca się osobno na każdej osi** — po jednym przycisku w padzie podglądu (*Odwróć
